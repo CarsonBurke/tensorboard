@@ -202,6 +202,7 @@ export interface MetricsNamespacedState {
   cardStepIndex: CardStepIndexMap;
   tagFilter: string;
   tagGroupExpanded: Map<string, boolean>;
+  tagGroupPageIndex: Map<string, number>;
   linkedTimeSelection: TimeSelection | null;
   linkedTimeEnabled: boolean;
   stepSelectorEnabled: boolean;

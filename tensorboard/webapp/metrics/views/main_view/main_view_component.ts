@@ -15,7 +15,6 @@ limitations under the License.
 import {
   ChangeDetectionStrategy,
   Component,
-  ElementRef,
   EventEmitter,
   Inject,
   InjectionToken,
@@ -23,7 +22,9 @@ import {
   Optional,
   Output,
   Type,
+  ViewChild,
 } from '@angular/core';
+import {CdkScrollable} from '@angular/cdk/scrolling';
 
 import {PluginType} from '../../types';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
@@ -40,6 +41,14 @@ export const SHARE_BUTTON_COMPONENT = new InjectionToken<Type<unknown>>(
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MainViewComponent {
+  @ViewChild(CdkScrollable, {static: true})
+  set scrollable(scrollable: CdkScrollable) {
+    this.cardObserver = new CardObserver(
+      scrollable.getElementRef().nativeElement,
+      '600px 0px 600px 0px'
+    );
+  }
+
   @Input() showFilteredView!: boolean;
 
   @Input() isSidepaneOpen!: boolean;
@@ -59,16 +68,10 @@ export class MainViewComponent {
   @Output() onPluginTypeAllToggled = new EventEmitter<void>();
 
   constructor(
-    private readonly host: ElementRef,
     @Optional()
     @Inject(SHARE_BUTTON_COMPONENT)
     readonly customShareButton: Type<unknown>
-  ) {
-    this.cardObserver = new CardObserver(
-      this.host.nativeElement,
-      '600px 0px 600px 0px'
-    );
-  }
+  ) {}
 
   readonly PluginType = PluginType;
 
@@ -76,5 +79,5 @@ export class MainViewComponent {
    * Load cards that are not yet visible, if they are roughly 1 card row away in
    * scroll distance.
    */
-  readonly cardObserver;
+  cardObserver!: CardObserver;
 }

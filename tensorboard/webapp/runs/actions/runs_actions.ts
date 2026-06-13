@@ -78,6 +78,15 @@ export const runColorChanged = createAction(
   props<{runId: string; newColor: string}>()
 );
 
+export const runLocalStorageHydrated = createAction(
+  '[Runs] Run Local Storage Hydrated',
+  props<{
+    runIds: string[];
+    selection: Record<string, boolean>;
+    colorOverrides: Record<string, string>;
+  }>()
+);
+
 export const runGroupByChanged = createAction(
   '[Runs] Run Group By Changed',
   props<{

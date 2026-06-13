@@ -24,6 +24,7 @@ import {HparamsModule} from '../hparams/hparams_module';
 import * as actions from './actions';
 import {RunsDataSourceModule} from './data_source/runs_data_source_module';
 import {RunsEffects} from './effects';
+import {RunsLocalStorageEffects} from './local_storage/runs_local_storage_effects';
 import {reducers} from './store';
 import {RUNS_FEATURE_KEY} from './store/runs_types';
 
@@ -41,7 +42,7 @@ export function alertActionProvider() {
 @NgModule({
   imports: [
     StoreModule.forFeature(RUNS_FEATURE_KEY, reducers),
-    EffectsModule.forFeature([RunsEffects]),
+    EffectsModule.forFeature([RunsEffects, RunsLocalStorageEffects]),
     RunsDataSourceModule,
     AlertActionModule.registerAlertActions(alertActionProvider),
     // Used for reading the hparams state in the runs-table component.

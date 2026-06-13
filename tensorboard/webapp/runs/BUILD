@@ -15,6 +15,7 @@ tf_ng_module(
         "//tensorboard/webapp/runs/actions",
         "//tensorboard/webapp/runs/data_source",
         "//tensorboard/webapp/runs/effects",
+        "//tensorboard/webapp/runs/local_storage",
         "//tensorboard/webapp/runs/store",
         "//tensorboard/webapp/runs/store:types",
         "@npm//@angular/core",

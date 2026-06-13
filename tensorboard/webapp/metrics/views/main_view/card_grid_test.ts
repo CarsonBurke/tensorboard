@@ -30,7 +30,7 @@ import {
 } from '@angular/core/testing';
 import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
-import {Store} from '@ngrx/store';
+import {Action, Store} from '@ngrx/store';
 import {MockStore} from '@ngrx/store/testing';
 import {State} from '../../../app_state';
 import * as selectors from '../../../selectors';
@@ -38,9 +38,11 @@ import {
   getCardStateMap,
   getMetricsCardMinWidth,
   getMetricsTagGroupExpansionState,
+  getMetricsTagGroupPageIndex,
 } from '../../../selectors';
 import {selectors as settingsSelectors} from '../../../settings';
 import {provideMockTbStore} from '../../../testing/utils';
+import * as actions from '../../actions';
 import {PluginType} from '../../data_source';
 import {CardIdWithMetadata} from '../metrics_view_types';
 import {CardGridComponent} from './card_grid_component';
@@ -79,6 +81,7 @@ const scrollElementHeight = 100;
 })
 class TestableScrollingContainer {
   @Input() cardIdsWithMetadata: CardIdWithMetadata[] = [];
+  @Input() groupName: string | null = null;
 }
 
 /**
@@ -96,6 +99,7 @@ class TestableCardView {
 
 describe('card grid', () => {
   let store: MockStore<State>;
+  let dispatchedActions: Action[];
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [NoopAnimationsModule, ScrollingModule],
@@ -110,8 +114,13 @@ describe('card grid', () => {
     }).compileComponents();
 
     store = TestBed.inject<Store<State>>(Store) as MockStore<State>;
+    dispatchedActions = [];
+    (spyOn(store, 'dispatch') as jasmine.Spy).and.callFake((action: Action) => {
+      dispatchedActions.push(action);
+    });
     store.overrideSelector(selectors.getRunColorMap, {});
     store.overrideSelector(getMetricsTagGroupExpansionState, true);
+    store.overrideSelector(getMetricsTagGroupPageIndex, 0);
     store.overrideSelector(getMetricsCardMinWidth, 30);
     store.overrideSelector(settingsSelectors.getPageSize, 10);
     store.overrideSelector(getCardStateMap, {});
@@ -233,6 +242,39 @@ describe('card grid', () => {
     tick(0);
     expect(PaginationInput.offsetTop - scrollingElement.scrollTop).toEqual(
       scrollOffset
+    );
+    discardPeriodicTasks();
+  }));
+
+  it('dispatches page index changes for grouped grids', fakeAsync(() => {
+    store.overrideSelector(settingsSelectors.getPageSize, 1);
+    store.overrideSelector(getMetricsTagGroupPageIndex, 0);
+    const fixture = TestBed.createComponent(TestableScrollingContainer);
+    fixture.componentInstance.groupName = 'tagA';
+    fixture.componentInstance.cardIdsWithMetadata = [
+      {
+        cardId: 'card1',
+        plugin: PluginType.SCALARS,
+        tag: 'tagA/one',
+        runId: null,
+      },
+      {
+        cardId: 'card2',
+        plugin: PluginType.SCALARS,
+        tag: 'tagA/two',
+        runId: null,
+      },
+    ];
+    fixture.detectChanges();
+
+    fixture.debugElement.query(By.css('.next')).nativeElement.click();
+    tick(0);
+
+    expect(dispatchedActions).toContain(
+      actions.metricsTagGroupPageIndexChanged({
+        tagGroup: 'tagA',
+        pageIndex: 1,
+      })
     );
     discardPeriodicTasks();
   }));
