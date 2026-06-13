@@ -399,6 +399,27 @@ export const getMetricsTagGroupExpansionState = createSelector(
   }
 );
 
+export const getMetricsTagGroupExpandedMap = createSelector(
+  selectMetricsState,
+  (state: MetricsState): Map<string, boolean> => {
+    return state.tagGroupExpanded;
+  }
+);
+
+export const getMetricsTagGroupPageIndexMap = createSelector(
+  selectMetricsState,
+  (state: MetricsState): Map<string, number> => {
+    return state.tagGroupPageIndex;
+  }
+);
+
+export const getMetricsTagGroupPageIndex = createSelector(
+  selectMetricsState,
+  (state: MetricsState, tagGroup: string): number => {
+    return state.tagGroupPageIndex.get(tagGroup) ?? 0;
+  }
+);
+
 export const getMetricsLinkedTimeEnabled = createSelector(
   selectMetricsState,
   (state: MetricsState): boolean => {

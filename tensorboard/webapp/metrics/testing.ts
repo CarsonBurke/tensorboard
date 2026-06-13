@@ -124,6 +124,7 @@ function buildBlankState(): MetricsState {
     visibleCardMap: new Map(),
     tagFilter: '',
     tagGroupExpanded: new Map(),
+    tagGroupPageIndex: new Map(),
     linkedTimeSelection: null,
     linkedTimeEnabled: false,
     stepSelectorEnabled: false,

@@ -309,6 +309,18 @@ const dataReducer: ActionReducer<RunsDataState, Action> = createReducer(
 
     return {...state, runColorOverrideForGroupBy: nextRunColorOverride};
   }),
+  on(runsActions.runLocalStorageHydrated, (state, {runIds, colorOverrides}) => {
+    const nextRunColorOverride = new Map(state.runColorOverrideForGroupBy);
+    for (const runId of runIds) {
+      if (colorOverrides[runId]) {
+        nextRunColorOverride.set(runId, colorOverrides[runId]);
+      } else {
+        nextRunColorOverride.delete(runId);
+      }
+    }
+
+    return {...state, runColorOverrideForGroupBy: nextRunColorOverride};
+  }),
   on(runsActions.runSelectorRegexFilterChanged, (state, action) => {
     return {
       ...state,
@@ -440,6 +452,23 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
     });
     for (const runId of runIds) {
       nextSelectionState.set(runId, nextValue);
+    }
+
+    return {
+      ...state,
+      selectionState: nextSelectionState,
+    };
+  }),
+  on(runsActions.runLocalStorageHydrated, (state, {runIds, selection}) => {
+    const currentRunIds = new Set(runIds);
+    const nextSelectionState = new Map<string, boolean>();
+    for (const [runId, selected] of state.selectionState.entries()) {
+      if (!currentRunIds.has(runId)) {
+        nextSelectionState.set(runId, selected);
+      }
+    }
+    for (const runId of runIds) {
+      nextSelectionState.set(runId, Boolean(selection[runId]));
     }
 
     return {

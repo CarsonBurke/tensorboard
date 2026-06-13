@@ -137,11 +137,21 @@ describe('card view test', () => {
     const directives = getCardLazyLoaders(fixture);
     const cardObserver = directives[0].cardObserver!;
 
-    // Destroy the element.
+    // Destroy the element. Cleanup should not wait for a later observer event:
+    // IntersectionObserver is asynchronous and may never report an exit for
+    // paginated or otherwise removed DOM.
     fixture.componentInstance.configs = [
       {cardId: 'card1', visible: false},
     ] as TestableCardConfig[];
     fixture.detectChanges();
+
+    expect(unobserveSpy).toHaveBeenCalled();
+    expect(dispatchedActions).toEqual([
+      actions.cardVisibilityChanged({
+        enteredCards: [],
+        exitedCards: [{elementId: jasmine.any(Symbol) as any, cardId: 'card1'}],
+      }),
+    ]);
 
     // Simulate a pending 'isIntersecting' event.
     simulateIntersection(cardObserver, [
@@ -152,17 +162,16 @@ describe('card view test', () => {
       },
     ]);
 
-    expect(unobserveSpy).not.toHaveBeenCalled();
+    expect(unobserveSpy).toHaveBeenCalled();
     expect(dispatchedActions).toEqual([
       actions.cardVisibilityChanged({
-        enteredCards: [
-          {elementId: jasmine.any(Symbol) as any, cardId: 'card1'},
-        ],
-        exitedCards: [],
+        enteredCards: [],
+        exitedCards: [{elementId: jasmine.any(Symbol) as any, cardId: 'card1'}],
       }),
     ]);
 
-    // Simulate the exiting event.
+    // Simulate the exiting event. It should also be ignored because the target
+    // was already removed.
     simulateIntersection(cardObserver, [
       {
         time: 20,
@@ -173,12 +182,6 @@ describe('card view test', () => {
 
     expect(unobserveSpy).toHaveBeenCalled();
     expect(dispatchedActions).toEqual([
-      actions.cardVisibilityChanged({
-        enteredCards: [
-          {elementId: jasmine.any(Symbol) as any, cardId: 'card1'},
-        ],
-        exitedCards: [],
-      }),
       actions.cardVisibilityChanged({
         enteredCards: [],
         exitedCards: [{elementId: jasmine.any(Symbol) as any, cardId: 'card1'}],

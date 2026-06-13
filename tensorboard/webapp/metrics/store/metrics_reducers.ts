@@ -82,6 +82,37 @@ import {
 } from './metrics_types';
 import {dataTableUtils} from '../../widgets/data_table/utils';
 
+function tagGroupExpansionRecordToMap(
+  tagGroups: string[],
+  values: Record<string, boolean>
+): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  for (const tagGroup of tagGroups) {
+    if (typeof values[tagGroup] === 'boolean') {
+      result.set(tagGroup, values[tagGroup]);
+    }
+  }
+  return result;
+}
+
+function tagGroupPageIndexRecordToMap(
+  tagGroups: string[],
+  values: Record<string, number>
+): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const tagGroup of tagGroups) {
+    const value = values[tagGroup];
+    if (Number.isInteger(value) && value >= 0) {
+      result.set(tagGroup, value);
+    }
+  }
+  return result;
+}
+
+function normalizePageIndex(pageIndex: number): number {
+  return Number.isInteger(pageIndex) && pageIndex >= 0 ? pageIndex : 0;
+}
+
 function buildCardMetadataList(tagMetadata: TagMetadata): CardMetadata[] {
   const results: CardMetadata[] = [];
   for (let pluginKey of Object.keys(tagMetadata)) {
@@ -264,6 +295,7 @@ const {initialState, reducers: namespaceContextedReducer} =
       cardStepIndex: {},
       tagFilter: '',
       tagGroupExpanded: new Map<string, boolean>(),
+      tagGroupPageIndex: new Map<string, number>(),
       linkedTimeSelection: null,
       linkedTimeEnabled: false,
       stepSelectorEnabled: true,
@@ -1131,6 +1163,31 @@ const reducer = createReducer(
 
     return {...state, tagGroupExpanded};
   }),
+  on(
+    actions.metricsTagGroupPageIndexChanged,
+    (state, {tagGroup, pageIndex}) => {
+      const tagGroupPageIndex = new Map(state.tagGroupPageIndex);
+      tagGroupPageIndex.set(tagGroup, normalizePageIndex(pageIndex));
+
+      return {...state, tagGroupPageIndex};
+    }
+  ),
+  on(
+    actions.metricsLocalStorageHydrated,
+    (state, {tagGroups, tagGroupExpanded, tagGroupPageIndex}) => {
+      return {
+        ...state,
+        tagGroupExpanded: tagGroupExpansionRecordToMap(
+          tagGroups,
+          tagGroupExpanded
+        ),
+        tagGroupPageIndex: tagGroupPageIndexRecordToMap(
+          tagGroups,
+          tagGroupPageIndex
+        ),
+      };
+    }
+  ),
   on(actions.cardVisibilityChanged, (state, {enteredCards, exitedCards}) => {
     if (!enteredCards.length && !exitedCards.length) {
       return state;

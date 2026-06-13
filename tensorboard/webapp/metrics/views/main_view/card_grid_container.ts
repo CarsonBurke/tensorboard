@@ -27,11 +27,13 @@ import {State} from '../../../app_state';
 import * as selectors from '../../../selectors';
 import {
   getMetricsCardMinWidth,
+  getMetricsTagGroupPageIndex,
   getMetricsTagGroupExpansionState,
 } from '../../../selectors';
 import {selectors as settingsSelectors} from '../../../settings';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
 import {CardIdWithMetadata} from '../metrics_view_types';
+import {metricsTagGroupPageIndexChanged} from '../../actions';
 
 @Component({
   standalone: false,
@@ -59,7 +61,7 @@ export class CardGridContainer implements OnChanges, OnDestroy {
   @Input() cardObserver!: CardObserver;
 
   private readonly groupName$ = new BehaviorSubject<string | null>(null);
-  readonly pageIndex$ = new BehaviorSubject<number>(0);
+  private readonly localPageIndex$ = new BehaviorSubject<number>(0);
   private readonly items$ = new BehaviorSubject<CardIdWithMetadata[]>([]);
   private readonly ngUnsubscribe = new Subject<void>();
   readonly cardStateMap$;
@@ -69,6 +71,8 @@ export class CardGridContainer implements OnChanges, OnDestroy {
   readonly isGroupExpanded$: Observable<boolean>;
 
   readonly showPaginationControls$: Observable<boolean>;
+
+  readonly pageIndex$;
 
   readonly normalizedPageIndex$;
 
@@ -96,21 +100,29 @@ export class CardGridContainer implements OnChanges, OnDestroy {
     this.showPaginationControls$ = this.numPages$.pipe(
       map((numPages) => numPages > 1)
     );
+    this.pageIndex$ = this.groupName$.pipe(
+      switchMap((groupName) => {
+        return groupName !== null
+          ? this.store.select(getMetricsTagGroupPageIndex, groupName)
+          : this.localPageIndex$;
+      })
+    );
     this.normalizedPageIndex$ = combineLatest([
       this.pageIndex$,
       this.numPages$,
+      this.groupName$,
     ]).pipe(
       takeUntil(this.ngUnsubscribe),
-      tap(([pageIndex, numPages]) => {
+      tap(([pageIndex, numPages, groupName]) => {
         // Cycle in the Observable but only loops when pageIndex is not
         // valid and does not repeat more than once.
         if (numPages === 0) {
           return;
         }
         if (pageIndex >= numPages) {
-          this.pageIndex$.next(numPages - 1);
+          this.setPageIndex(groupName, numPages - 1);
         } else if (pageIndex < 0) {
-          this.pageIndex$.next(0);
+          this.setPageIndex(groupName, 0);
         }
       }),
       map(([pageIndex, numPages]) => {
@@ -149,6 +161,16 @@ export class CardGridContainer implements OnChanges, OnDestroy {
   }
 
   onPageIndexChanged(newIndex: number) {
-    this.pageIndex$.next(newIndex);
+    this.setPageIndex(this.groupName$.value, newIndex);
+  }
+
+  private setPageIndex(groupName: string | null, pageIndex: number) {
+    if (groupName !== null) {
+      this.store.dispatch(
+        metricsTagGroupPageIndexChanged({tagGroup: groupName, pageIndex})
+      );
+      return;
+    }
+    this.localPageIndex$.next(pageIndex);
   }
 }

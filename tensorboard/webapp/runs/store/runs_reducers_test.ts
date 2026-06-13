@@ -788,6 +788,65 @@ describe('runs_reducers', () => {
     });
   });
 
+  describe('runLocalStorageHydrated', () => {
+    it('hydrates run colors only for the current run ids', () => {
+      const state = buildRunsState({
+        runColorOverrideForGroupBy: new Map([
+          ['run1', '#111'],
+          ['stale', '#222'],
+          ['otherNamespaceRun', '#333'],
+        ]),
+      });
+
+      const nextState = runsReducers.reducers(
+        state,
+        actions.runLocalStorageHydrated({
+          runIds: ['run1', 'run2', 'stale'],
+          selection: {run1: true, run2: false, stale: true},
+          colorOverrides: {run1: '#fff'},
+        })
+      );
+
+      expect(nextState.data.runColorOverrideForGroupBy).toEqual(
+        new Map([
+          ['run1', '#fff'],
+          ['otherNamespaceRun', '#333'],
+        ])
+      );
+    });
+
+    it('hydrates run selection and removes stale current-route entries', () => {
+      const state = buildRunsState(
+        {},
+        {
+          selectionState: new Map([
+            ['run1', false],
+            ['stale', true],
+            ['otherNamespaceRun', true],
+          ]),
+        }
+      );
+
+      const nextState = runsReducers.reducers(
+        state,
+        actions.runLocalStorageHydrated({
+          runIds: ['run1', 'run2', 'stale'],
+          selection: {run1: true, run2: false},
+          colorOverrides: {},
+        })
+      );
+
+      expect(nextState.ui.selectionState).toEqual(
+        new Map([
+          ['otherNamespaceRun', true],
+          ['run1', true],
+          ['run2', false],
+          ['stale', false],
+        ])
+      );
+    });
+  });
+
   describe('on runGroupByChanged', () => {
     it('reassigns color to EXPERIMENT from RUN', () => {
       const state = buildRunsState({

@@ -17,6 +17,7 @@ tf_ng_module(
         "//tensorboard/webapp/metrics/actions",
         "//tensorboard/webapp/metrics/data_source",
         "//tensorboard/webapp/metrics/effects",
+        "//tensorboard/webapp/metrics/local_storage",
         "//tensorboard/webapp/metrics/store",
         "//tensorboard/webapp/metrics/store:metrics_initial_state_provider",
         "//tensorboard/webapp/metrics/views",

@@ -79,25 +79,29 @@ limitations under the License.
 </div>
 <div class="split-content">
   <div cdkScrollable [class.main]="true" [class.filter-view]="showFilteredView">
-    <metrics-filtered-view
-      *ngIf="showFilteredView"
-      [cardObserver]="cardObserver"
-    ></metrics-filtered-view>
-    <!-- Always render the metrics-pinned-view as a performance optimization--it makes view transition
-    from filtered view to card view quicker. -->
-    <metrics-pinned-view
-      [style.display]="showFilteredView ? 'none' : ''"
-      [cardObserver]="cardObserver"
-    ></metrics-pinned-view>
+    <ng-container *ngIf="cardObserver">
+      <metrics-filtered-view
+        *ngIf="showFilteredView"
+        [cardObserver]="cardObserver"
+      ></metrics-filtered-view>
+      <!-- Always render the metrics-pinned-view as a performance optimization--it makes view transition
+      from filtered view to card view quicker. -->
+      <metrics-pinned-view
+        [style.display]="showFilteredView ? 'none' : ''"
+        [cardObserver]="cardObserver"
+      ></metrics-pinned-view>
+    </ng-container>
     <div *ngIf="initialTagsLoading" class="loading-container">
       <mat-spinner diameter="36"></mat-spinner>
     </div>
-    <!-- Always render the metrics-card-groups as a performance optimization--it makes view transition
-    from filtered view to card view quicker. -->
-    <metrics-card-groups
-      [style.display]="showFilteredView ? 'none' : ''"
-      [cardObserver]="cardObserver"
-    ></metrics-card-groups>
+    <ng-container *ngIf="cardObserver">
+      <!-- Always render the metrics-card-groups as a performance optimization--it makes view transition
+      from filtered view to card view quicker. -->
+      <metrics-card-groups
+        [style.display]="showFilteredView ? 'none' : ''"
+        [cardObserver]="cardObserver"
+      ></metrics-card-groups>
+    </ng-container>
   </div>
   <div
     *ngIf="isSidepaneOpen"

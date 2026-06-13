@@ -32,7 +32,7 @@ type CardObserverCallback = (
 export class CardObserver {
   private intersectionObserver?: IntersectionObserver;
   private intersectionCallback?: CardObserverCallback;
-  private readonly destroyedTargets = new WeakSet<Element>();
+  private readonly removedTargets = new WeakSet<Element>();
 
   /**
    * Buffer determines how far a card can be, beyond the root's bounding rect,
@@ -73,17 +73,15 @@ export class CardObserver {
 
   add(target: Element) {
     if (this.ensureInitialized()) {
+      this.removedTargets.delete(target);
       this.intersectionObserver!.observe(target);
     }
   }
 
-  /**
-   * Adds a target to a list of elements to-be-destroyed, so that we can notify
-   * listeners that they become 'exitedCards' before unobserving it.
-   */
-  willDestroy(target: Element) {
+  remove(target: Element) {
     if (this.ensureInitialized()) {
-      this.destroyedTargets.add(target);
+      this.removedTargets.add(target);
+      this.intersectionObserver!.unobserve(target);
     }
   }
 
@@ -106,6 +104,10 @@ export class CardObserver {
     const enteredElements = new Set<Element>();
     const exitedElements = new Set<Element>();
     for (const {isIntersecting, target} of entries) {
+      if (this.removedTargets.has(target)) {
+        continue;
+      }
+
       if (isIntersecting) {
         enteredElements.add(target);
         exitedElements.delete(target);
@@ -113,18 +115,9 @@ export class CardObserver {
         enteredElements.delete(target);
         exitedElements.add(target);
       }
-
-      /**
-       * Cleanup destroyed targets. Defend against speculative case when
-       * - A enters viewport
-       * - B added to destroyed targets
-       * - Callback fires for just A, unobserving B
-       * - B's callback never fires
-       */
-      if (this.destroyedTargets.has(target) && !isIntersecting) {
-        this.destroyedTargets.delete(target);
-        this.intersectionObserver!.unobserve(target);
-      }
+    }
+    if (!enteredElements.size && !exitedElements.size) {
+      return;
     }
     this.intersectionCallback!(enteredElements, exitedElements);
   }
@@ -207,7 +200,17 @@ export class CardLazyLoader implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     if (this.cardObserver) {
-      this.cardObserver.willDestroy(this.host.nativeElement);
+      const element = this.host.nativeElement;
+      const ids = elementToIds.get(element);
+      if (ids) {
+        this.store.dispatch(
+          actions.cardVisibilityChanged({
+            enteredCards: [],
+            exitedCards: [{elementId: ids.elementId, cardId: ids.cardId}],
+          })
+        );
+      }
+      this.cardObserver.remove(element);
     }
   }
 

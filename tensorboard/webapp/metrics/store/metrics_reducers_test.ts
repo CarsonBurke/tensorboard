@@ -2850,6 +2850,87 @@ describe('metrics reducers', () => {
     });
   });
 
+  describe('metricsTagGroupPageIndexChanged', () => {
+    it('sets tag group page index', () => {
+      const state1 = buildMetricsState({
+        tagGroupPageIndex: new Map([['foo', 1]]),
+      });
+
+      const state2 = reducers(
+        state1,
+        actions.metricsTagGroupPageIndexChanged({
+          tagGroup: 'foo',
+          pageIndex: 3,
+        })
+      );
+
+      expect(state2.tagGroupPageIndex).toEqual(new Map([['foo', 3]]));
+    });
+
+    it('normalizes invalid page index', () => {
+      const state = buildMetricsState();
+
+      const state2 = reducers(
+        state,
+        actions.metricsTagGroupPageIndexChanged({
+          tagGroup: 'foo',
+          pageIndex: -1,
+        })
+      );
+      const state3 = reducers(
+        state2,
+        actions.metricsTagGroupPageIndexChanged({
+          tagGroup: 'bar',
+          pageIndex: 1.5,
+        })
+      );
+
+      expect(state3.tagGroupPageIndex).toEqual(
+        new Map([
+          ['foo', 0],
+          ['bar', 0],
+        ])
+      );
+    });
+  });
+
+  describe('metricsLocalStorageHydrated', () => {
+    it('hydrates and prunes tag group state to current groups', () => {
+      const state = buildMetricsState({
+        tagGroupExpanded: new Map([
+          ['foo', true],
+          ['stale', true],
+        ]),
+        tagGroupPageIndex: new Map([
+          ['foo', 0],
+          ['stale', 9],
+        ]),
+      });
+
+      const nextState = reducers(
+        state,
+        actions.metricsLocalStorageHydrated({
+          tagGroups: ['foo', 'bar'],
+          tagGroupExpanded: {foo: false, bar: true, stale: false},
+          tagGroupPageIndex: {foo: 3, bar: 1, stale: 4},
+        })
+      );
+
+      expect(nextState.tagGroupExpanded).toEqual(
+        new Map([
+          ['foo', false],
+          ['bar', true],
+        ])
+      );
+      expect(nextState.tagGroupPageIndex).toEqual(
+        new Map([
+          ['foo', 3],
+          ['bar', 1],
+        ])
+      );
+    });
+  });
+
   describe('pinned card hydration', () => {
     it('ignores RouteKind EXPERIMENTS', () => {
       const beforeState = buildMetricsState({

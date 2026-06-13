@@ -194,6 +194,20 @@ export const metricsTagGroupExpansionChanged = createAction(
   props<{tagGroup: string}>()
 );
 
+export const metricsTagGroupPageIndexChanged = createAction(
+  '[Metrics] Metrics Tag Group Page Index Changed',
+  props<{tagGroup: string; pageIndex: number}>()
+);
+
+export const metricsLocalStorageHydrated = createAction(
+  '[Metrics] Metrics Local Storage Hydrated',
+  props<{
+    tagGroups: string[];
+    tagGroupExpanded: Record<string, boolean>;
+    tagGroupPageIndex: Record<string, number>;
+  }>()
+);
+
 export const cardPinStateToggled = createAction(
   '[Metrics] Card Pin State Toggled',
   props<{cardId: CardId; canCreateNewPins: boolean; wasPinned: boolean}>()

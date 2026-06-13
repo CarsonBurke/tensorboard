@@ -27,6 +27,7 @@ import {
   SavedPinsDataSourceModule,
 } from './data_source';
 import {MetricsEffects} from './effects';
+import {MetricsLocalStorageEffects} from './local_storage/metrics_local_storage_effects';
 import {
   getMetricsCardMinWidth,
   getMetricsIgnoreOutliers,
@@ -163,7 +164,7 @@ export function getRangeSelectionHeadersFactory() {
     SavedPinsDataSourceModule,
     FeatureFlagModule,
     PersistentSettingsModule,
-    EffectsModule.forFeature([MetricsEffects]),
+    EffectsModule.forFeature([MetricsEffects, MetricsLocalStorageEffects]),
     AlertActionModule.registerAlertActions(alertActionProvider),
     PersistentSettingsConfigModule.defineGlobalSetting(
       getSmoothingSettingFactory
