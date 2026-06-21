@@ -71,7 +71,10 @@ import {
   singleRunSelected,
 } from '../../actions';
 import {MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT} from '../../store/runs_types';
-import {sortTableDataItems} from './sorting_utils';
+import {
+  addRunStartTimeSortingMetadata,
+  sortTableDataItems,
+} from './sorting_utils';
 import {RunsTableColumn, RunTableItem} from './types';
 
 const getRunsLoading = createSelector<
@@ -179,7 +182,10 @@ export class RunsTableContainer implements OnInit, OnDestroy {
             selected: runTableItem.selected,
             color: runTableItem.runColor,
           };
-          return tableData;
+          return addRunStartTimeSortingMetadata(
+            tableData,
+            runTableItem.run.startTime
+          );
         });
       })
     );

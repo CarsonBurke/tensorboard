@@ -28,6 +28,14 @@ interface SortOptions {
   insertUndefined: UndefinedStrategy;
 }
 
+export const RUN_START_TIME_SORT_KEY = '\0runStartTime';
+
+const RUN_TABLE_ROW_METADATA = Symbol('RUN_TABLE_ROW_METADATA');
+
+interface RunTableRowMetadata {
+  startTime?: number;
+}
+
 const POTENTIALLY_NUMERIC_TYPES = new Set(['string', 'number']);
 
 const DEFAULT_SORT_OPTIONS: SortOptions = {
@@ -53,6 +61,18 @@ export function parseNumericPrefix(value: string | number) {
   return;
 }
 
+export function addRunStartTimeSortingMetadata(
+  tableData: TableData,
+  startTime: number | undefined
+): TableData {
+  Object.defineProperty(tableData, RUN_TABLE_ROW_METADATA, {
+    value: {startTime},
+    configurable: true,
+    enumerable: false,
+  });
+  return tableData;
+}
+
 export function sortTableDataItems(
   items: TableData[],
   sort: SortingInfo
@@ -60,10 +80,13 @@ export function sortTableDataItems(
   const sortedItems = [...items];
 
   sortedItems.sort((a, b) => {
-    let aValue = a[sort.name];
-    let bValue = b[sort.name];
+    let aValue: TableData[string] | undefined = a[sort.name];
+    let bValue: TableData[string] | undefined = b[sort.name];
 
-    if (sort.name === 'experimentAlias') {
+    if (sort.name === RUN_START_TIME_SORT_KEY) {
+      aValue = getRunTableRowMetadata(a)?.startTime;
+      bValue = getRunTableRowMetadata(b)?.startTime;
+    } else if (sort.name === 'experimentAlias') {
       aValue = (aValue as ExperimentAlias).aliasNumber;
       bValue = (bValue as ExperimentAlias).aliasNumber;
     }
@@ -128,4 +151,14 @@ export function sortTableDataItems(
 
     return a < b === (sort.order === SortingOrder.ASCENDING) ? -1 : 1;
   }
+}
+
+function getRunTableRowMetadata(
+  tableData: TableData
+): RunTableRowMetadata | undefined {
+  return (
+    tableData as TableData & {
+      [RUN_TABLE_ROW_METADATA]?: RunTableRowMetadata;
+    }
+  )[RUN_TABLE_ROW_METADATA];
 }

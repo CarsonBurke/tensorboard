@@ -55,9 +55,12 @@ tb-data-table-header-cell {
   @include tb-theme-foreground-prop(border-bottom, border, 1px solid);
 }
 
-.table-column-selected,
-.table-column-color {
+.table-column-selected {
   width: 40px;
+}
+
+.table-column-color {
+  width: 80px;
 }
 
 .filter-row {
@@ -69,5 +72,21 @@ tb-data-table-header-cell {
   tb-filter-input {
     padding-left: 16px;
     flex-grow: 1;
+  }
+}
+
+::ng-deep .run-table-sort-by {
+  font-size: 16px;
+
+  .label {
+    color: matm2.get-color-from-palette($tb-foreground, secondary-text);
+    font-size: 0.9em;
+    margin: 10px 0;
+    padding: 0 16px;
+    pointer-events: none;
+  }
+
+  mat-icon {
+    --mat-menu-item-icon-size: 20px;
   }
 }

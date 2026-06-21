@@ -57,6 +57,15 @@ limitations under the License.
               ></mat-checkbox>
             </div>
             <span class="group-menu-container" *ngSwitchCase="'color'">
+              <button
+                mat-icon-button
+                title="Sort runs by..."
+                class="run-sort-menu-button"
+                [matMenuTriggerFor]="sortRunsMenu"
+                (click)="$event.stopPropagation()"
+              >
+                <mat-icon svgIcon="arrow_downward_24px"></mat-icon>
+              </button>
               <runs-group-menu-button
                 [experimentIds]="experimentIds"
               ></runs-group-menu-button>
@@ -107,3 +116,46 @@ limitations under the License.
     </ng-container>
   </tb-data-table>
 </div>
+
+<mat-menu #sortRunsMenu="matMenu" class="run-table-sort-by">
+  <div class="label">Sort runs by</div>
+  <button
+    mat-menu-item
+    role="menuitemradio"
+    data-value="default"
+    [attr.aria-checked]="isSortingBy('run', SortingOrder.ASCENDING)"
+    (click)="sortRunsByDefault()"
+  >
+    <mat-icon
+      *ngIf="isSortingBy('run', SortingOrder.ASCENDING)"
+      svgIcon="done_24px"
+    ></mat-icon>
+    <span>Default</span>
+  </button>
+  <button
+    mat-menu-item
+    role="menuitemradio"
+    data-value="newest"
+    [attr.aria-checked]="isSortingBy(runStartTimeSortKey, SortingOrder.DESCENDING)"
+    (click)="sortRunsByNewest()"
+  >
+    <mat-icon
+      *ngIf="isSortingBy(runStartTimeSortKey, SortingOrder.DESCENDING)"
+      svgIcon="done_24px"
+    ></mat-icon>
+    <span>Newest</span>
+  </button>
+  <button
+    mat-menu-item
+    role="menuitemradio"
+    data-value="oldest"
+    [attr.aria-checked]="isSortingBy(runStartTimeSortKey, SortingOrder.ASCENDING)"
+    (click)="sortRunsByOldest()"
+  >
+    <mat-icon
+      *ngIf="isSortingBy(runStartTimeSortKey, SortingOrder.ASCENDING)"
+      svgIcon="done_24px"
+    ></mat-icon>
+    <span>Oldest</span>
+  </button>
+</mat-menu>
