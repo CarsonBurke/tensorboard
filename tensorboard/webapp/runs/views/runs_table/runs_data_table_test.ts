@@ -21,7 +21,9 @@ import {
   ViewChild,
 } from '@angular/core';
 import {TestBed} from '@angular/core/testing';
+import {MatButtonModule} from '@angular/material/button';
 import {MatCheckboxModule} from '@angular/material/checkbox';
+import {MatMenuModule} from '@angular/material/menu';
 import {By} from '@angular/platform-browser';
 import {sendKeys} from '../../../testing/dom';
 import {MatIconTestingModule} from '../../../testing/mat_icon_module';
@@ -38,6 +40,7 @@ import {
 } from '../../../widgets/data_table/types';
 import {FilterInputModule} from '../../../widgets/filter_input/filter_input_module';
 import {RunsDataTable} from './runs_data_table';
+import {RUN_START_TIME_SORT_KEY} from './sorting_utils';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.Default,
@@ -69,9 +72,13 @@ class TestableComponent {
   @Input() onAllSelectionToggle!: (runIds: string[]) => void;
   @Input() onRegexFilterChange!: (regex: string) => void;
   @Input() onSelectionDblClick!: (runId: string) => void;
+
+  sortDataBy(_sortingInfo: SortingInfo) {}
+  orderColumns(_event: unknown) {}
 }
 
 describe('runs_data_table', () => {
+  let sortDataBySpy: jasmine.Spy;
   let onSelectionToggleSpy: jasmine.Spy;
   let onAllSelectionToggleSpy: jasmine.Spy;
   let onSelectionDblClickSpy: jasmine.Spy;
@@ -124,6 +131,8 @@ describe('runs_data_table', () => {
     onRegexFilterChangeSpy = jasmine.createSpy();
     fixture.componentInstance.onRegexFilterChange = onRegexFilterChangeSpy;
 
+    sortDataBySpy = spyOn(fixture.componentInstance, 'sortDataBy');
+
     fixture.detectChanges();
     return fixture;
   }
@@ -134,7 +143,9 @@ describe('runs_data_table', () => {
         DataTableModule,
         FilterInputModule,
         MatIconTestingModule,
+        MatButtonModule,
         MatCheckboxModule,
+        MatMenuModule,
       ],
       declarations: [TestableComponent, RunsDataTable],
       schemas: [NO_ERRORS_SCHEMA],
@@ -204,6 +215,47 @@ describe('runs_data_table', () => {
       )!;
 
       expect(colorHeader.query(By.css('runs-group-menu-button'))).toBeTruthy();
+    });
+
+    it('renders sort control before group by control in color header', () => {
+      const fixture = createComponent({});
+
+      const dataTable = fixture.debugElement.query(
+        By.directive(DataTableComponent)
+      );
+      const headers = dataTable.queryAll(By.directive(HeaderCellComponent));
+
+      const colorHeader = headers.find(
+        (h) => h.componentInstance.header.name === 'color'
+      )!;
+      const controls = colorHeader.queryAll(
+        By.css('.run-sort-menu-button, runs-group-menu-button')
+      );
+
+      expect(controls.length).toBe(2);
+      expect(
+        controls[0].nativeElement.classList.contains('run-sort-menu-button')
+      ).toBeTrue();
+      expect(controls[1].nativeElement.tagName.toLowerCase()).toBe(
+        'runs-group-menu-button'
+      );
+    });
+
+    it('emits sort requests for run sort menu options', () => {
+      const fixture = createComponent({});
+      const runsDataTable = fixture.debugElement.query(
+        By.directive(RunsDataTable)
+      );
+
+      runsDataTable.componentInstance.sortRunsByDefault();
+      runsDataTable.componentInstance.sortRunsByNewest();
+      runsDataTable.componentInstance.sortRunsByOldest();
+
+      expect(sortDataBySpy.calls.allArgs()).toEqual([
+        [{name: 'run', order: SortingOrder.ASCENDING}],
+        [{name: RUN_START_TIME_SORT_KEY, order: SortingOrder.DESCENDING}],
+        [{name: RUN_START_TIME_SORT_KEY, order: SortingOrder.ASCENDING}],
+      ]);
     });
 
     it('renders color picker button in color content cells', () => {

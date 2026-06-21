@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 import {NO_ERRORS_SCHEMA} from '@angular/core';
 import {TestBed} from '@angular/core/testing';
+import {MatButtonModule} from '@angular/material/button';
 import {MatCheckboxModule} from '@angular/material/checkbox';
 import {MatDialogModule} from '@angular/material/dialog';
 import {MatMenuModule} from '@angular/material/menu';
@@ -53,6 +54,7 @@ import {RunsDataTable} from './runs_data_table';
 import {RunsGroupMenuButtonComponent} from './runs_group_menu_button_component';
 import {RunsGroupMenuButtonContainer} from './runs_group_menu_button_container';
 import {RunsTableContainer} from './runs_table_container';
+import {RUN_START_TIME_SORT_KEY} from './sorting_utils';
 import {RunTableItem, RunsTableColumn} from './types';
 import {
   ColumnHeaderType,
@@ -85,6 +87,7 @@ describe('runs_table', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [
+        MatButtonModule,
         MatCheckboxModule,
         MatDialogModule,
         MatIconTestingModule,
@@ -356,9 +359,9 @@ describe('runs_table', () => {
 
     describe('sorting', () => {
       beforeEach(() => {
-        const run1 = buildRun({id: 'run1', name: 'bbb'});
-        const run2 = buildRun({id: 'run2', name: 'aaa'});
-        const run3 = buildRun({id: 'run3', name: 'ccc'});
+        const run1 = buildRun({id: 'run1', name: 'bbb', startTime: 2});
+        const run2 = buildRun({id: 'run2', name: 'aaa', startTime: 3});
+        const run3 = buildRun({id: 'run3', name: 'ccc', startTime: 1});
         store.overrideSelector(getRuns, [run1, run2, run3]);
 
         store.overrideSelector(getRunsTableHeaders, [
@@ -480,6 +483,32 @@ describe('runs_table', () => {
         expect(runsDataTable.componentInstance.data[2]['batch_size']).toEqual(
           1
         );
+      });
+
+      it('sorts by start time', () => {
+        store.overrideSelector(getRunsTableSortingInfo, {
+          name: RUN_START_TIME_SORT_KEY,
+          order: SortingOrder.DESCENDING,
+        });
+        const fixture = createComponent(['book']);
+        const runsDataTable = fixture.debugElement.query(
+          By.directive(RunsDataTable)
+        );
+
+        expect(runsDataTable.componentInstance.data[0]['run']).toEqual('aaa');
+        expect(runsDataTable.componentInstance.data[1]['run']).toEqual('bbb');
+        expect(runsDataTable.componentInstance.data[2]['run']).toEqual('ccc');
+
+        store.overrideSelector(getRunsTableSortingInfo, {
+          name: RUN_START_TIME_SORT_KEY,
+          order: SortingOrder.ASCENDING,
+        });
+        store.refreshState();
+        fixture.detectChanges();
+
+        expect(runsDataTable.componentInstance.data[0]['run']).toEqual('ccc');
+        expect(runsDataTable.componentInstance.data[1]['run']).toEqual('bbb');
+        expect(runsDataTable.componentInstance.data[2]['run']).toEqual('aaa');
       });
 
       it('sorts boolean values', () => {

@@ -23,6 +23,7 @@ import {
   ColumnHeader,
   TableData,
   SortingInfo,
+  SortingOrder,
   ColumnHeaderType,
   FilterAddedEvent,
   DiscreteFilter,
@@ -31,6 +32,8 @@ import {
   AddColumnEvent,
 } from '../../../widgets/data_table/types';
 import {memoize} from '../../../util/memoize';
+import {RUN_START_TIME_SORT_KEY} from './sorting_utils';
+
 @Component({
   standalone: false,
   selector: 'runs-data-table',
@@ -51,6 +54,8 @@ export class RunsDataTable {
   @Input() columnFilters!: Map<string, DiscreteFilter | IntervalFilter>;
 
   ColumnHeaderType = ColumnHeaderType;
+  SortingOrder = SortingOrder;
+  runStartTimeSortKey = RUN_START_TIME_SORT_KEY;
 
   @Output() sortDataBy = new EventEmitter<SortingInfo>();
   @Output() orderColumns = new EventEmitter<ReorderColumnEvent>();
@@ -126,6 +131,28 @@ export class RunsDataTable {
   onFilterKeyUp(event: KeyboardEvent) {
     const input = event.target! as HTMLInputElement;
     this.onRegexFilterChange.emit(input.value);
+  }
+
+  sortRunsByDefault() {
+    this.sortDataBy.emit({name: 'run', order: SortingOrder.ASCENDING});
+  }
+
+  sortRunsByNewest() {
+    this.sortDataBy.emit({
+      name: RUN_START_TIME_SORT_KEY,
+      order: SortingOrder.DESCENDING,
+    });
+  }
+
+  sortRunsByOldest() {
+    this.sortDataBy.emit({
+      name: RUN_START_TIME_SORT_KEY,
+      order: SortingOrder.ASCENDING,
+    });
+  }
+
+  isSortingBy(name: string, order: SortingOrder) {
+    return this.sortingInfo?.name === name && this.sortingInfo.order === order;
   }
 
   /**

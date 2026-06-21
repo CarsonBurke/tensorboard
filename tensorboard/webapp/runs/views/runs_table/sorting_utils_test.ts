@@ -13,7 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {SortingOrder} from '../../../widgets/data_table/types';
-import {parseNumericPrefix, sortTableDataItems} from './sorting_utils';
+import {
+  addRunStartTimeSortingMetadata,
+  parseNumericPrefix,
+  RUN_START_TIME_SORT_KEY,
+  sortTableDataItems,
+} from './sorting_utils';
 
 describe('sorting utils', () => {
   describe('parseNumericPrefix', () => {
@@ -281,6 +286,66 @@ describe('sorting utils', () => {
           id: 'row 2 id',
         },
       ]);
+    });
+
+    it('sorts by run start time without overwriting a same-named hparam', () => {
+      const input: any = [
+        addRunStartTimeSortingMetadata(
+          {
+            id: 'row 1 id',
+            [RUN_START_TIME_SORT_KEY]: 'hparam 1',
+          },
+          1
+        ),
+        addRunStartTimeSortingMetadata(
+          {
+            id: 'row 2 id',
+            [RUN_START_TIME_SORT_KEY]: 'hparam 2',
+          },
+          2
+        ),
+      ];
+
+      expect(
+        sortTableDataItems(input, {
+          order: SortingOrder.DESCENDING,
+          name: RUN_START_TIME_SORT_KEY,
+        })
+      ).toEqual([
+        {
+          id: 'row 2 id',
+          [RUN_START_TIME_SORT_KEY]: 'hparam 2',
+        },
+        {
+          id: 'row 1 id',
+          [RUN_START_TIME_SORT_KEY]: 'hparam 1',
+        },
+      ]);
+    });
+
+    it('places runs without start times after runs with start times', () => {
+      const input: any = [
+        addRunStartTimeSortingMetadata(
+          {id: 'row 1 id', name: 'missing'},
+          undefined
+        ),
+        addRunStartTimeSortingMetadata({id: 'row 2 id', name: 'newer'}, 2),
+        addRunStartTimeSortingMetadata({id: 'row 3 id', name: 'older'}, 1),
+      ];
+
+      expect(
+        sortTableDataItems(input, {
+          order: SortingOrder.DESCENDING,
+          name: RUN_START_TIME_SORT_KEY,
+        }).map((row) => row.id)
+      ).toEqual(['row 2 id', 'row 3 id', 'row 1 id']);
+
+      expect(
+        sortTableDataItems(input, {
+          order: SortingOrder.ASCENDING,
+          name: RUN_START_TIME_SORT_KEY,
+        }).map((row) => row.id)
+      ).toEqual(['row 3 id', 'row 2 id', 'row 1 id']);
     });
   });
 });
