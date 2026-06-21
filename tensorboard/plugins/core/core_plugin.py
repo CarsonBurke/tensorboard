@@ -260,8 +260,21 @@ class CorePlugin(base_plugin.TBPlugin):
                 run.run_name,
             ),
         )
-        run_names = [run.run_name for run in runs]
-        return http_util.Respond(request, run_names, "application/json")
+        if request.args.get("include_start_time") == "true":
+            runs_with_start_time = [
+                {
+                    "name": run.run_name,
+                    "start_time": run.start_time,
+                }
+                for run in runs
+            ]
+            return http_util.Respond(
+                request, runs_with_start_time, "application/json"
+            )
+
+        return http_util.Respond(
+            request, [run.run_name for run in runs], "application/json"
+        )
 
     @wrappers.Request.application
     def _serve_experiments(self, request):
