@@ -18,7 +18,9 @@ import {map} from 'rxjs/operators';
 import {TBHttpClient} from '../../webapp_data_source/tb_http_client';
 import {Run, RunsDataSource} from './runs_data_source_types';
 
-type BackendGetRunsResponse = string[];
+type BackendGetRunsResponse = Array<
+  string | {name: string; start_time: number | null}
+>;
 
 function runToRunId(run: string, experimentId: string) {
   return `${experimentId}/${run}`;
@@ -30,15 +32,20 @@ export class TBRunsDataSource implements RunsDataSource {
 
   fetchRuns(experimentId: string): Observable<Run[]> {
     return this.http
-      .get<BackendGetRunsResponse>(`/experiment/${experimentId}/data/runs`)
+      .get<BackendGetRunsResponse>(
+        `/experiment/${experimentId}/data/runs?include_start_time=true`
+      )
       .pipe(
         map((runs) => {
           return runs.map((run) => {
+            const name = typeof run === 'string' ? run : run.name;
             return {
-              id: runToRunId(run, experimentId),
-              name: run,
-              // Use a dummy startTime for now, until there is backend support.
-              startTime: 0,
+              id: runToRunId(name, experimentId),
+              name,
+              startTime:
+                typeof run === 'string'
+                  ? undefined
+                  : run.start_time ?? undefined,
             };
           });
         })

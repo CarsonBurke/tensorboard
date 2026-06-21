@@ -64,7 +64,7 @@ export interface HparamSpec
 export interface Run {
   id: string;
   name: string;
-  startTime: number;
+  startTime: number | undefined;
 }
 
 @Injectable({providedIn: 'root'})
