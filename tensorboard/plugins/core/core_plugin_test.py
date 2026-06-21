@@ -317,6 +317,44 @@ class CorePluginTest(tf.test.TestCase):
         run_json = self._get_json(self.server, "/data/runs")
         self.assertEqual(run_json, ["run1"])
 
+    def testRunsWithStartTime(self):
+        """Test the format of /data/runs with start times."""
+        fake_wall_times = {
+            "run1": 1234.0,
+            "mysterious": None,
+        }
+
+        def FirstEventTimestamp_stub(run_name):
+            matches = [
+                candidate_name
+                for candidate_name in fake_wall_times
+                if run_name.endswith(candidate_name)
+            ]
+            self.assertEqual(len(matches), 1, "%s (%s)" % (matches, run_name))
+            wall_time = fake_wall_times[matches[0]]
+            if wall_time is None:
+                raise ValueError("No event timestamp could be found")
+            return wall_time
+
+        with mock.patch.object(
+            self.multiplexer, "FirstEventTimestamp"
+        ) as mock_first_event_timestamp:
+            mock_first_event_timestamp.side_effect = FirstEventTimestamp_stub
+            self._add_run("run1")
+            self._add_run("mysterious")
+
+            run_json = self._get_json(
+                self.server, "/data/runs?include_start_time=true"
+            )
+
+        self.assertEqual(
+            run_json,
+            [
+                {"name": "run1", "start_time": 1234.0},
+                {"name": "mysterious", "start_time": None},
+            ],
+        )
+
     def testRunsAppendOnly(self):
         """Test that new runs appear after old ones in /data/runs."""
         fake_wall_times = {
