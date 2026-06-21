@@ -24,6 +24,7 @@ import {
   getExperimentIdsFromRoute,
   getRunColorOverride,
   getRunSelectionMap,
+  getRunsTableSortingInfo,
 } from '../../selectors';
 import * as runsActions from '../actions';
 import {Run} from '../types';
@@ -47,10 +48,12 @@ function getNamespace(dataLocation: string, experimentIds: string[] | null) {
 function getNewestRunId(runs: Run[]): string | undefined {
   let newestRun: Run | null = null;
   for (const run of runs) {
+    const newestRunStartTime = newestRun?.startTime ?? -Infinity;
+    const runStartTime = run.startTime ?? -Infinity;
     if (
       !newestRun ||
-      run.startTime > newestRun.startTime ||
-      (run.startTime === newestRun.startTime && run.name > newestRun.name)
+      runStartTime > newestRunStartTime ||
+      (runStartTime === newestRunStartTime && run.name > newestRun.name)
     ) {
       newestRun = run;
     }
@@ -186,14 +189,16 @@ export class RunsLocalStorageEffects {
             runsActions.runSelectionToggled,
             runsActions.singleRunSelected,
             runsActions.runPageSelectionToggled,
-            runsActions.runColorChanged
+            runsActions.runColorChanged,
+            runsActions.runsTableSortingInfoChanged
           ),
           withLatestFrom(
             this.store.select(getEnvironment),
             this.store.select(getExperimentIdsFromRoute),
             this.store.select(getDashboardRuns),
             this.store.select(getRunSelectionMap),
-            this.store.select(getRunColorOverride)
+            this.store.select(getRunColorOverride),
+            this.store.select(getRunsTableSortingInfo)
           ),
           tap(
             ([
@@ -203,6 +208,7 @@ export class RunsLocalStorageEffects {
               currentRuns,
               currentSelection,
               currentColorOverrides,
+              sortingInfo,
             ]) => {
               const namespace = getNamespace(
                 environment.data_location,
@@ -230,6 +236,7 @@ export class RunsLocalStorageEffects {
               const nextState: RunLocalStorageState = {
                 selection,
                 colorOverrides,
+                sortingInfo,
               };
               if (autoNewestRunId) {
                 nextState.newestRunId = autoNewestRunId;
@@ -294,12 +301,22 @@ export class RunsLocalStorageEffects {
         colorOverrides: mapToRecord(colorOverrides),
       })
     );
+    if (storedState.sortingInfo) {
+      this.store.dispatch(
+        runsActions.runsTableSortingInfoChanged({
+          sortingInfo: storedState.sortingInfo,
+        })
+      );
+    }
     const nextState: RunLocalStorageState = {
       selection,
       colorOverrides,
     };
     if (autoNewestRunId) {
       nextState.newestRunId = autoNewestRunId;
+    }
+    if (storedState.sortingInfo) {
+      nextState.sortingInfo = storedState.sortingInfo;
     }
     this.dataSource.setState(namespace, currentRuns, nextState);
   }

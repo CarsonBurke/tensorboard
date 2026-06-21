@@ -292,6 +292,7 @@ tf_ng_web_test_suite(
         "//tensorboard/webapp/routes:routes_test_lib",
         "//tensorboard/webapp/runs/data_source:runs_data_source_test",
         "//tensorboard/webapp/runs/effects:effects_test",
+        "//tensorboard/webapp/runs/local_storage:local_storage_test",
         "//tensorboard/webapp/runs/store:store_test",
         "//tensorboard/webapp/runs/store:testing",
         "//tensorboard/webapp/runs/views/runs_selector:runs_selector_test",

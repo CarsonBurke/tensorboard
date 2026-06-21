@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+import {SortingOrder} from '../../widgets/data_table/types';
 import {Run} from '../types';
 import {
   RunLocalStorageDataSource,
@@ -174,6 +175,43 @@ describe('RunLocalStorageDataSource', () => {
     expect(window.localStorage.getItem(TEST_ONLY.RUN_LOCAL_STORAGE_KEY)).toBe(
       null
     );
+  });
+
+  it('persists and restores the run sorting selection', () => {
+    dataSource.setState('namespace', [createRun('run1')], {
+      selection: new Map([['run1', true]]),
+      colorOverrides: new Map(),
+      sortingInfo: {name: '\0runStartTime', order: SortingOrder.DESCENDING},
+    });
+
+    const state = dataSource.getState('namespace', [createRun('run1')]);
+
+    expect(state.sortingInfo).toEqual({
+      name: '\0runStartTime',
+      order: SortingOrder.DESCENDING,
+    });
+  });
+
+  it('ignores malformed stored sorting selection', () => {
+    window.localStorage.setItem(
+      TEST_ONLY.RUN_LOCAL_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        namespaces: {
+          namespace: {
+            updatedAtMs: 1,
+            runIds: ['run1'],
+            selection: {run1: true},
+            colorOverrides: {},
+            sortingInfo: {name: 'run', order: 5},
+          },
+        },
+      })
+    );
+
+    const state = dataSource.getState('namespace', [createRun('run1')]);
+
+    expect(state.sortingInfo).toBeUndefined();
   });
 
   it('ignores invalid hex colors', () => {

@@ -26,7 +26,9 @@ import {
   getExperimentIdsFromRoute,
   getRunColorOverride,
   getRunSelectionMap,
+  getRunsTableSortingInfo,
 } from '../../selectors';
+import {SortingOrder} from '../../widgets/data_table/types';
 import * as runsActions from '../actions';
 import {Run} from '../types';
 import {provideMockTbStore} from '../../testing/utils';
@@ -72,6 +74,10 @@ describe('RunsLocalStorageEffects', () => {
     store.overrideSelector(getRunSelectionMap, new Map<string, boolean>());
     store.overrideSelector(getRunColorOverride, new Map<string, string>());
     store.overrideSelector(getDashboardRuns, []);
+    store.overrideSelector(getRunsTableSortingInfo, {
+      name: 'run',
+      order: SortingOrder.ASCENDING,
+    });
   });
 
   afterEach(() => {
@@ -217,6 +223,85 @@ describe('RunsLocalStorageEffects', () => {
       {
         selection: new Map([['run1', false]]),
         colorOverrides: new Map([['run1', '#abc']]),
+        sortingInfo: {name: 'run', order: SortingOrder.ASCENDING},
+      }
+    );
+  });
+
+  it('persists the run sorting selection when it changes', () => {
+    const run = createRun('run1', 1);
+    const currentRun = {
+      ...run,
+      hparams: null,
+      metrics: null,
+      experimentId: 'exp1',
+    };
+    spyOn(dataSource, 'getState').and.returnValue({
+      selection: new Map(),
+      colorOverrides: new Map(),
+    });
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    store.overrideSelector(getDashboardRuns, [currentRun]);
+    store.overrideSelector(getRunsTableSortingInfo, {
+      name: '\0runStartTime',
+      order: SortingOrder.DESCENDING,
+    });
+    store.refreshState();
+
+    effects.syncRunsToLocalStorage$.subscribe();
+    actions.next(
+      runsActions.runsTableSortingInfoChanged({
+        sortingInfo: {name: '\0runStartTime', order: SortingOrder.DESCENDING},
+      })
+    );
+
+    expect(setStateSpy).toHaveBeenCalledOnceWith(
+      jasmine.stringMatching('/tmp/tensorboard/runs'),
+      [currentRun],
+      {
+        selection: new Map(),
+        colorOverrides: new Map(),
+        sortingInfo: {name: '\0runStartTime', order: SortingOrder.DESCENDING},
+      }
+    );
+  });
+
+  it('restores the persisted run sorting selection on hydration', () => {
+    const run = createRun('run1', 1);
+    spyOn(dataSource, 'getState').and.returnValue({
+      selection: new Map([['run1', true]]),
+      colorOverrides: new Map([['run1', '#123456']]),
+      sortingInfo: {name: '\0runStartTime', order: SortingOrder.DESCENDING},
+    });
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    store.overrideSelector(getDashboardRuns, [
+      {...run, hparams: null, metrics: null, experimentId: 'exp1'},
+    ]);
+    store.overrideSelector(getRunSelectionMap, new Map([['run1', false]]));
+    store.refreshState();
+
+    effects.hydrateExistingRunsFromLocalStorage$.subscribe();
+    actions.next(
+      coreActions.environmentLoaded({
+        environment: {
+          data_location: '/tmp/tensorboard/runs',
+          window_title: '',
+        },
+      })
+    );
+
+    expect(dispatchedActions).toContain(
+      runsActions.runsTableSortingInfoChanged({
+        sortingInfo: {name: '\0runStartTime', order: SortingOrder.DESCENDING},
+      })
+    );
+    expect(setStateSpy).toHaveBeenCalledOnceWith(
+      jasmine.stringMatching('/tmp/tensorboard/runs'),
+      [jasmine.objectContaining({id: 'run1'})],
+      {
+        selection: new Map([['run1', true]]),
+        colorOverrides: new Map([['run1', '#123456']]),
+        sortingInfo: {name: '\0runStartTime', order: SortingOrder.DESCENDING},
       }
     );
   });
