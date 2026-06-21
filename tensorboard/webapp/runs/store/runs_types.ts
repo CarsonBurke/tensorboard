@@ -30,7 +30,7 @@ export {Domain, DomainType} from '../data_source/runs_data_source_types';
 export interface Run {
   id: string;
   name: string;
-  startTime: number;
+  startTime: number | undefined;
   hparams: null | HparamValue[];
   metrics: null | Array<{tag: string; value: number}>;
 }

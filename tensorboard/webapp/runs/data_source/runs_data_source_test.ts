@@ -39,13 +39,36 @@ describe('TBRunsDataSource test', () => {
       const results = jasmine.createSpy();
       dataSource.fetchRuns('exp1').subscribe(results);
 
-      httpMock.expectOne('/experiment/exp1/data/runs').flush(['foo', 'bar']);
+      httpMock
+        .expectOne('/experiment/exp1/data/runs?include_start_time=true')
+        .flush([
+          {name: 'foo', start_time: 10},
+          {name: 'bar', start_time: 20},
+          {name: 'baz', start_time: null},
+        ]);
       // Flush the promise in the microtask.
       flush();
 
       expect(results).toHaveBeenCalledWith([
-        {id: 'exp1/foo', name: 'foo', startTime: 0},
-        {id: 'exp1/bar', name: 'bar', startTime: 0},
+        {id: 'exp1/foo', name: 'foo', startTime: 10},
+        {id: 'exp1/bar', name: 'bar', startTime: 20},
+        {id: 'exp1/baz', name: 'baz', startTime: undefined},
+      ]);
+    }));
+
+    it('supports legacy string run responses', fakeAsync(() => {
+      const results = jasmine.createSpy();
+      dataSource.fetchRuns('exp1').subscribe(results);
+
+      httpMock
+        .expectOne('/experiment/exp1/data/runs?include_start_time=true')
+        .flush(['foo', 'bar']);
+      // Flush the promise in the microtask.
+      flush();
+
+      expect(results).toHaveBeenCalledWith([
+        {id: 'exp1/foo', name: 'foo', startTime: undefined},
+        {id: 'exp1/bar', name: 'bar', startTime: undefined},
       ]);
     }));
   });
