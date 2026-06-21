@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {Injectable} from '@angular/core';
+import {SortingInfo, SortingOrder} from '../../widgets/data_table/types';
 import {Run} from '../types';
 
 const RUN_LOCAL_STORAGE_KEY = '_tb_run_state.v1';
@@ -31,12 +32,26 @@ declare interface StoredRunNamespaceV1 {
   selection: Record<string, boolean>;
   colorOverrides: Record<string, string>;
   newestRunId?: string;
+  sortingInfo?: SortingInfo;
 }
 
 export interface RunLocalStorageState {
   selection: Map<string, boolean>;
   colorOverrides: Map<string, string>;
   newestRunId?: string;
+  sortingInfo?: SortingInfo;
+}
+
+function isValidSortingInfo(value: unknown): value is SortingInfo {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<SortingInfo>;
+  return (
+    typeof candidate.name === 'string' &&
+    (candidate.order === SortingOrder.ASCENDING ||
+      candidate.order === SortingOrder.DESCENDING)
+  );
 }
 
 function safeParse(serialized: string | null): StoredRunStateV1 {
@@ -107,6 +122,9 @@ function sanitizeNamespace(
   ) {
     state.newestRunId = storedNamespace.newestRunId;
   }
+  if (isValidSortingInfo(storedNamespace.sortingInfo)) {
+    state.sortingInfo = storedNamespace.sortingInfo;
+  }
   return state;
 }
 
@@ -132,12 +150,14 @@ function namespacesAreEquivalent(
       selection: storedNamespace.selection,
       colorOverrides: storedNamespace.colorOverrides,
       newestRunId: storedNamespace.newestRunId,
+      sortingInfo: storedNamespace.sortingInfo,
     }) ===
     JSON.stringify({
       runIds: nextNamespace.runIds,
       selection: nextNamespace.selection,
       colorOverrides: nextNamespace.colorOverrides,
       newestRunId: nextNamespace.newestRunId,
+      sortingInfo: nextNamespace.sortingInfo,
     })
   );
 }
@@ -172,6 +192,9 @@ export class RunLocalStorageDataSource {
     };
     if (state.newestRunId && currentRunIds.has(state.newestRunId)) {
       nextNamespace.newestRunId = state.newestRunId;
+    }
+    if (state.sortingInfo) {
+      nextNamespace.sortingInfo = state.sortingInfo;
     }
 
     const storedState = safeParse(this.getItem());
