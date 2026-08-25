@@ -15,6 +15,8 @@ limitations under the License.
 @use '@angular/material' as mat;
 @use 'tensorboard/webapp/theme/tb_theme';
 $_circle-size: 20px;
+$_header-icon-size: 12px;
+$_header-icon-padding: 4px;
 
 :host {
   min-width: 100%;
@@ -41,6 +43,27 @@ $_circle-size: 20px;
   width: 100%;
 }
 
+.run-sort-menu-container {
+  align-items: center;
+  display: flex;
+  margin-right: 2px;
+
+  // Match the size of the sorting and context menu buttons of the header cell.
+  .run-sort-menu-button.mat-mdc-icon-button {
+    --tb-icon-height: #{$_header-icon-size};
+    --tb-icon-width: #{$_header-icon-size};
+    border-radius: 5px;
+    height: $_header-icon-size + $_header-icon-padding;
+    padding: $_header-icon-padding;
+    width: $_header-icon-size + $_header-icon-padding;
+
+    // The icon asset hardcodes a black fill; inherit the header color instead.
+    ::ng-deep path {
+      fill: unset;
+    }
+  }
+}
+
 tb-data-table-content-row,
 tb-data-table-header-cell {
   // Match the size of the touch targets for the checkbox.
@@ -54,12 +77,9 @@ tb-data-table-header-cell {
   @include tb_theme.tb-theme-foreground-prop(border-bottom, border, 1px solid);
 }
 
-.table-column-selected {
-  width: 40px;
-}
-
+.table-column-selected,
 .table-column-color {
-  width: 80px;
+  width: 40px;
 }
 
 .filter-row {
@@ -78,7 +98,10 @@ tb-data-table-header-cell {
   font-size: 16px;
 
   .label {
-    color: matm2.get-color-from-palette($tb-foreground, secondary-text);
+    color: mat.m2-get-color-from-palette(
+      tb_theme.$tb-foreground,
+      secondary-text
+    );
     font-size: 0.9em;
     margin: 10px 0;
     padding: 0 16px;

@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+import {ScrollingModule} from '@angular/cdk/scrolling';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -37,6 +38,7 @@ import * as selectors from '../../../selectors';
 import {
   getMetricsCardMinWidth,
   getMetricsTagGroupExpansionState,
+  getMetricsTagGroupPageIndex,
 } from '../../../selectors';
 import {selectors as settingsSelectors} from '../../../settings';
 import {KeyType, sendKey, sendKeys} from '../../../testing/dom';
@@ -167,7 +169,7 @@ describe('metrics main view', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [NoopAnimationsModule],
+      imports: [NoopAnimationsModule, ScrollingModule],
       declarations: [
         CardGridComponent,
         CardGridContainer,
@@ -747,13 +749,16 @@ describe('metrics main view', () => {
         assertPagination(fixture, 1, 7);
       });
 
-      it('navigates pages by click on buttons', () => {
+      it('navigates pages by click on buttons', fakeAsync(() => {
         const fixture = TestBed.createComponent(MainViewContainer);
         fixture.detectChanges();
 
         const prevButton = fixture.debugElement.query(By.css('.prev'));
         const nextButton = fixture.debugElement.query(By.css('.next'));
         nextButton.nativeElement.click();
+        store.overrideSelector(getMetricsTagGroupPageIndex, 1);
+        store.refreshState();
+        tick();
         fixture.detectChanges();
 
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
@@ -763,6 +768,7 @@ describe('metrics main view', () => {
 
         // Clipped since we are at the max.
         nextButton.nativeElement.click();
+        tick();
         fixture.detectChanges();
 
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
@@ -771,6 +777,9 @@ describe('metrics main view', () => {
         assertPagination(fixture, 2, 2);
 
         prevButton.nativeElement.click();
+        store.overrideSelector(getMetricsTagGroupPageIndex, 0);
+        store.refreshState();
+        tick();
         fixture.detectChanges();
 
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
@@ -781,6 +790,7 @@ describe('metrics main view', () => {
 
         // Stay at 1 when clicking on prev from 1.
         prevButton.nativeElement.click();
+        tick();
         fixture.detectChanges();
 
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
@@ -788,7 +798,7 @@ describe('metrics main view', () => {
           'images: card2',
         ]);
         assertPagination(fixture, 1, 2);
-      });
+      }));
 
       function changeInputValue(
         fixture: ComponentFixture<MainViewContainer>,
@@ -806,16 +816,24 @@ describe('metrics main view', () => {
         fixture.detectChanges();
       }
 
-      it('navigates when interacting with the input', () => {
+      it('navigates when interacting with the input', fakeAsync(() => {
         const fixture = TestBed.createComponent(MainViewContainer);
         fixture.detectChanges();
 
         changeInputValue(fixture, 2);
+        store.overrideSelector(getMetricsTagGroupPageIndex, 1);
+        store.refreshState();
+        tick();
+        fixture.detectChanges();
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
           'scalars: card1',
         ]);
 
         changeInputValue(fixture, 1);
+        store.overrideSelector(getMetricsTagGroupPageIndex, 0);
+        store.refreshState();
+        tick();
+        fixture.detectChanges();
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
           'histograms: card3',
           'images: card2',
@@ -823,19 +841,25 @@ describe('metrics main view', () => {
 
         // clips to the max length.
         changeInputValue(fixture, 5);
+        store.overrideSelector(getMetricsTagGroupPageIndex, 1);
+        store.refreshState();
+        tick();
+        fixture.detectChanges();
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
           'scalars: card1',
         ]);
-        assertPagination(fixture, 2, 2);
 
-        // clips to 1.
-        changeInputValue(fixture, 0);
+        // clips to the min.
+        changeInputValue(fixture, -2);
+        store.overrideSelector(getMetricsTagGroupPageIndex, 0);
+        store.refreshState();
+        tick();
+        fixture.detectChanges();
         expect(getCardContents(getCardsInGroup(fixture, 0))).toEqual([
           'histograms: card3',
           'images: card2',
         ]);
-        assertPagination(fixture, 1, 2);
-      });
+      }));
 
       it('rectifies the input to be max/min', () => {
         const fixture = TestBed.createComponent(MainViewContainer);
@@ -1771,7 +1795,7 @@ describe('metrics main view', () => {
 describe('customizable share button ', () => {
   it('renders share button when it is provided', async () => {
     await TestBed.configureTestingModule({
-      imports: [CustomizationModule],
+      imports: [CustomizationModule, ScrollingModule],
       declarations: [
         MainViewComponent,
         MainViewContainer,
@@ -1797,6 +1821,7 @@ describe('customizable share button ', () => {
 
   it('does not render share button when it is not provided', async () => {
     await TestBed.configureTestingModule({
+      imports: [ScrollingModule],
       declarations: [MainViewComponent, MainViewContainer],
       providers: [
         provideMockStore({

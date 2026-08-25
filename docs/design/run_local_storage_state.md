@@ -1,6 +1,6 @@
 # Run Local Storage State
 
-**Status:** Proposed.
+**Status:** Implemented.
 
 ## Background
 
@@ -20,6 +20,7 @@ repositories with many generated runs, preserving these choices is valuable.
 ## Goals
 
 - Persist run selection and user-set run colors in browser `localStorage`.
+- Persist the run table's selected sort order.
 - Persist Time Series tag group expansion state and per-group pagination in
   browser `localStorage`.
 - Persist only runs that are currently present in the active run directory or
@@ -30,9 +31,7 @@ repositories with many generated runs, preserving these choices is valuable.
 - Keep the implementation isolated so syncing this fork with upstream
   TensorBoard is low-conflict.
 - Keep synchronization cheap for large run directories.
-- Validate the behavior on the local TensorBoard workflows for:
-  - `/home/marvin/Documents/repositories/cleanrl`
-  - `/home/marvin/Documents/repositories/orbit-wars`
+- Validate the behavior across distinct local run directories.
 
 ## Non-Goals
 
@@ -123,6 +122,10 @@ declare interface StoredRunNamespaceV1 {
   selection: Record<string, boolean>;
   colorOverrides: Record<string, string>;
   newestRunId?: string;
+  sortingInfo?: {
+    name: string;
+    order: SortingOrder;
+  };
 }
 ```
 
@@ -232,6 +235,8 @@ Add a runs effect that listens to:
 - `singleRunSelected`
 - `runPageSelectionToggled`
 - `runColorChanged`
+- `runGroupByChanged`
+- `runsTableSortingInfoChanged`
 
 For user-edit actions, read the latest selector values with `withLatestFrom`:
 
@@ -240,14 +245,18 @@ For user-edit actions, read the latest selector values with `withLatestFrom`:
 - current dashboard runs
 - current run selection
 - run color overrides
+- current run table sorting
 
 Then call:
 
 ```ts
-sync(namespace, currentRuns, selection, colorOverrides);
+sync(namespace, currentRuns, selection, colorOverrides, sortingInfo);
 ```
 
 `sync` must always prune before writing.
+`runGroupByChanged` is included so the reducer's cleared color override map is
+written immediately; a later hydration must not restore colors from the prior
+grouping.
 
 Do not add a second sync listener on `fetchRunsSucceeded`; hydration owns that
 path so it can read, prune, apply newest-run coloring, dispatch hydration, and
@@ -382,23 +391,18 @@ Unit tests:
 
 Manual validation:
 
-1. From `/home/marvin/Documents/repositories/cleanrl`, run TensorBoard against
-   the local runs directory.
+1. Run TensorBoard against a local run directory.
 2. Select a subset of runs and change at least one color.
 3. Reload the browser; selection and colors should be restored.
 4. Delete or move a run directory, reload TensorBoard, and confirm the deleted
    run is removed from localStorage.
 5. Start a newer run; after reload, that run should default to white unless a
    user color exists.
-6. Repeat the same workflow from
-   `/home/marvin/Documents/repositories/orbit-wars`.
-7. Confirm the two repositories do not leak run selections or colors into each
+6. Repeat the same workflow with a second log directory.
+7. Confirm the two directories do not leak run selections or colors into each
    other when served from the same TensorBoard origin.
 
 ## Open Questions
 
 - White is ideal for dark mode but low contrast in light mode. The requested
   behavior is white; a later refinement could make this theme-aware.
-- Existing color grouping resets user color overrides on group-by changes. This
-  spec keeps that behavior unless the persisted override is rehydrated after
-  the next run fetch.

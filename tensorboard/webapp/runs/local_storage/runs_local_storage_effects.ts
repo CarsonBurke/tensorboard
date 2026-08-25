@@ -48,8 +48,12 @@ function getNamespace(dataLocation: string, experimentIds: string[] | null) {
 function getNewestRunId(runs: Run[]): string | undefined {
   let newestRun: Run | null = null;
   for (const run of runs) {
-    const newestRunStartTime = newestRun?.startTime ?? -Infinity;
-    const runStartTime = run.startTime ?? -Infinity;
+    const newestRunStartTime =
+      newestRun?.startTime && newestRun.startTime > 0
+        ? newestRun.startTime
+        : -Infinity;
+    const runStartTime =
+      run.startTime && run.startTime > 0 ? run.startTime : -Infinity;
     if (
       !newestRun ||
       runStartTime > newestRunStartTime ||
@@ -141,7 +145,8 @@ export class RunsLocalStorageEffects {
                 experimentIds,
                 runsForAllExperiments,
                 currentSelection,
-                currentColorOverrides
+                currentColorOverrides,
+                true
               );
             }
           )
@@ -173,7 +178,8 @@ export class RunsLocalStorageEffects {
                 experimentIds,
                 currentRuns,
                 currentSelection,
-                currentColorOverrides
+                currentColorOverrides,
+                false
               );
             }
           )
@@ -190,6 +196,7 @@ export class RunsLocalStorageEffects {
             runsActions.singleRunSelected,
             runsActions.runPageSelectionToggled,
             runsActions.runColorChanged,
+            runsActions.runGroupByChanged,
             runsActions.runsTableSortingInfoChanged
           ),
           withLatestFrom(
@@ -255,13 +262,20 @@ export class RunsLocalStorageEffects {
     experimentIds: string[] | null,
     currentRuns: Run[],
     currentSelection: Map<string, boolean>,
-    currentColorOverrides: Map<string, string>
+    currentColorOverrides: Map<string, string>,
+    removeWhenEmpty: boolean
   ) {
-    if (!currentRuns.length) {
-      return;
-    }
     const namespace = getNamespace(dataLocation, experimentIds);
     if (!namespace) {
+      return;
+    }
+    if (!currentRuns.length) {
+      if (removeWhenEmpty) {
+        this.dataSource.setState(namespace, [], {
+          selection: new Map(),
+          colorOverrides: new Map(),
+        });
+      }
       return;
     }
 

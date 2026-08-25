@@ -176,4 +176,86 @@ describe('metrics_local_storage_data_source', () => {
       tagGroupPageIndex: new Map(),
     });
   });
+
+  it('removes storage when there are no current tag groups', () => {
+    window.localStorage.setItem(TEST_ONLY.METRICS_LOCAL_STORAGE_KEY, '{}');
+
+    dataSource.setState('namespace1', [], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+    });
+
+    expect(
+      window.localStorage.getItem(TEST_ONLY.METRICS_LOCAL_STORAGE_KEY)
+    ).toBeNull();
+  });
+
+  it('prefers the latest session state after a failed write', () => {
+    window.localStorage.setItem(
+      TEST_ONLY.METRICS_LOCAL_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        namespaces: {
+          namespace1: {
+            updatedAtMs: 1,
+            tagGroups: ['foo'],
+            tagGroupExpanded: {foo: true},
+            tagGroupPageIndex: {foo: 1},
+          },
+        },
+      })
+    );
+    const setItemSpy = spyOn(window.localStorage, 'setItem').and.throwError(
+      'quota exceeded'
+    );
+
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map([['foo', false]]),
+      tagGroupPageIndex: new Map([['foo', 2]]),
+    });
+
+    expect(dataSource.getState('namespace1', ['foo'])).toEqual({
+      tagGroupExpanded: new Map([['foo', false]]),
+      tagGroupPageIndex: new Map([['foo', 2]]),
+    });
+
+    setItemSpy.and.callThrough();
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map([['foo', false]]),
+      tagGroupPageIndex: new Map([['foo', 2]]),
+    });
+
+    expect(setItemSpy).toHaveBeenCalledTimes(2);
+    expect(
+      window.localStorage.getItem(TEST_ONLY.METRICS_LOCAL_STORAGE_KEY)
+    ).toContain('"foo":false');
+  });
+
+  it('does not read stale state after a failed removal', () => {
+    window.localStorage.setItem(
+      TEST_ONLY.METRICS_LOCAL_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        namespaces: {
+          namespace1: {
+            updatedAtMs: 1,
+            tagGroups: ['foo'],
+            tagGroupExpanded: {foo: true},
+            tagGroupPageIndex: {foo: 1},
+          },
+        },
+      })
+    );
+    spyOn(window.localStorage, 'removeItem').and.throwError('unavailable');
+
+    dataSource.setState('namespace1', [], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+    });
+
+    expect(dataSource.getState('namespace1', ['foo'])).toEqual({
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+    });
+  });
 });

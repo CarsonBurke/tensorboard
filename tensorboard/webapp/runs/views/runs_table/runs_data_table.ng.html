@@ -56,7 +56,7 @@ limitations under the License.
                 (click)="handleSelectAll($event)"
               ></mat-checkbox>
             </div>
-            <span class="group-menu-container" *ngSwitchCase="'color'">
+            <span class="run-sort-menu-container" *ngSwitchCase="'run'">
               <button
                 mat-icon-button
                 title="Sort runs by..."
@@ -66,6 +66,8 @@ limitations under the License.
               >
                 <mat-icon svgIcon="arrow_downward_24px"></mat-icon>
               </button>
+            </span>
+            <span class="group-menu-container" *ngSwitchCase="'color'">
               <runs-group-menu-button
                 [experimentIds]="experimentIds"
               ></runs-group-menu-button>

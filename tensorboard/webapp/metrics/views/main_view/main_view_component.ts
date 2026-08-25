@@ -42,7 +42,10 @@ export const SHARE_BUTTON_COMPONENT = new InjectionToken<Type<unknown>>(
 })
 export class MainViewComponent {
   @ViewChild(CdkScrollable, {static: true})
-  set scrollable(scrollable: CdkScrollable) {
+  set scrollable(scrollable: CdkScrollable | undefined) {
+    if (!scrollable) {
+      return;
+    }
     this.cardObserver = new CardObserver(
       scrollable.getElementRef().nativeElement,
       '600px 0px 600px 0px'

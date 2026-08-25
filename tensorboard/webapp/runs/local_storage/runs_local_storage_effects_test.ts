@@ -30,10 +30,13 @@ import {
 } from '../../selectors';
 import {SortingOrder} from '../../widgets/data_table/types';
 import * as runsActions from '../actions';
-import {Run} from '../types';
+import {GroupByKey, Run} from '../types';
 import {provideMockTbStore} from '../../testing/utils';
-import {RunLocalStorageDataSource} from './run_local_storage_data_source';
-import {RunsLocalStorageEffects} from './runs_local_storage_effects';
+import {
+  RunLocalStorageDataSource,
+  TEST_ONLY as STORAGE_TEST_ONLY,
+} from './run_local_storage_data_source';
+import {RunsLocalStorageEffects, TEST_ONLY} from './runs_local_storage_effects';
 
 function createRun(id: string, startTime: number): Run {
   return {id, name: id, startTime};
@@ -82,6 +85,56 @@ describe('RunsLocalStorageEffects', () => {
 
   afterEach(() => {
     store?.resetSelectors();
+    window.localStorage.removeItem(STORAGE_TEST_ONLY.RUN_LOCAL_STORAGE_KEY);
+  });
+
+  it('chooses by name when start times are zero or missing', () => {
+    expect(
+      TEST_ONLY.getNewestRunId([
+        {id: 'a', name: 'a', startTime: 0},
+        {id: 'z', name: 'z', startTime: undefined},
+      ])
+    ).toBe('z');
+  });
+
+  it('clears persisted state when the fetched route has no runs', () => {
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    effects.hydrateFetchedRunsFromLocalStorage$.subscribe();
+
+    actions.next(
+      runsActions.fetchRunsSucceeded({
+        experimentIds: ['exp1'],
+        runsForAllExperiments: [],
+        newRuns: {exp1: {runs: []}},
+      })
+    );
+
+    expect(setStateSpy).toHaveBeenCalledOnceWith(
+      jasmine.stringMatching('/tmp/tensorboard/runs'),
+      [],
+      {
+        selection: new Map(),
+        colorOverrides: new Map(),
+      }
+    );
+    expect(dispatchedActions).toEqual([]);
+  });
+
+  it('does not clear persisted state before runs have loaded', () => {
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    effects.hydrateExistingRunsFromLocalStorage$.subscribe();
+
+    actions.next(
+      coreActions.environmentLoaded({
+        environment: {
+          data_location: '/tmp/tensorboard/runs',
+          window_title: '',
+        },
+      })
+    );
+
+    expect(setStateSpy).not.toHaveBeenCalled();
+    expect(dispatchedActions).toEqual([]);
   });
 
   it('hydrates from storage, moves auto white to the newest run, and writes once', () => {
@@ -225,6 +278,57 @@ describe('RunsLocalStorageEffects', () => {
         colorOverrides: new Map([['run1', '#abc']]),
         sortingInfo: {name: 'run', order: SortingOrder.ASCENDING},
       }
+    );
+  });
+
+  it('persists a group-by color reset before later hydration', () => {
+    const run = createRun('run1', 1);
+    const currentRun = {
+      ...run,
+      hparams: null,
+      metrics: null,
+      experimentId: 'exp1',
+    };
+    const namespace = TEST_ONLY.getNamespace('/tmp/tensorboard/runs', [
+      'exp1',
+    ])!;
+    dataSource.setState(namespace, [currentRun], {
+      selection: new Map(),
+      colorOverrides: new Map([['run1', '#123456']]),
+    });
+    store.overrideSelector(getDashboardRuns, [currentRun]);
+    store.overrideSelector(getRunColorOverride, new Map<string, string>());
+    store.refreshState();
+
+    effects.syncRunsToLocalStorage$.subscribe();
+    effects.hydrateExistingRunsFromLocalStorage$.subscribe();
+    actions.next(
+      runsActions.runGroupByChanged({
+        experimentIds: ['exp1'],
+        groupBy: {key: GroupByKey.RUN},
+      })
+    );
+
+    expect(dataSource.getState(namespace, [currentRun]).colorOverrides).toEqual(
+      new Map()
+    );
+
+    dispatchedActions = [];
+    actions.next(
+      coreActions.environmentLoaded({
+        environment: {
+          data_location: '/tmp/tensorboard/runs',
+          window_title: '',
+        },
+      })
+    );
+
+    expect(dispatchedActions).toContain(
+      runsActions.runLocalStorageHydrated({
+        runIds: ['run1'],
+        selection: {},
+        colorOverrides: {run1: '#fff'},
+      })
     );
   });
 
