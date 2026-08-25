@@ -33,6 +33,7 @@ from tensorboard.backend.event_processing import data_provider
 from tensorboard.backend.event_processing import (
     plugin_event_multiplexer as event_multiplexer,
 )
+from tensorboard.data import ingester as ingester_lib
 from tensorboard.data import provider
 from tensorboard.plugins import base_plugin
 from tensorboard.plugins.core import core_plugin
@@ -174,6 +175,73 @@ class CorePluginTest(tf.test.TestCase):
         routes = self.plugin.get_plugin_apps()
         self.assertIsInstance(routes["/data/logdir"], collections.abc.Callable)
         self.assertIsInstance(routes["/data/runs"], collections.abc.Callable)
+        self.assertIsInstance(routes["/data/reload"], collections.abc.Callable)
+
+    def testReloadInvokesIngester(self):
+        class FakeIngester:
+            def __init__(self):
+                self.called = False
+
+            def request_reload(self, timeout=None):
+                del timeout
+                self.called = True
+                return True
+
+        ingester = FakeIngester()
+        provider = data_provider.MultiplexerDataProvider(
+            self.multiplexer, self.logdir
+        )
+        context = base_plugin.TBContext(
+            assets_zip_provider=get_test_assets_zip_provider(),
+            logdir=self.logdir,
+            data_provider=provider,
+            data_ingester=ingester,
+        )
+        plugin = core_plugin.CorePlugin(context)
+        app = application.TensorBoardWSGI([plugin])
+        server = werkzeug_test.Client(app, wrappers.Response)
+
+        for method in (server.get, server.post):
+            ingester.called = False
+            response = method("/data/reload")
+            self.assertEqual(200, response.status_code)
+            payload = json.loads(response.get_data().decode("utf-8"))
+            self.assertEqual(payload, {"status": "ok", "reloaded": True})
+            self.assertTrue(ingester.called)
+
+    def testReloadReturnsSuccessWhenUnsupported(self):
+        response = self.server.get("/data/reload")
+
+        self.assertEqual(200, response.status_code)
+        payload = json.loads(response.get_data().decode("utf-8"))
+        self.assertEqual(payload, {"status": "ok", "reloaded": False})
+
+    def testReloadReturnsErrorWhenAttemptFails(self):
+        data_ingester = mock.Mock()
+        data_ingester.request_reload.side_effect = ingester_lib.ReloadError(
+            "reload timed out"
+        )
+        provider = data_provider.MultiplexerDataProvider(
+            self.multiplexer, self.logdir
+        )
+        context = base_plugin.TBContext(
+            assets_zip_provider=get_test_assets_zip_provider(),
+            logdir=self.logdir,
+            data_provider=provider,
+            data_ingester=data_ingester,
+        )
+        plugin = core_plugin.CorePlugin(context)
+        app = application.TensorBoardWSGI([plugin])
+        server = werkzeug_test.Client(app, wrappers.Response)
+
+        response = server.post("/data/reload")
+
+        self.assertEqual(500, response.status_code)
+        payload = json.loads(response.get_data().decode("utf-8"))
+        self.assertEqual(
+            payload,
+            {"status": "error", "error": "reload timed out"},
+        )
 
     def testIndex_returnsActualHtml(self):
         """Test the format of the root / endpoint."""

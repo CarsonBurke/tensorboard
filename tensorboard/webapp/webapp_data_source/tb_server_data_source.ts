@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {Injectable} from '@angular/core';
-import {forkJoin, from, Observable, throwError} from 'rxjs';
-import {catchError, map} from 'rxjs/operators';
+import {forkJoin, from, Observable, of, throwError} from 'rxjs';
+import {catchError, finalize, map, shareReplay} from 'rxjs/operators';
 import {PluginsListFailureCode} from '../core/types';
 import '../tb_polymer_interop_types';
 import {Environment, PluginsListing} from '../types/api';
@@ -53,6 +53,7 @@ export class TBServerError {
 export class TBServerDataSource {
   // TODO(soergel): implements WebappDataSource
   private tfBackend = document.createElement('tf-backend').tf_backend;
+  private inFlightReload: Observable<void> | null = null;
 
   constructor(private http: TBHttpClient) {}
 
@@ -81,5 +82,31 @@ export class TBServerDataSource {
       map(([data]) => data),
       catchError(handleError)
     );
+  }
+
+  /**
+   * Ask the backend to rescan the logdir, then wait until that scan
+   * finishes. Concurrent callers share one in-flight request. A missing
+   * endpoint (older server) is treated as success so the UI still
+   * refetches whatever the last snapshot already has.
+   *
+   * GET rather than POST so Colab embeddings work (they cannot POST).
+   */
+  requestBackendReload(): Observable<void> {
+    if (!this.inFlightReload) {
+      this.inFlightReload = this.http.get<unknown>('data/reload').pipe(
+        map(() => undefined as void),
+        catchError((error) => {
+          return error instanceof HttpErrorResponse && error.status === 404
+            ? of(undefined as void)
+            : throwError(error);
+        }),
+        finalize(() => {
+          this.inFlightReload = null;
+        }),
+        shareReplay(1)
+      );
+    }
+    return this.inFlightReload;
   }
 }

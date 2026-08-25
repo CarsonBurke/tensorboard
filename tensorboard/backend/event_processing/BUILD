@@ -56,6 +56,7 @@ py_test(
         "//tensorboard:expect_tensorflow_installed",
         "//tensorboard:test",
         "//tensorboard/compat:tensorflow",
+        "//tensorboard/util:test_util",
     ],
 )
 

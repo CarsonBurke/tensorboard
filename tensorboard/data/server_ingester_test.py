@@ -25,6 +25,7 @@ import grpc
 
 from tensorboard import test as tb_test
 from tensorboard.data import grpc_provider
+from tensorboard.data import ingester
 from tensorboard.data import server_ingester
 from tensorboard.util import grpc_util
 
@@ -118,6 +119,74 @@ class SubprocessServerDataIngesterTest(tb_test.TestCase):
         sc.assert_called_once_with(
             "localhost:23456", mock.ANY, options=mock.ANY
         )
+        self.assertEqual(ingester._reload_request_path, port_file + ".reload")
+        self.assertEqual(
+            ingester._reload_done_path, port_file + ".reload.done"
+        )
+
+    def test_request_reload_waits_for_acknowledgment(self):
+        ingester = server_ingester.SubprocessServerDataIngester(
+            server_binary=server_ingester.ServerBinary(__file__, version=None),
+            logdir=self.get_temp_dir(),
+            reload_interval=5,
+            channel_creds_type=grpc_util.ChannelCredsType.LOCAL,
+        )
+        ingester._reload_request_path = os.path.join(
+            self.get_temp_dir(), "port.reload"
+        )
+        ingester._reload_done_path = os.path.join(
+            self.get_temp_dir(), "port.reload.done"
+        )
+        ingester._process = mock.Mock()
+        ingester._process.poll.return_value = None
+        with open(ingester._reload_done_path, "w") as outfile:
+            outfile.write("1\n")
+
+        self.assertTrue(ingester.request_reload(timeout=1))
+        with open(ingester._reload_request_path) as infile:
+            self.assertEqual(infile.read(), "1\n")
+
+    def test_request_reload_stops_when_server_exits(self):
+        data_ingester = server_ingester.SubprocessServerDataIngester(
+            server_binary=server_ingester.ServerBinary(__file__, version=None),
+            logdir=self.get_temp_dir(),
+            reload_interval=5,
+            channel_creds_type=grpc_util.ChannelCredsType.LOCAL,
+        )
+        data_ingester._reload_request_path = os.path.join(
+            self.get_temp_dir(), "port.reload"
+        )
+        data_ingester._reload_done_path = os.path.join(
+            self.get_temp_dir(), "port.reload.done"
+        )
+        data_ingester._process = mock.Mock()
+        data_ingester._process.poll.return_value = 1
+        with open(data_ingester._reload_done_path, "w") as outfile:
+            outfile.write("0\n")
+
+        with self.assertRaisesRegex(ingester.ReloadError, "exited"):
+            data_ingester.request_reload(timeout=60)
+
+    def test_request_reload_raises_after_supported_server_times_out(self):
+        data_ingester = server_ingester.SubprocessServerDataIngester(
+            server_binary=server_ingester.ServerBinary(__file__, version=None),
+            logdir=self.get_temp_dir(),
+            reload_interval=5,
+            channel_creds_type=grpc_util.ChannelCredsType.LOCAL,
+        )
+        data_ingester._reload_request_path = os.path.join(
+            self.get_temp_dir(), "port.reload"
+        )
+        data_ingester._reload_done_path = os.path.join(
+            self.get_temp_dir(), "port.reload.done"
+        )
+        data_ingester._process = mock.Mock()
+        data_ingester._process.poll.return_value = None
+        with open(data_ingester._reload_done_path, "w") as outfile:
+            outfile.write("0\n")
+
+        with self.assertRaisesRegex(ingester.ReloadError, "within"):
+            data_ingester.request_reload(timeout=0.01)
 
 
 class ServerInfoTest(tb_test.TestCase):

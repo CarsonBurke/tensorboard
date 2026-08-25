@@ -19,6 +19,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 import time
 
 import grpc
@@ -91,6 +92,12 @@ class SubprocessServerDataIngester(ingester.DataIngester):
         self._channel_creds_type = channel_creds_type
         self._samples_per_plugin = samples_per_plugin or {}
         self._extra_flags = list(extra_flags or [])
+        self._process = None
+        self._tmpdir = None
+        self._reload_request_path = None
+        self._reload_done_path = None
+        self._reload_generation = 0
+        self._reload_lock = threading.Lock()
 
     @property
     def data_provider(self):
@@ -103,9 +110,12 @@ class SubprocessServerDataIngester(ingester.DataIngester):
             return
 
         tmpdir = tempfile.TemporaryDirectory(prefix="tensorboard_data_server_")
+        # Keep the directory alive so the reloader can see poke files.
+        self._tmpdir = tmpdir
         port_file_path = os.path.join(tmpdir.name, "port")
         error_file_path = os.path.join(tmpdir.name, "startup_error")
-
+        self._reload_request_path = port_file_path + ".reload"
+        self._reload_done_path = port_file_path + ".reload.done"
         if self._reload_interval <= 0:
             reload = "once"
         else:
@@ -136,6 +146,7 @@ class SubprocessServerDataIngester(ingester.DataIngester):
 
         logger.info("Spawning data server: %r", args)
         popen = subprocess.Popen(args, stdin=subprocess.PIPE)
+        self._process = popen
         # Stash stdin to avoid calling its destructor: on Windows, this
         # is a `subprocess.Handle` that closes itself in `__del__`,
         # which would cause the data server to shut down. (This is not
@@ -187,6 +198,59 @@ class SubprocessServerDataIngester(ingester.DataIngester):
             raise DataServerStartupError(msg) from e
         logger.info("Got valid response from data server")
         self._data_provider = grpc_provider.GrpcDataProvider(addr, stub)
+
+    def request_reload(self, timeout=None):
+        """Poke the data server to rescan, then wait for that cycle.
+
+        Writes an incrementing generation to ``reload`` next to the port
+        file. A data server that understands this protocol interrupts its
+        sleep, rescans, and writes the generation to ``reload.done``.
+        Older binaries ignore the files; if ``reload.done`` never appears
+        this returns False after a short probe instead of blocking. Once
+        support is detected, process exit or acknowledgment timeout raises
+        ``ReloadError``.
+        """
+        if not self._reload_request_path:
+            return False
+        if timeout is None:
+            timeout = 180
+        with self._reload_lock:
+            self._reload_generation += 1
+            generation = self._reload_generation
+            with open(self._reload_request_path, "w", encoding="ascii") as f:
+                f.write("%d\n" % generation)
+        start = time.time()
+        deadline = start + timeout
+        saw_done = False
+        while time.time() < deadline:
+            done = _maybe_read_file(self._reload_done_path)
+            if done is not None:
+                saw_done = True
+                try:
+                    if int(done.strip()) >= generation:
+                        return True
+                except ValueError:
+                    pass
+            if self._process is not None and self._process.poll() is not None:
+                message = (
+                    "Data server exited before acknowledging reload "
+                    "generation %d" % generation
+                )
+                logger.warning(message)
+                raise ingester.ReloadError(message)
+            elif not saw_done and time.time() - start > 2:
+                logger.info(
+                    "Data server did not write reload.done; "
+                    "on-demand reload is unsupported by this binary"
+                )
+                return False
+            time.sleep(0.05)
+        message = (
+            "Data server did not acknowledge reload generation %d within %ss"
+            % (generation, timeout)
+        )
+        logger.warning(message)
+        raise ingester.ReloadError(message)
 
 
 def _maybe_read_file(path):

@@ -23,6 +23,7 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {Store} from '@ngrx/store';
 import {MockStore, provideMockStore} from '@ngrx/store/testing';
 import {changePlugin, manualReload} from '../core/actions';
+import {of, Subject} from 'rxjs';
 import {State} from '../core/store';
 import {
   getActivePlugin,
@@ -43,9 +44,11 @@ import {HeaderComponent} from './header_component';
 import {PluginSelectorComponent} from './plugin_selector_component';
 import {PluginSelectorContainer} from './plugin_selector_container';
 import {ReloadContainer} from './reload_container';
+import {TBServerDataSource} from '../webapp_data_source/tb_server_data_source';
 
 describe('header test', () => {
   let store: MockStore<State>;
+  let requestBackendReload: jasmine.Spy;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
@@ -69,6 +72,15 @@ describe('header test', () => {
           ),
         }),
         HeaderComponent,
+        {
+          provide: TBServerDataSource,
+          useFactory: () => {
+            requestBackendReload = jasmine
+              .createSpy('requestBackendReload')
+              .and.returnValue(of(undefined));
+            return {requestBackendReload};
+          },
+        },
       ],
       declarations: [
         HeaderComponent,
@@ -178,8 +190,47 @@ describe('header test', () => {
       button.nativeElement.click();
       fixture.detectChanges();
 
+      expect(requestBackendReload).toHaveBeenCalledTimes(1);
       expect(dispatch).toHaveBeenCalledTimes(1);
       expect(dispatch).toHaveBeenCalledWith(manualReload());
+    });
+
+    it('ignores clicks while the backend reload is in flight', () => {
+      const backendReload = new Subject<void>();
+      const dispatch = spyOn(store, 'dispatch');
+      const fixture = TestBed.createComponent(HeaderComponent);
+      requestBackendReload.and.returnValue(backendReload);
+      fixture.detectChanges();
+
+      const button = fixture.debugElement.query(
+        By.css('app-header-reload button')
+      );
+      button.nativeElement.click();
+      button.nativeElement.click();
+
+      expect(requestBackendReload).toHaveBeenCalledTimes(1);
+      expect(dispatch).not.toHaveBeenCalled();
+
+      backendReload.next();
+      backendReload.complete();
+
+      expect(dispatch).toHaveBeenCalledOnceWith(manualReload());
+    });
+
+    it('does not reload stale data when the backend reload fails', () => {
+      const backendReload = new Subject<void>();
+      const dispatch = spyOn(store, 'dispatch');
+      const fixture = TestBed.createComponent(HeaderComponent);
+      requestBackendReload.and.returnValue(backendReload);
+      fixture.detectChanges();
+
+      const button = fixture.debugElement.query(
+        By.css('app-header-reload button')
+      );
+      button.nativeElement.click();
+      backendReload.error(new Error('reload failed'));
+
+      expect(dispatch).not.toHaveBeenCalled();
     });
 
     it('renders the time of refresh in title', () => {

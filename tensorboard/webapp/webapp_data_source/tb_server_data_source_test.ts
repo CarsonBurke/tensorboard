@@ -127,6 +127,46 @@ describe('tb_server_data_source', () => {
       }));
     });
 
+    describe('requestBackendReload', () => {
+      it('gets data/reload', fakeAsync(() => {
+        const results = jasmine.createSpy();
+        dataSource.requestBackendReload().subscribe(results);
+
+        httpMock.expectOne('data/reload').flush({status: 'ok'});
+        flush();
+
+        expect(results).toHaveBeenCalled();
+      }));
+
+      it('treats a missing reload endpoint as success', fakeAsync(() => {
+        const results = jasmine.createSpy();
+        const error = jasmine.createSpy();
+        dataSource.requestBackendReload().subscribe(results, error);
+
+        httpMock
+          .expectOne('data/reload')
+          .error(new ErrorEvent('FakeError'), {status: 404});
+        flush();
+
+        expect(results).toHaveBeenCalled();
+        expect(error).not.toHaveBeenCalled();
+      }));
+
+      it('propagates reload endpoint failures', fakeAsync(() => {
+        const results = jasmine.createSpy();
+        const error = jasmine.createSpy();
+        dataSource.requestBackendReload().subscribe(results, error);
+
+        httpMock
+          .expectOne('data/reload')
+          .error(new ErrorEvent('FakeError'), {status: 500});
+        flush();
+
+        expect(results).not.toHaveBeenCalled();
+        expect(error).toHaveBeenCalled();
+      }));
+    });
+
     describe('handleError', () => {
       it('handles 404 failures as NOT_FOUND', fakeAsync(() => {
         const error = jasmine.createSpy();

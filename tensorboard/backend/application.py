@@ -68,6 +68,7 @@ def TensorBoardWSGIApp(
     deprecated_multiplexer=None,
     auth_providers=None,
     experimental_middlewares=None,
+    data_ingester=None,
 ):
     """Constructs a TensorBoard WSGI app from plugins and data providers.
 
@@ -114,6 +115,7 @@ def TensorBoardWSGIApp(
         plugin_name_to_instance=plugin_name_to_instance,
         sampling_hints=flags.samples_per_plugin,
         window_title=flags.window_title,
+        data_ingester=data_ingester,
     )
     tbplugins = []
     experimental_plugins = []

@@ -23,6 +23,7 @@ from unittest import mock
 from tensorboard import test as tb_test
 from tensorboard.backend.event_processing import data_ingester
 from tensorboard.compat import tf
+from tensorboard.util import test_util
 
 
 _ORIGINAL_IMPORT = __import__
@@ -411,6 +412,22 @@ class FileSystemSupportTest(tb_test.TestCase):
                     flags=FakeFlags(logdir="logdir")
                 )
         mock_check_filesystem_support.assert_not_called()
+
+
+class RequestReloadTest(tb_test.TestCase):
+    def testRequestReloadPicksUpNewRun(self):
+        logdir = self.get_temp_dir()
+        flags = FakeFlags(logdir=logdir, reload_interval=10000)
+        with mock.patch.object(tf, "__version__", new="stub"):
+            ingester = data_ingester.LocalDataIngester(flags)
+        self.assertEqual(list(ingester.deprecated_multiplexer.Runs()), [])
+
+        run_path = os.path.join(logdir, "new_run")
+        with test_util.FileWriter(run_path) as writer:
+            writer.add_test_summary("foo")
+
+        self.assertTrue(ingester.request_reload())
+        self.assertIn("new_run", ingester.deprecated_multiplexer.Runs())
 
 
 if __name__ == "__main__":
