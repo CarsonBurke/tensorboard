@@ -34,6 +34,7 @@ import {
 import {RouteKind} from '../app_routing/types';
 import {State} from '../app_state';
 import {getDarkModeEnabled} from '../feature_flag/store/feature_flag_selectors';
+import {getCardRunLoadStates} from '../metrics/store/metrics_selectors';
 import {
   getDefaultRunColorIdMap,
   getRunColorOverride,
@@ -44,6 +45,7 @@ import {
   getRunSelectorRegexFilter,
 } from '../runs/store/runs_selectors';
 import {ExperimentId, RunId} from '../runs/store/runs_types';
+import {DataLoadState} from '../types/data';
 import {selectors} from '../settings';
 import {ColorPalette} from './colors';
 import {matchRunToRegex, RunMatchable} from './matcher';
@@ -51,8 +53,13 @@ import {matchRunToRegex, RunMatchable} from './matcher';
 /**
  * Creates a copy of RunSelectionMap with entries filtered to runs that
  * belong to one of the current experiments in the route.
+ *
+ * Unlike `getCurrentRouteRunSelection`, the run selector's regex filter is not
+ * applied; the result reflects only what the user checked. Data loading keys
+ * off of this so that typing in the filter box neither discards nor refetches
+ * series.
  */
-const getRunSelectionMapFilteredToCurrentRoute = createSelector<
+export const getRunSelectionMapFilteredToCurrentRoute = createSelector<
   State,
   string[] | null,
   Map<string, boolean>,
@@ -78,6 +85,38 @@ const getRunSelectionMapFilteredToCurrentRoute = createSelector<
       }
     }
     return filteredRunSelectionMap;
+  }
+);
+
+/**
+ * Load state for a multi-run card, limited to runs that are still selected.
+ *
+ * In-flight bookkeeping for a deselected run remains in metrics state so a
+ * quick re-selection does not duplicate its request, but it must not keep the
+ * visible card's spinner running.
+ */
+export const getMultiRunCardLoadState = createSelector(
+  getCardRunLoadStates,
+  getRunSelectionMapFilteredToCurrentRoute,
+  ({tagRunIds, runToLoadState}, runSelection): DataLoadState => {
+    const trackedRunIds = tagRunIds.filter(
+      (runId) => runSelection.get(runId) && runToLoadState.hasOwnProperty(runId)
+    );
+    if (!trackedRunIds.length) {
+      return DataLoadState.NOT_LOADED;
+    }
+    if (
+      trackedRunIds.every(
+        (runId) => runToLoadState[runId] === DataLoadState.LOADED
+      )
+    ) {
+      return DataLoadState.LOADED;
+    }
+    return trackedRunIds.some(
+      (runId) => runToLoadState[runId] === DataLoadState.LOADING
+    )
+      ? DataLoadState.LOADING
+      : DataLoadState.NOT_LOADED;
   }
 );
 

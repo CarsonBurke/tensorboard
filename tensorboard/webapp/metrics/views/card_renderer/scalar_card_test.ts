@@ -151,7 +151,7 @@ import {VisLinkedTimeSelectionWarningModule} from './vis_linked_time_selection_w
       [ngTemplateOutletContext]="{
         data: tooltipDataForTesting,
         cursorLocationInDataCoord: cursorLocationInDataCoordForTesting,
-        cursorLocation: cursorLocationForTesting
+        cursorLocation: cursorLocationForTesting,
       }"
     ></ng-container>
     <ng-container
@@ -449,7 +449,7 @@ describe('scalar card', () => {
     it('renders loading spinner when loading', fakeAsync(() => {
       provideMockCardRunToSeriesData(selectSpy, PluginType.SCALARS, 'card1');
       store.overrideSelector(
-        selectors.getCardLoadState,
+        selectors.getMultiRunCardLoadState,
         DataLoadState.NOT_LOADED
       );
       triggerStoreUpdate();
@@ -458,19 +458,28 @@ describe('scalar card', () => {
       let loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
       expect(loadingEl).not.toBeTruthy();
 
-      store.overrideSelector(selectors.getCardLoadState, DataLoadState.LOADING);
+      store.overrideSelector(
+        selectors.getMultiRunCardLoadState,
+        DataLoadState.LOADING
+      );
       triggerStoreUpdate();
       fixture.detectChanges();
       loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
       expect(loadingEl).toBeTruthy();
 
-      store.overrideSelector(selectors.getCardLoadState, DataLoadState.LOADED);
+      store.overrideSelector(
+        selectors.getMultiRunCardLoadState,
+        DataLoadState.LOADED
+      );
       triggerStoreUpdate();
       fixture.detectChanges();
       loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
       expect(loadingEl).not.toBeTruthy();
 
-      store.overrideSelector(selectors.getCardLoadState, DataLoadState.FAILED);
+      store.overrideSelector(
+        selectors.getMultiRunCardLoadState,
+        DataLoadState.FAILED
+      );
       triggerStoreUpdate();
       fixture.detectChanges();
       loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
@@ -3314,6 +3323,61 @@ describe('scalar card', () => {
           color: '#fff',
           relativeTime: 1000,
           run: 'run2',
+          step: 2,
+          value: 10,
+          smoothed: 10,
+        },
+      ]);
+    }));
+
+    it('skips selected runs that have no points', fakeAsync(() => {
+      // A selected run that has no data for the card's tag renders no row;
+      // reading the point closest to the selection would throw.
+      const runToSeries = {
+        run1: [
+          {wallTime: 1, value: 1, step: 1},
+          {wallTime: 2, value: 10, step: 2},
+        ],
+        run2: [],
+      };
+      provideMockCardRunToSeriesData(
+        selectSpy,
+        PluginType.SCALARS,
+        'card1',
+        null /* metadataOverride */,
+        runToSeries
+      );
+      store.overrideSelector(
+        selectors.getCurrentRouteRunSelection,
+        new Map([
+          ['run1', true],
+          ['run2', true],
+        ])
+      );
+      store.overrideSelector(
+        commonSelectors.getFilteredRenderableRunsIds,
+        new Set(['run1', 'run2'])
+      );
+      store.overrideSelector(getMetricsLinkedTimeSelection, {
+        start: {step: 2},
+        end: null,
+      });
+
+      const fixture = createComponent('card1');
+      const scalarCardDataTable = fixture.debugElement.query(
+        By.directive(ScalarCardDataTable)
+      );
+      fixture.detectChanges();
+
+      const data =
+        scalarCardDataTable.componentInstance.getTimeSelectionTableData();
+
+      expect(data).toEqual([
+        {
+          id: 'run1',
+          color: '#fff',
+          relativeTime: 1000,
+          run: 'run1',
           step: 2,
           value: 10,
           smoothed: 10,

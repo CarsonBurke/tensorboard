@@ -37,6 +37,7 @@ import {
   getPinnedCardId,
   getRunIds,
   getTimeSeriesLoadable,
+  retainTimeSeriesRuns,
   TEST_ONLY,
 } from './metrics_store_internal_utils';
 import {
@@ -118,6 +119,106 @@ describe('metrics store utils', () => {
     for (const testCase of cases) {
       expect(testCase.actual).toBe(testCase.expected);
     }
+  });
+
+  it('retainTimeSeriesRuns drops series for other runs', () => {
+    const timeSeriesData = {
+      scalars: {
+        tagA: {
+          runToSeries: {run1: [], run2: []},
+          runToLoadState: {
+            run1: DataLoadState.LOADED,
+            run2: DataLoadState.LOADED,
+          },
+        },
+      },
+      histograms: {},
+      images: {
+        tagC: {
+          0: {
+            runToSeries: {run1: [], run3: []},
+            runToLoadState: {
+              run1: DataLoadState.LOADED,
+              run3: DataLoadState.FAILED,
+            },
+          },
+        },
+      },
+    };
+    expect(retainTimeSeriesRuns(timeSeriesData, new Set(['run1']))).toEqual({
+      scalars: {
+        tagA: {
+          runToSeries: {run1: []},
+          runToLoadState: {run1: DataLoadState.LOADED},
+        },
+      },
+      histograms: {},
+      images: {
+        tagC: {
+          0: {
+            runToSeries: {run1: []},
+            runToLoadState: {run1: DataLoadState.LOADED},
+          },
+        },
+      },
+    });
+  });
+
+  it('retainTimeSeriesRuns keeps object identity when nothing is dropped', () => {
+    const scalarLoadable = {
+      runToSeries: {run1: []},
+      runToLoadState: {run1: DataLoadState.LOADED},
+    };
+    const imageLoadable = {
+      runToSeries: {run1: []},
+      runToLoadState: {run1: DataLoadState.LOADING},
+    };
+    const timeSeriesData = {
+      scalars: {tagA: scalarLoadable},
+      histograms: {},
+      images: {tagC: {0: imageLoadable}},
+    };
+
+    const actual = retainTimeSeriesRuns(
+      timeSeriesData,
+      new Set(['run1', 'run2'])
+    );
+
+    expect(actual).toBe(timeSeriesData);
+    expect(actual.scalars['tagA']).toBe(scalarLoadable);
+    expect(actual.images['tagC'][0]).toBe(imageLoadable);
+  });
+
+  it('retainTimeSeriesRuns keeps the load state of in-flight runs', () => {
+    const timeSeriesData = {
+      scalars: {
+        tagA: {
+          runToSeries: {run1: [], run2: []},
+          runToLoadState: {
+            run1: DataLoadState.LOADED,
+            run2: DataLoadState.LOADING,
+          },
+        },
+      },
+      histograms: {},
+      images: {},
+    };
+
+    // A request for 'run2' is in flight and cannot be cancelled; dropping its
+    // load state would let the next trigger request it a second time.
+    expect(retainTimeSeriesRuns(timeSeriesData, new Set(['run1']))).toEqual({
+      scalars: {
+        tagA: {
+          runToSeries: {run1: []},
+          runToLoadState: {
+            run1: DataLoadState.LOADED,
+            run2: DataLoadState.LOADING,
+          },
+        },
+      },
+      histograms: {},
+      images: {},
+    });
   });
 
   describe('createPluginDataWithLoadable', () => {

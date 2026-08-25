@@ -30,6 +30,7 @@ import {
   getMetricsCardRangeSelectionEnabled,
   getMetricsCardTimeSelection,
   getMetricsCardUserViewBox,
+  getMultiRunCardLoadState,
 } from '../../../selectors';
 import {DataLoadState} from '../../../types/data';
 import {
@@ -46,7 +47,6 @@ import {
   timeSelectionChanged,
 } from '../../actions';
 import {
-  getCardLoadState,
   getMetricsIgnoreOutliers,
   getMetricsTooltipSort,
   getMetricsXAxisType,
@@ -168,7 +168,7 @@ export class ScalarCardLineChartContainer
       this.cardId
     );
 
-    this.loadState$ = this.store.select(getCardLoadState, this.cardId);
+    this.loadState$ = this.store.select(getMultiRunCardLoadState, this.cardId);
 
     this.rangeEnabled$ = this.store.select(
       getMetricsCardRangeSelectionEnabled(this.cardId)

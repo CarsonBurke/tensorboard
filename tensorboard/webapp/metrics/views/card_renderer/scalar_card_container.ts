@@ -62,6 +62,7 @@ import {
   getRunColorMap,
   getCurrentRouteRunSelection,
   getGroupedHeadersForCard,
+  getMultiRunCardLoadState,
   getRunToHparamMap,
 } from '../../../selectors';
 import {DataLoadState} from '../../../types/data';
@@ -87,7 +88,6 @@ import {
 import {PluginType, ScalarStepDatum} from '../../data_source';
 import {
   CardState,
-  getCardLoadState,
   getCardMetadata,
   getCardTimeSeries,
   getMetricsCardMinMax,
@@ -591,8 +591,8 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
                   : displayName,
               visible: Boolean(
                 runSelectionMap &&
-                  runSelectionMap.get(runId) &&
-                  renderableRuns.has(runId)
+                runSelectionMap.get(runId) &&
+                renderableRuns.has(runId)
               ),
               color: colorMap[runId] ?? '#fff',
               aux: false,
@@ -624,7 +624,7 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
       startWith({} as ScalarCardSeriesMetadataMap)
     );
 
-    this.loadState$ = this.store.select(getCardLoadState, this.cardId);
+    this.loadState$ = this.store.select(getMultiRunCardLoadState, this.cardId);
 
     this.tag$ = cardMetadata$.pipe(
       map((cardMetadata) => {
@@ -670,9 +670,9 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
     ]).pipe(
       map(([experimentId, idToAlias, run]) => {
         const alias =
-          experimentId !== null ? idToAlias[experimentId] ?? null : null;
+          experimentId !== null ? (idToAlias[experimentId] ?? null) : null;
         return {
-          displayName: !run && !alias ? runId : run?.name ?? '...',
+          displayName: !run && !alias ? runId : (run?.name ?? '...'),
           alias: alias,
         };
       })

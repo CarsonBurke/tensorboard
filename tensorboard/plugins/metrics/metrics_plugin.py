@@ -39,6 +39,21 @@ _SINGLE_RUN_PLUGINS = frozenset(
 _SAMPLED_PLUGINS = frozenset([image_metadata.PLUGIN_NAME])
 
 
+def _requested_runs(series_request):
+    """Returns a run-name list, or None to admit every run.
+
+    `run` remains the single-run filter. Optional `runs` filters multi-run
+    plugins such as scalars. An empty `runs` list returns no series.
+    """
+    run = series_request.get("run")
+    if isinstance(run, str) and run:
+        return [run]
+    runs = series_request.get("runs")
+    if isinstance(runs, list):
+        return runs
+    return None
+
+
 def _get_tag_description_info(mapping):
     """Gets maps from tags to descriptions, and descriptions to runs.
 
@@ -417,6 +432,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
         tag = series_request.get("tag")
         plugin = series_request.get("plugin")
         run = series_request.get("run")
+        runs = series_request.get("runs")
         sample = series_request.get("sample")
 
         if not isinstance(tag, str):
@@ -429,11 +445,19 @@ class MetricsPlugin(base_plugin.TBPlugin):
         ):
             return "Invalid plugin"
 
+        if run is not None and not isinstance(run, str):
+            return "Invalid run"
         if plugin in _SINGLE_RUN_PLUGINS and not isinstance(run, str):
             return "Missing run"
 
         if plugin in _SAMPLED_PLUGINS and not isinstance(sample, int):
             return "Missing sample"
+
+        if runs is not None and (
+            not isinstance(runs, list)
+            or not all(isinstance(item, str) for item in runs)
+        ):
+            return "Invalid runs"
 
         return None
 
@@ -458,7 +482,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
             response["error"] = request_error
             return response
 
-        runs = [run] if run else None
+        runs = _requested_runs(series_request)
         run_to_series = None
         if plugin == scalar_metadata.PLUGIN_NAME:
             run_to_series = self._get_run_to_scalar_series(

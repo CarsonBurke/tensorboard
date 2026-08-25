@@ -173,9 +173,19 @@ export const fetchTimeSeriesFailed = createAction(
   props<{request: TimeSeriesRequest}>()
 );
 
+/**
+ * A response for `request`. The request is part of the payload because the
+ * response only names the runs that had data; the reducer settles the load
+ * state of every run that was asked for.
+ */
 export const fetchTimeSeriesLoaded = createAction(
   '[Metrics] Fetch Time Series Response Loaded',
-  props<{response: TimeSeriesResponse}>()
+  props<{request: TimeSeriesRequest; response: TimeSeriesResponse}>()
+);
+
+export const unusedTimeSeriesPurged = createAction(
+  '[Metrics] Unused Time Series Purged',
+  props<{runIds: string[]}>()
 );
 
 /**

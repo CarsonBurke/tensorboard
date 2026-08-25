@@ -23,6 +23,7 @@ import {State} from '../../app_state';
 import * as coreActions from '../../core/actions';
 import {getActivePlugin} from '../../core/store';
 import * as coreTesting from '../../core/testing';
+import * as runsActions from '../../runs/actions';
 import * as selectors from '../../selectors';
 import {LoadingMechanismType} from '../../types/api';
 import {DataLoadState} from '../../types/data';
@@ -93,6 +94,14 @@ describe('metrics effects', () => {
     metricsDataSource = TestBed.inject(MetricsDataSource);
     savedPinsDataSource = TestBed.inject(SavedPinsDataSource);
     store.overrideSelector(selectors.getExperimentIdsFromRoute, null);
+    store.overrideSelector(
+      selectors.getRunSelectionMapFilteredToCurrentRoute,
+      new Map([
+        ['run1', true],
+        ['run2', true],
+      ])
+    );
+    store.overrideSelector(selectors.getPinnedCardsWithMetadata, []);
     store.overrideSelector(selectors.getMetricsIgnoreOutliers, false);
     store.overrideSelector(selectors.getMetricsScalarSmoothing, 0.3);
     store.overrideSelector(
@@ -335,7 +344,8 @@ describe('metrics effects', () => {
               tag: 'tagA',
               runId: null,
               sample: undefined,
-              loadState: DataLoadState.NOT_LOADED,
+              tagRunIds: ['run1'],
+              runToLoadState: {},
               ...rest,
             })
           );
@@ -390,18 +400,32 @@ describe('metrics effects', () => {
                   plugin: PluginType.SCALARS as MultiRunPluginType,
                   tag: 'tagA',
                   experimentIds: ['exp1'],
+                  runIds: ['run1'],
                 },
                 {
                   plugin: PluginType.SCALARS as MultiRunPluginType,
                   tag: 'tagA',
                   experimentIds: ['exp1'],
+                  runIds: ['run1'],
                 },
               ],
             }),
             actions.fetchTimeSeriesLoaded({
+              request: {
+                plugin: PluginType.SCALARS as MultiRunPluginType,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
               response: buildTimeSeriesResponse(),
             }),
             actions.fetchTimeSeriesLoaded({
+              request: {
+                plugin: PluginType.SCALARS as MultiRunPluginType,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
               response: buildTimeSeriesResponse(),
             }),
           ]);
@@ -419,8 +443,8 @@ describe('metrics effects', () => {
             new Set(['card1', 'card2'])
           );
           provideCardFetchInfo([
-            {id: 'card1', loadState: DataLoadState.LOADED},
-            {id: 'card2', loadState: DataLoadState.LOADING},
+            {id: 'card1', runToLoadState: {run1: DataLoadState.LOADED}},
+            {id: 'card2', runToLoadState: {run1: DataLoadState.LOADING}},
           ]);
           store.refreshState();
           fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
@@ -436,10 +460,17 @@ describe('metrics effects', () => {
                   plugin: PluginType.SCALARS as MultiRunPluginType,
                   tag: 'tagA',
                   experimentIds: ['exp1'],
+                  runIds: ['run1'],
                 },
               ],
             }),
             actions.fetchTimeSeriesLoaded({
+              request: {
+                plugin: PluginType.SCALARS as MultiRunPluginType,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
               response: buildTimeSeriesResponse(),
             }),
           ]);
@@ -457,8 +488,8 @@ describe('metrics effects', () => {
           new Set(['card1', 'card2'])
         );
         provideCardFetchInfo([
-          {id: 'card1', loadState: DataLoadState.LOADING},
-          {id: 'card2', loadState: DataLoadState.LOADING},
+          {id: 'card1', runToLoadState: {run1: DataLoadState.LOADING}},
+          {id: 'card2', runToLoadState: {run1: DataLoadState.LOADING}},
         ]);
         store.refreshState();
         fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
@@ -498,11 +529,19 @@ describe('metrics effects', () => {
         // Reset any `getExperimentIdsFromRoute` overrides above.
         store.resetSelectors();
         store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
+        // `resetSelectors` also dropped the run selection default.
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([['run1', true]])
+        );
+        store.overrideSelector(selectors.getPinnedCardsWithMetadata, []);
         store.overrideSelector(
           selectors.getVisibleCardIdSet,
           new Set(['card1'])
         );
-        provideCardFetchInfo([{id: 'card1', loadState: DataLoadState.LOADED}]);
+        provideCardFetchInfo([
+          {id: 'card1', runToLoadState: {run1: DataLoadState.LOADED}},
+        ]);
         store.overrideSelector(selectors.getExperimentIdsFromRoute, null);
         store.refreshState();
         fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
@@ -549,7 +588,8 @@ describe('metrics effects', () => {
           plugin: PluginType.SCALARS,
           tag: 'tagA',
           runId: null,
-          loadState: DataLoadState.NOT_LOADED,
+          tagRunIds: ['run1'],
+          runToLoadState: {},
         });
         store.refreshState();
 
@@ -572,7 +612,8 @@ describe('metrics effects', () => {
           plugin: PluginType.SCALARS,
           tag: 'tagA',
           runId: null,
-          loadState: DataLoadState.NOT_LOADED,
+          tagRunIds: ['run1'],
+          runToLoadState: {},
         });
 
         const card1ElementId = nextElementId();
@@ -607,13 +648,295 @@ describe('metrics effects', () => {
           plugin: PluginType.SCALARS as MultiRunPluginType,
           tag: 'tagA',
           experimentIds: ['exp1'],
+          runIds: ['run1'],
         };
         expect(fetchTimeSeriesSpy.calls.count()).toBe(1);
         expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([expectedRequest]);
         expect(actualActions).toEqual([
           actions.multipleTimeSeriesRequested({requests: [expectedRequest]}),
-          actions.fetchTimeSeriesLoaded({response: sampleBackendResponses[0]}),
+          actions.fetchTimeSeriesLoaded({
+            request: expectedRequest,
+            response: sampleBackendResponses[0],
+          }),
         ]);
+      });
+
+      it('fetches only the selected runs that the tag has', () => {
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.returnValue(of(sampleBackendResponses));
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp1/run1', true],
+            ['exp1/run2', false],
+          ])
+        );
+        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
+          id: 'card1',
+          plugin: PluginType.SCALARS,
+          tag: 'tagA',
+          runId: null,
+          // 'exp1/run3' is selected nowhere; 'exp1/run4' has no data for the
+          // tag.
+          tagRunIds: ['exp1/run1', 'exp1/run2'],
+          runToLoadState: {},
+        });
+        store.overrideSelector(
+          selectors.getVisibleCardIdSet,
+          new Set(['card1'])
+        );
+        store.refreshState();
+        actions$.next(
+          actions.cardVisibilityChanged({
+            enteredCards: [{elementId: nextElementId(), cardId: 'card1'}],
+            exitedCards: [],
+          })
+        );
+
+        const expectedRequest: TimeSeriesRequest = {
+          plugin: PluginType.SCALARS as MultiRunPluginType,
+          tag: 'tagA',
+          experimentIds: ['exp1'],
+          runIds: ['exp1/run1'],
+        };
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([expectedRequest]);
+        expect(actualActions).toEqual([
+          actions.multipleTimeSeriesRequested({requests: [expectedRequest]}),
+          actions.fetchTimeSeriesLoaded({
+            request: expectedRequest,
+            response: sampleBackendResponses[0],
+          }),
+        ]);
+      });
+
+      it('fetches newly selected runs and purges deselected series', () => {
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.returnValue(of(sampleBackendResponses));
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp1/run1', true],
+            ['exp1/run2', true],
+          ])
+        );
+        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
+          id: 'card1',
+          plugin: PluginType.SCALARS,
+          tag: 'tagA',
+          runId: null,
+          tagRunIds: ['exp1/run1', 'exp1/run2'],
+          runToLoadState: {'exp1/run1': DataLoadState.LOADED},
+        });
+        store.overrideSelector(
+          selectors.getVisibleCardIdSet,
+          new Set(['card1'])
+        );
+        store.refreshState();
+        actions$.next(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
+
+        // Only the run that is missing is requested.
+        const expectedRequest: TimeSeriesRequest = {
+          plugin: PluginType.SCALARS as MultiRunPluginType,
+          tag: 'tagA',
+          experimentIds: ['exp1'],
+          runIds: ['exp1/run2'],
+        };
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([expectedRequest]);
+        expect(actualActions).toContain(
+          actions.unusedTimeSeriesPurged({
+            runIds: ['exp1/run1', 'exp1/run2'],
+          })
+        );
+      });
+
+      it('keeps the runs of pinned cards when purging', () => {
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.returnValue(of(sampleBackendResponses));
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp1/run1', true],
+            ['exp1/run2', false],
+          ])
+        );
+        // A pinned single-run card remains visible while its run is
+        // deselected, so its series must survive the purge.
+        store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+          {
+            cardId: 'pinnedCard1',
+            plugin: PluginType.IMAGES,
+            tag: 'tagB',
+            runId: 'exp1/run2',
+            sample: 0,
+          },
+        ]);
+        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
+          id: 'card1',
+          plugin: PluginType.SCALARS,
+          tag: 'tagA',
+          runId: null,
+          tagRunIds: ['exp1/run1'],
+          runToLoadState: {'exp1/run1': DataLoadState.LOADED},
+        });
+        store.overrideSelector(
+          selectors.getVisibleCardIdSet,
+          new Set(['card1'])
+        );
+        store.refreshState();
+        actions$.next(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
+
+        expect(actualActions).toEqual([
+          actions.unusedTimeSeriesPurged({
+            runIds: ['exp1/run1', 'exp1/run2'],
+          }),
+        ]);
+      });
+
+      it('purges after pins are removed or reconciled', () => {
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp1/run1', true],
+            ['exp1/run2', false],
+          ])
+        );
+        store.overrideSelector(selectors.getPinnedCardsWithMetadata, []);
+        store.refreshState();
+        const triggers = [
+          actions.cardPinStateToggled({
+            cardId: 'pinnedCard1',
+            canCreateNewPins: true,
+            wasPinned: true,
+          }),
+          actions.metricsClearAllPinnedCards(),
+          actions.metricsTagMetadataLoaded({
+            tagMetadata: buildDataSourceTagMetadata(),
+          }),
+        ];
+
+        for (const trigger of triggers) {
+          actualActions = [];
+          actions$.next(trigger);
+          expect(actualActions).toEqual([
+            actions.unusedTimeSeriesPurged({runIds: ['exp1/run1']}),
+          ]);
+        }
+      });
+
+      it('does not fetch or purge when the regex filter changes', () => {
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.returnValue(of(sampleBackendResponses));
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp1/run1', true],
+            ['exp1/run2', true],
+          ])
+        );
+        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
+          id: 'card1',
+          plugin: PluginType.SCALARS,
+          tag: 'tagA',
+          runId: null,
+          tagRunIds: ['exp1/run1', 'exp1/run2'],
+          runToLoadState: {
+            'exp1/run1': DataLoadState.LOADED,
+            'exp1/run2': DataLoadState.LOADED,
+          },
+        });
+        store.overrideSelector(
+          selectors.getVisibleCardIdSet,
+          new Set(['card1'])
+        );
+        store.refreshState();
+        actions$.next(
+          runsActions.runSelectorRegexFilterChanged({regexString: '('})
+        );
+
+        // The filter is a view concern; discarding data on a keystroke would
+        // refetch every run once the filter widens again.
+        expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
+        expect(actualActions).toEqual([]);
+      });
+
+      it('does not fetch when every selected run is loaded', () => {
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.returnValue(of(sampleBackendResponses));
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp1/run1', true],
+            ['exp1/run2', false],
+          ])
+        );
+        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
+          id: 'card1',
+          plugin: PluginType.SCALARS,
+          tag: 'tagA',
+          runId: null,
+          tagRunIds: ['exp1/run1', 'exp1/run2'],
+          runToLoadState: {'exp1/run1': DataLoadState.LOADED},
+        });
+        store.overrideSelector(
+          selectors.getVisibleCardIdSet,
+          new Set(['card1'])
+        );
+        store.refreshState();
+        actions$.next(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
+
+        expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
+      });
+
+      it('does not fetch when no run is selected', () => {
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.returnValue(of(sampleBackendResponses));
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp1/run1', false],
+            ['exp1/run2', false],
+          ])
+        );
+        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
+          id: 'card1',
+          plugin: PluginType.SCALARS,
+          tag: 'tagA',
+          runId: null,
+          tagRunIds: ['exp1/run1', 'exp1/run2'],
+          runToLoadState: {},
+        });
+        store.overrideSelector(
+          selectors.getVisibleCardIdSet,
+          new Set(['card1'])
+        );
+        store.refreshState();
+        actions$.next(
+          actions.cardVisibilityChanged({
+            enteredCards: [{elementId: nextElementId(), cardId: 'card1'}],
+            exitedCards: [],
+          })
+        );
+
+        expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
+        expect(actualActions).toEqual([]);
       });
 
       it('does not fetch when a loaded card exits and re-enters', () => {
@@ -627,7 +950,8 @@ describe('metrics effects', () => {
           plugin: PluginType.SCALARS,
           tag: 'tagA',
           runId: null,
-          loadState: DataLoadState.LOADED,
+          tagRunIds: ['run1'],
+          runToLoadState: {run1: DataLoadState.LOADED},
         });
 
         // Initial load.
@@ -687,7 +1011,8 @@ describe('metrics effects', () => {
             tag: 'tagA',
             runId: null,
             sample: undefined,
-            loadState: DataLoadState.NOT_LOADED,
+            tagRunIds: ['run1'],
+            runToLoadState: {},
           })
         );
         selectSpy.withArgs(TEST_ONLY.getCardFetchInfo, 'card2').and.returnValue(
@@ -697,7 +1022,8 @@ describe('metrics effects', () => {
             tag: 'tagB',
             runId: 'run1',
             sample: 5,
-            loadState: DataLoadState.NOT_LOADED,
+            tagRunIds: ['run1'],
+            runToLoadState: {},
           })
         );
 
@@ -706,6 +1032,7 @@ describe('metrics effects', () => {
             plugin: PluginType.SCALARS as MultiRunPluginType,
             tag: 'tagA',
             experimentIds: ['exp1'],
+            runIds: ['run1'],
           },
           {
             plugin: PluginType.IMAGES as SingleRunPluginType,
@@ -743,18 +1070,24 @@ describe('metrics effects', () => {
         ]);
         expect(actualActions).toEqual([
           actions.multipleTimeSeriesRequested({requests: expectedRequests}),
-          actions.fetchTimeSeriesLoaded({response: sampleBackendResponses[0]}),
-          actions.fetchTimeSeriesLoaded({response: sampleBackendResponses[1]}),
+          actions.fetchTimeSeriesLoaded({
+            request: expectedRequests[0],
+            response: sampleBackendResponses[0],
+          }),
+          actions.fetchTimeSeriesLoaded({
+            request: expectedRequests[1],
+            response: sampleBackendResponses[1],
+          }),
         ]);
       });
 
       const metaSpec = [
-        {loadState: DataLoadState.FAILED, tag: 'failed'},
-        {loadState: DataLoadState.LOADED, tag: 'loaded'},
-        {loadState: DataLoadState.LOADING, tag: 'loading'},
+        {runLoadState: DataLoadState.FAILED, tag: 'failed'},
+        {runLoadState: DataLoadState.LOADED, tag: 'loaded'},
+        {runLoadState: DataLoadState.LOADING, tag: 'loading'},
       ];
       for (const spec of metaSpec) {
-        const {loadState, tag} = spec;
+        const {runLoadState, tag} = spec;
         const title = `should not fetch when load state is ${tag}`;
         it(title, () => {
           const selectSpy = spyOn(store, 'select').and.callThrough();
@@ -765,7 +1098,8 @@ describe('metrics effects', () => {
                 id: 'card1',
                 plugin: PluginType.SCALARS,
                 tag: 'tagA',
-                loadState,
+                tagRunIds: ['run1'],
+                runToLoadState: {run1: runLoadState},
               })
             );
           fetchTimeSeriesSpy = spyOn(metricsDataSource, 'fetchTimeSeries');
@@ -802,7 +1136,8 @@ describe('metrics effects', () => {
           plugin: PluginType.SCALARS,
           tag: 'tagA',
           runId: null,
-          loadState: DataLoadState.LOADED,
+          tagRunIds: ['run1'],
+          runToLoadState: {run1: DataLoadState.LOADED},
         });
         store.overrideSelector(
           selectors.getVisibleCardIdSet,
@@ -856,7 +1191,8 @@ describe('metrics effects', () => {
           plugin: PluginType.HISTOGRAMS,
           tag: 'tagA',
           runId: null,
-          loadState: DataLoadState.LOADED,
+          tagRunIds: ['run1'],
+          runToLoadState: {run1: DataLoadState.LOADED},
         });
         store.overrideSelector(
           selectors.getVisibleCardIdSet,

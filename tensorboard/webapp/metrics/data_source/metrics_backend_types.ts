@@ -48,6 +48,7 @@ export interface BackendTimeSeriesRequest {
   plugin: PluginType;
   tag: string;
   run?: string;
+  runs?: string[];
   sample?: number;
 }
 

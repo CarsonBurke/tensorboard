@@ -25,6 +25,7 @@ import {
 } from '../../webapp_data_source/tb_http_client_testing';
 import {
   BackendTagMetadata,
+  BackendTimeSeriesRequest,
   BackendTimeSeriesResponse,
 } from './metrics_backend_types';
 import {TBMetricsDataSource} from './metrics_data_source';
@@ -258,6 +259,120 @@ describe('TBMetricsDataSource test', () => {
           plugin: PluginType.SCALARS,
           tag: 'tag1',
           runToSeries: {'exp1/run1': [], 'exp2/run1': []},
+        },
+      ]);
+    });
+
+    it('sends selected run names and returns only runs with data', () => {
+      const resultSpy = jasmine.createSpy();
+      dataSource
+        .fetchTimeSeries([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tag1',
+            experimentIds: ['exp1'],
+            runIds: ['exp1/run1', 'exp1/run2'],
+          },
+        ])
+        .subscribe(resultSpy);
+
+      const req = httpMock.expectOne(
+        '/experiment/exp1/data/plugin/timeseries/timeSeries'
+      );
+      const body = req.request.body as FormData;
+      const parsedRequests = JSON.parse(
+        body.get('requests') as string
+      ) as BackendTimeSeriesRequest[];
+      expect(parsedRequests).toEqual([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runs: ['run1', 'run2'],
+        },
+      ]);
+      req.flush([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {run1: []},
+        },
+      ] as BackendTimeSeriesResponse[]);
+
+      expect(resultSpy).toHaveBeenCalledWith([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {'exp1/run1': []},
+        },
+      ]);
+    });
+
+    it('requests each experiment with only its own selected runs', () => {
+      const resultSpy = jasmine.createSpy();
+      dataSource
+        .fetchTimeSeries([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tag1',
+            experimentIds: ['exp1', 'exp2'],
+            runIds: ['exp2/run1'],
+          },
+        ])
+        .subscribe(resultSpy);
+
+      httpMock.expectNone('/experiment/exp1/data/plugin/timeseries/timeSeries');
+      const req = httpMock.expectOne(
+        '/experiment/exp2/data/plugin/timeseries/timeSeries'
+      );
+      const body = req.request.body as FormData;
+      const parsedRequests = JSON.parse(
+        body.get('requests') as string
+      ) as BackendTimeSeriesRequest[];
+      expect(parsedRequests).toEqual([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runs: ['run1'],
+        },
+      ]);
+      req.flush([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {run1: []},
+        },
+      ] as BackendTimeSeriesResponse[]);
+
+      expect(resultSpy).toHaveBeenCalledWith([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {'exp2/run1': []},
+        },
+      ]);
+    });
+
+    it('answers without fetching when selected run ids are empty', () => {
+      const resultSpy = jasmine.createSpy();
+      dataSource
+        .fetchTimeSeries([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tag1',
+            experimentIds: ['exp1'],
+            runIds: [],
+          },
+        ])
+        .subscribe(resultSpy);
+
+      httpMock.expectNone('/experiment/exp1/data/plugin/timeseries/timeSeries');
+      // Every request answers exactly once; otherwise its runs would stay in
+      // the loading state forever.
+      expect(resultSpy).toHaveBeenCalledWith([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {},
         },
       ]);
     });

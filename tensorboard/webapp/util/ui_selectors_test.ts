@@ -19,6 +19,7 @@ import {
 import {buildRoute} from '../app_routing/testing';
 import {RouteKind} from '../app_routing/types';
 import {State} from '../app_state';
+import {DataLoadState} from '../types/data';
 import {
   buildExperiment,
   buildExperimentState,
@@ -49,7 +50,11 @@ import {
 } from '../settings/testing';
 import {buildMockState} from '../testing/utils';
 import {ColorPalette} from './colors';
-import {getCurrentRouteRunSelection, getRunColorMap} from './ui_selectors';
+import {
+  getCurrentRouteRunSelection,
+  getMultiRunCardLoadState,
+  getRunColorMap,
+} from './ui_selectors';
 
 describe('ui_selectors test', () => {
   beforeEach(() => {
@@ -60,6 +65,39 @@ describe('ui_selectors test', () => {
     getExperiment.release();
     getExperimentIdToAliasMap.release();
     getRouteKind.release();
+  });
+
+  describe('#getMultiRunCardLoadState', () => {
+    it('ignores a deselected run that is still loading', () => {
+      const runStates = {
+        tagRunIds: ['run1', 'run2'],
+        runToLoadState: {
+          run1: DataLoadState.LOADED,
+          run2: DataLoadState.LOADING,
+        },
+      };
+
+      expect(
+        getMultiRunCardLoadState.projector(
+          runStates,
+          new Map([
+            ['run1', true],
+            ['run2', false],
+          ]),
+          'card1'
+        )
+      ).toBe(DataLoadState.LOADED);
+      expect(
+        getMultiRunCardLoadState.projector(
+          runStates,
+          new Map([
+            ['run1', true],
+            ['run2', true],
+          ]),
+          'card1'
+        )
+      ).toBe(DataLoadState.LOADING);
+    });
   });
 
   describe('#getCurrentRouteRunSelection', () => {

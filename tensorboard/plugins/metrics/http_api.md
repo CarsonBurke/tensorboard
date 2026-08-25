@@ -86,6 +86,10 @@ Properties:
   - tag: string
   - run: optional string
     - The name of a requested run, required when plugin is a `SingleRunPlugin`.
+  - runs: optional string[]
+    - When set, only these run names are returned. An empty list returns no
+      series. Omit to return every run that has the tag. Ignored by
+      `SingleRunPlugin` requests, which use `run` instead.
   - sample: optional number
     - The zero-indexed sample, required when plugin is a `SampledPlugin`.
 

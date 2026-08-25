@@ -220,6 +220,174 @@ describe('metrics selectors', () => {
         );
       }
     );
+
+    it('returns loaded when only requested runs are loaded', () => {
+      selectors.getCardLoadState.release();
+
+      const loadable = {
+        runToSeries: {run2: createScalarStepData()},
+        runToLoadState: {run2: DataLoadState.LOADED},
+      };
+      const metricsState = buildMetricsState({
+        timeSeriesData: {
+          ...createTimeSeriesData(),
+          [PluginType.SCALARS]: {tagA: loadable},
+        },
+        cardMetadataMap: {
+          '<card_id>': {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runId: null,
+          },
+        },
+      });
+      metricsState.tagMetadata.scalars.tagToRuns = {tagA: ['run1', 'run2']};
+      const state = appStateFromMetricsState(metricsState);
+      expect(selectors.getCardLoadState(state, '<card_id>')).toBe(
+        DataLoadState.LOADED
+      );
+    });
+
+    it('returns not-loaded when a tag has no runs and no request', () => {
+      selectors.getCardLoadState.release();
+
+      const metricsState = buildMetricsState({
+        timeSeriesData: {
+          ...createTimeSeriesData(),
+          [PluginType.SCALARS]: {
+            tagA: {runToSeries: {}, runToLoadState: {}},
+          },
+        },
+        cardMetadataMap: {
+          '<card_id>': {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runId: null,
+          },
+        },
+      });
+      metricsState.tagMetadata.scalars.tagToRuns = {tagA: []};
+      const state = appStateFromMetricsState(metricsState);
+      expect(selectors.getCardLoadState(state, '<card_id>')).toBe(
+        DataLoadState.NOT_LOADED
+      );
+    });
+
+    it('returns not-loaded when no request has been tracked', () => {
+      selectors.getCardLoadState.release();
+
+      const metricsState = buildMetricsState({
+        timeSeriesData: {
+          ...createTimeSeriesData(),
+          [PluginType.SCALARS]: {
+            tagA: {runToSeries: {}, runToLoadState: {}},
+          },
+        },
+        cardMetadataMap: {
+          '<card_id>': {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runId: null,
+          },
+        },
+      });
+      metricsState.tagMetadata.scalars.tagToRuns = {tagA: ['run1', 'run2']};
+      const state = appStateFromMetricsState(metricsState);
+      expect(selectors.getCardLoadState(state, '<card_id>')).toBe(
+        DataLoadState.NOT_LOADED
+      );
+    });
+
+    it('ignores tracked runs that do not belong to the tag', () => {
+      selectors.getCardLoadState.release();
+
+      const metricsState = buildMetricsState({
+        timeSeriesData: {
+          ...createTimeSeriesData(),
+          [PluginType.SCALARS]: {
+            tagA: {
+              runToSeries: {run3: []},
+              runToLoadState: {run3: DataLoadState.LOADED},
+            },
+          },
+        },
+        cardMetadataMap: {
+          '<card_id>': {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runId: null,
+          },
+        },
+      });
+      metricsState.tagMetadata.scalars.tagToRuns = {tagA: ['run1', 'run2']};
+      const state = appStateFromMetricsState(metricsState);
+      expect(selectors.getCardLoadState(state, '<card_id>')).toBe(
+        DataLoadState.NOT_LOADED
+      );
+    });
+  });
+
+  describe('getCardRunLoadStates', () => {
+    it("returns the tag's runs and the load state of requested runs", () => {
+      selectors.getCardRunLoadStates.release();
+
+      const metricsState = buildMetricsState({
+        timeSeriesData: {
+          ...createTimeSeriesData(),
+          [PluginType.SCALARS]: {
+            tagA: {
+              runToSeries: {run2: createScalarStepData()},
+              runToLoadState: {
+                run2: DataLoadState.LOADED,
+                run3: DataLoadState.LOADING,
+              },
+            },
+          },
+        },
+        cardMetadataMap: {
+          '<card_id>': {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runId: null,
+          },
+        },
+      });
+      metricsState.tagMetadata.scalars.tagToRuns = {tagA: ['run1', 'run2']};
+      const state = appStateFromMetricsState(metricsState);
+
+      expect(selectors.getCardRunLoadStates(state, '<card_id>')).toEqual({
+        tagRunIds: ['run1', 'run2'],
+        runToLoadState: {
+          run2: DataLoadState.LOADED,
+          run3: DataLoadState.LOADING,
+        },
+      });
+    });
+
+    it('returns empty state for a card without a request or metadata', () => {
+      selectors.getCardRunLoadStates.release();
+
+      const metricsState = buildMetricsState({
+        cardMetadataMap: {
+          '<card_id>': {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runId: null,
+          },
+        },
+      });
+      metricsState.tagMetadata.scalars.tagToRuns = {tagA: ['run1']};
+      const state = appStateFromMetricsState(metricsState);
+
+      expect(selectors.getCardRunLoadStates(state, '<card_id>')).toEqual({
+        tagRunIds: ['run1'],
+        runToLoadState: {},
+      });
+      expect(selectors.getCardRunLoadStates(state, '<unknown_card>')).toEqual({
+        tagRunIds: [],
+        runToLoadState: {},
+      });
+    });
   });
 
   describe('getCardMetadata', () => {

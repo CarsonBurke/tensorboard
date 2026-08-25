@@ -607,6 +607,86 @@ class MetricsPluginTest(tf.test.TestCase):
             clean_response,
         )
 
+    def test_time_series_empty_legacy_run_admits_all_runs(self):
+        self._write_scalar_data("run1", "scalars/tagA", [0])
+        self._write_scalar_data("run2", "scalars/tagA", [1])
+        self._multiplexer.Reload()
+
+        requests = [{"plugin": "scalars", "tag": "scalars/tagA", "run": ""}]
+        response = self._plugin._time_series_impl(
+            context.RequestContext(), "", requests
+        )
+
+        self.assertEqual(
+            {"run1", "run2"}, set(response[0]["runToSeries"].keys())
+        )
+
+    def test_time_series_request_filters_runs_list(self):
+        self._write_scalar_data("run1", "scalars/tagA", [0])
+        self._write_scalar_data("run2", "scalars/tagA", [1])
+        self._write_scalar_data("run3", "scalars/tagA", [2])
+
+        self._multiplexer.Reload()
+
+        requests = [
+            {
+                "plugin": "scalars",
+                "tag": "scalars/tagA",
+                "runs": ["run1", "run3"],
+            }
+        ]
+        response = self._plugin._time_series_impl(
+            context.RequestContext(), "", requests
+        )
+        clean_response = self._clean_time_series_responses(response)
+
+        self.assertEqual(
+            [
+                {
+                    "plugin": "scalars",
+                    "runToSeries": {
+                        "run1": [
+                            {
+                                "step": 0,
+                                "value": 0.0,
+                                "wallTime": "<wall_time>",
+                            },
+                        ],
+                        "run3": [
+                            {
+                                "step": 0,
+                                "value": 2.0,
+                                "wallTime": "<wall_time>",
+                            },
+                        ],
+                    },
+                    "tag": "scalars/tagA",
+                }
+            ],
+            clean_response,
+        )
+
+    def test_time_series_empty_runs_list_returns_no_series(self):
+        self._write_scalar_data("run1", "scalars/tagA", [0])
+        self._multiplexer.Reload()
+
+        requests = [{"plugin": "scalars", "tag": "scalars/tagA", "runs": []}]
+        response = self._plugin._time_series_impl(
+            context.RequestContext(), "", requests
+        )
+        clean_response = self._clean_time_series_responses(response)
+
+        self.assertEqual(
+            [
+                {
+                    "plugin": "scalars",
+                    "runToSeries": {},
+                    "tag": "scalars/tagA",
+                }
+            ],
+            clean_response,
+        )
+
     def test_image_data(self):
         self._write_image("run1", "images/tagA", 1, None)
         self._multiplexer.Reload()
@@ -627,6 +707,8 @@ class MetricsPluginTest(tf.test.TestCase):
         requests = [
             {"plugin": "images"},
             {"plugin": "unknown_plugin", "tag": "tagA"},
+            {"plugin": "scalars", "tag": "tagA", "run": 123},
+            {"plugin": "scalars", "tag": "tagA", "runs": "run1"},
         ]
         response = self._plugin._time_series_impl(
             context.RequestContext(), "expid", requests
@@ -635,7 +717,10 @@ class MetricsPluginTest(tf.test.TestCase):
             series_response.get("error", "") for series_response in response
         ]
 
-        self.assertEqual(errors, ["Missing tag", "Invalid plugin"])
+        self.assertEqual(
+            ["Missing tag", "Invalid plugin", "Invalid run", "Invalid runs"],
+            errors,
+        )
 
     def test_image_data_from_time_series_query(self):
         self._write_image("run1", "images/tagA", samples=3)
