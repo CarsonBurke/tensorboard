@@ -149,7 +149,11 @@ export class ScalarCardDataTable {
     const endStep = this.stepOrLinkedTimeSelection.end?.step;
     const dataTableData: TableData[] = this.dataSeries
       .filter((datum) => {
-        return isDatumVisible(datum, this.chartMetadataMap);
+        // A series without points has no row to show, and every column below
+        // reads the point closest to the selection.
+        return (
+          datum.points.length > 0 && isDatumVisible(datum, this.chartMetadataMap)
+        );
       })
       .map((datum) => {
         const metadata = this.chartMetadataMap[datum.id];

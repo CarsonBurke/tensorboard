@@ -16,7 +16,7 @@ limitations under the License.
 //! Command-line interface for the main entry point.
 
 use clap::Clap;
-use log::{debug, error, info, LevelFilter};
+use log::{debug, error, info, warn, LevelFilter};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -161,6 +161,57 @@ impl FromStr for ReloadStrategy {
 const EXIT_BAD_LOGDIR: i32 = 8;
 const EXIT_FAILED_TO_BIND: i32 = 9;
 
+/// Reads a decimal generation from `path`, or 0 if missing/invalid.
+fn read_generation(path: &Path) -> u64 {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Writes `generation` as ASCII decimal plus newline.
+fn write_generation(path: &Path, generation: u64) {
+    if let Err(e) = std::fs::write(path, format!("{}\n", generation)) {
+        warn!("Failed to write {}: {}", path.display(), e);
+    }
+}
+
+fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut result = path.as_os_str().to_os_string();
+    result.push(suffix);
+    result.into()
+}
+
+/// Sleeps until `timeout` elapses or `reload_path` holds a newer generation.
+///
+/// Returns true if a newer generation was observed (and `last_seen` updated).
+/// `timeout == None` waits indefinitely.
+fn wait_for_reload_request(
+    reload_path: Option<&Path>,
+    last_seen: &mut u64,
+    timeout: Option<Duration>,
+) -> bool {
+    let start = Instant::now();
+    loop {
+        if let Some(path) = reload_path {
+            let gen = read_generation(path);
+            if gen > *last_seen {
+                *last_seen = gen;
+                return true;
+            }
+        }
+        if let Some(limit) = timeout {
+            if start.elapsed() >= limit {
+                return false;
+            }
+            let remaining = limit.saturating_sub(start.elapsed());
+            thread::sleep(Duration::from_millis(50).min(remaining));
+        } else {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opts = Opts::parse();
@@ -203,9 +254,9 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let bound = listener.local_addr()?;
 
-    if let Some(port_file) = opts.port_file {
+    if let Some(port_file) = opts.port_file.as_ref() {
         let port = bound.port();
-        if let Err(e) = write_port_file(&port_file, port) {
+        if let Err(e) = write_port_file(port_file, port) {
             error!(
                 "Failed to write port \"{}\" to {}: {}",
                 port,
@@ -221,6 +272,14 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let commit = Arc::new(Commit::new());
     let psh_ref = Arc::new(opts.samples_per_plugin);
+    let reload_request_path = opts
+        .port_file
+        .as_deref()
+        .map(|path| sidecar_path(path, ".reload"));
+    let reload_done_path = opts
+        .port_file
+        .as_deref()
+        .map(|path| sidecar_path(path, ".reload.done"));
     thread::Builder::new()
         .name("Reloader".to_string())
         .spawn({
@@ -231,15 +290,39 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut loader = LogdirLoader::new(&commit, logdir, 0, psh_ref);
                 // Checksum only if `--checksum` given (i.e., off by default).
                 loader.checksum(checksum);
+                let mut last_seen_generation = 0u64;
+                // Advertise support before the first (possibly long) scan so
+                // Python does not mistake a current binary for an old one.
+                if let Some(done) = &reload_done_path {
+                    write_generation(done, last_seen_generation);
+                }
                 loop {
                     info!("Starting load cycle");
                     let start = Instant::now();
                     loader.reload();
                     let end = Instant::now();
                     info!("Finished load cycle ({:?})", end - start);
+                    if let Some(done) = &reload_done_path {
+                        write_generation(done, last_seen_generation);
+                    }
                     match reload_strategy {
-                        ReloadStrategy::Loop { delay } => thread::sleep(delay),
-                        ReloadStrategy::Once => break,
+                        ReloadStrategy::Loop { delay } => {
+                            wait_for_reload_request(
+                                reload_request_path.as_deref(),
+                                &mut last_seen_generation,
+                                Some(delay),
+                            );
+                        }
+                        ReloadStrategy::Once => {
+                            if reload_request_path.is_none() {
+                                break;
+                            }
+                            wait_for_reload_request(
+                                reload_request_path.as_deref(),
+                                &mut last_seen_generation,
+                                None,
+                            );
+                        }
                     };
                 }
             }
@@ -317,5 +400,25 @@ mod tests {
         );
         "5s".parse::<ReloadStrategy>()
             .expect_err("explicit \"s\" trailer should be forbidden");
+    }
+
+    #[test]
+    fn test_sidecar_path_preserves_port_file_name() {
+        let port_file = Path::new("tmp").join("first.port");
+        assert_eq!(
+            sidecar_path(&port_file, ".reload"),
+            Path::new("tmp").join("first.port.reload")
+        );
+    }
+
+    #[test]
+    fn test_read_generation() {
+        let dir = std::env::temp_dir().join(format!("tb_reload_gen_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("reload");
+        assert_eq!(read_generation(&path), 0);
+        write_generation(&path, 7);
+        assert_eq!(read_generation(&path), 7);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

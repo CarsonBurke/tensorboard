@@ -17,6 +17,10 @@
 import abc
 
 
+class ReloadError(RuntimeError):
+    """Raised when an ingester supports on-demand reload but it fails."""
+
+
 class DataIngester(metaclass=abc.ABCMeta):
     """Link between a data source and a data provider.
 
@@ -43,4 +47,21 @@ class DataIngester(metaclass=abc.ABCMeta):
 
         Must only be called once.
         """
-        pass
+
+    def request_reload(self, timeout=None):
+        """Request an immediate logdir rescan and wait until it finishes.
+
+        The default implementation is a no-op. Implementations that poll
+        for new runs should override this so a UI refresh can discover
+        runs created after the last background cycle.
+
+        Args:
+          timeout: Optional seconds to wait. ``None`` waits until the
+            reload finishes.
+
+        Returns:
+          True if a reload ran (or was already up to date), False if this
+          ingester cannot honor the request.
+        """
+        del timeout
+        return False

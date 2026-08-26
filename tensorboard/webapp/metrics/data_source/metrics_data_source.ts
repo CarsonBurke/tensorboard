@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 import {Injectable} from '@angular/core';
 import {Store} from '@ngrx/store';
-import {forkJoin, Observable} from 'rxjs';
+import {forkJoin, Observable, of} from 'rxjs';
 import {filter, map, take, withLatestFrom} from 'rxjs/operators';
 import {
   getIsFeatureFlagsLoaded,
@@ -234,11 +234,34 @@ export class TBMetricsDataSource implements MetricsDataSource {
 
       // One multi-run request generates many responses with different
       // 'runToSeries', 'error' fields. Combine them into one.
-      const {experimentIds, ...requestRest} =
+      const {experimentIds, runIds, ...requestRest} =
         request as MultiRunTimeSeriesRequest;
-      const perExperimentRequests = experimentIds.map((experimentId) => {
-        return this.fetchTimeSeriesBackendRequest(requestRest, experimentId);
+      // `runIds`, when set, limits the request to those runs. Runs are
+      // grouped by experiment; experiments without a requested run are not
+      // queried at all.
+      const perExperimentRequests = experimentIds.flatMap((experimentId) => {
+        const backendRequest: BackendTimeSeriesRequest = {...requestRest};
+        if (runIds) {
+          backendRequest.runs = [];
+          for (const runId of runIds) {
+            const parsed = parseRunId(runId);
+            if (parsed.experimentId === experimentId) {
+              backendRequest.runs.push(parsed.run);
+            }
+          }
+          if (!backendRequest.runs.length) {
+            return [];
+          }
+        }
+        return [
+          this.fetchTimeSeriesBackendRequest(backendRequest, experimentId),
+        ];
       });
+      if (experimentIds.length && !perExperimentRequests.length) {
+        // No requested run belongs to any of the request's experiments. The
+        // request must still answer once, or its runs would load forever.
+        return of({...requestRest, runToSeries: {}} as TimeSeriesResponse);
+      }
       return forkJoin(perExperimentRequests).pipe(
         map((perExperimentResults) => {
           const {runToSeries, error, ...responseRest} =

@@ -35,6 +35,7 @@ import {
   NonPinnedCardId,
   PinnedCardId,
   TimeSelection,
+  TOOLTIP_ROWS_LIMIT_DEFAULT,
   TooltipSort,
   XAxisType,
 } from '../types';
@@ -236,6 +237,16 @@ export interface MetricsSettings {
    */
   scalarPartitionNonMonotonicX: boolean;
   /**
+   * When enabled, the scalar card tooltip is truncated to
+   * `tooltipRowsLimit` rows instead of showing all items.
+   */
+  isTooltipRowsLimitEnabled: boolean;
+  /**
+   * Number of rows shown in the scalar card tooltip when
+   * `isTooltipRowsLimitEnabled` is enabled.
+   */
+  tooltipRowsLimit: number;
+  /**
    * A non-negative, unitless number. A value of 5000 corresponds to 500%
    * increased brightness from normal.
    */
@@ -285,6 +296,8 @@ export const METRICS_SETTINGS_DEFAULT: MetricsSettings = {
   hideEmptyCards: true,
   scalarSmoothing: 0.6,
   scalarPartitionNonMonotonicX: false,
+  isTooltipRowsLimitEnabled: false,
+  tooltipRowsLimit: TOOLTIP_ROWS_LIMIT_DEFAULT,
   imageBrightnessInMilli: 1000,
   imageContrastInMilli: 1000,
   imageShowActualSize: false,

@@ -23,7 +23,82 @@ $ source tf/bin/activate
 (tf)$ pip uninstall -y tb-nightly
 ```
 
-TensorBoard builds are done with [Bazel](https://bazel.build), so you may need to [install Bazel](https://docs.bazel.build/versions/master/install.html). The Bazel build will automatically "vulcanize" all the HTML files and generate a "binary" launcher script. When HTML is vulcanized, it means all the script tags and HTML imports are inlined into one big HTML file. Then the Bazel build puts that index.html file inside a static assets zip. The python HTTP server then reads static assets from that zip while serving.
+TensorBoard builds are done with [Bazel](https://bazel.build). The supported
+version is pinned in `.bazelversion` (currently Bazel 7.7.0) so local and CI
+builds use the same incompatible-flag behavior and the same validated Bzlmod
+dependency graph. Bazelisk reads this file and selects that version
+automatically. Bazel 8 is intentionally unsupported. TensorBoard uses Bzlmod
+for dependency resolution; legacy builds with `--noenable_bzlmod` are not
+supported. Some dependencies still use legacy repository macros through the
+transitional `WORKSPACE.bzlmod` file. Normal development must not add a second
+dependency graph to `WORKSPACE`; new dependencies should use a BCR module, a
+module extension, or `use_repo_rule` in that order.
+
+Until those transitional repositories are migrated, Bazel must still evaluate
+`WORKSPACE.bzlmod`; therefore, builds must not pass `--noenable_workspace`.
+This compatibility requirement does not make legacy `--noenable_bzlmod` builds
+supported.
+
+The remaining `WORKSPACE.bzlmod` entries are intentional migration exceptions:
+
+- The pinned Closure snapshot requires TensorBoard's Protobuf 6/Soy patches.
+  The module-published Closure release is currently validated upstream with
+  Bazel 8 rather than TensorBoard's supported Bazel 7.7.0.
+- rules_nodejs 5.8.1 supplies the legacy `yarn_install`, concatjs, TypeScript,
+  and esbuild APIs used by the frontend build. The module-native rules_nodejs
+  dependency used by `aspect_rules_js` does not provide those removed APIs.
+- rules_sass has no BCR module, and replacing it means moving Sass compilation
+  into the modern JavaScript rule stack.
+- The Rust data server uses an old rules_rust toolchain and a checked-in
+  cargo-raze graph. Moving it requires a coordinated Rust toolchain and
+  crate-universe migration.
+- TensorBoard's font/JavaScript archives, Closure Java artifacts, and local
+  compatibility repositories still depend on the exceptions above.
+
+`WORKSPACE.bzlmod` should shrink as those projects are completed. A completely
+WORKSPACE-independent build is reached when the following command succeeds;
+it is a migration diagnostic that is expected to fail today, not a supported
+presubmit command:
+
+```sh
+(tf)$ bazel test //tensorboard/... --enable_bzlmod --noenable_workspace
+```
+
+The Bazel build and test configuration is currently validated on Linux only.
+Bazel downloads a checksummed Python 3.10 runtime for its actions, so the
+interpreter used by Bazel does not depend on the host `python3`. Continue to use
+the activated virtual environment for package-management commands and for the
+pip-package tests described below.
+
+Python packages imported by Bazel targets are resolved from
+`tensorboard/pip_package/requirements_bazel_lock.txt`. After changing either
+pip requirements file or the TensorFlow compatibility baseline, regenerate the
+lock on Linux with Python 3.10 and review the resulting version changes. Bazel
+tests use the stable TensorFlow version in `requirements_bazel.in`; the
+pip-package smoke test separately exercises the CI-selected version, currently
+`tf-nightly`.
+
+```sh
+(tf)$ python -m pip install "uv==0.5.31"
+(tf)$ uv pip compile --python-version 3.10 --generate-hashes \
+    --output-file tensorboard/pip_package/requirements_bazel_lock.txt \
+    tensorboard/pip_package/requirements_bazel.in
+```
+
+The Flogger artifacts used by TensorBoard's customized Soy repository are
+resolved through the `rules_jvm_external` module extension and pinned in
+`maven_install.json`. After changing their coordinates in `MODULE.bazel`,
+regenerate that lockfile with:
+
+```sh
+(tf)$ REPIN=1 bazel run @tensorboard_maven//:pin
+```
+
+The Bazel build will automatically "vulcanize" all the HTML files and generate
+a "binary" launcher script. When HTML is vulcanized, it means all the script
+tags and HTML imports are inlined into one big HTML file. Then the Bazel build
+puts that index.html file inside a static assets zip. The Python HTTP server
+then reads static assets from that zip while serving.
 
 You can build and run TensorBoard via Bazel (from within the TensorFlow nightly virtualenv) as follows:
 
@@ -270,26 +345,29 @@ Sample upgrade: https://github.com/tensorflow/tensorboard/pull/5977
     there are occasionally special instructions, especially for major releases.
     Make a mental note of any of these special instructions.
 
-2.  Update the build_bazel_rules_nodejs target in the WORKSPACE file as described
-    in the rules_nodejs release notes. Also remove or comment out the now-stale
-    links to "http://mirror.tensorflow.org/".
+2.  Update the `build_bazel_rules_nodejs` target in `WORKSPACE.bzlmod` as
+    described in the rules_nodejs release notes. This dependency still uses a
+    legacy repository macro behind the Bzlmod entry point. Also remove or
+    comment out now-stale links to "http://mirror.tensorflow.org/".
 
 3.  Update npm packages scoped with `@bazel` in package.json using yarn.
     * Use the same version as the rules_nodejs version.
     * See the previous section for instructions on how to use yarn.
 
-4.  Update the rules_sass target in the WORKSPACE file.
+4.  Update the `rules_sass` target in `WORKSPACE.bzlmod`.
     * Examine https://github.com/bazelbuild/rules_sass/tags to see the list
       of rules_sass releases.
     * Pick a tag (the most recent is likely good enough) and use that version to
-      modify the rules_sass target in the WORKSPACE file.
+      modify the `rules_sass` target in `WORKSPACE.bzlmod`.
 
 5.  Update the minimum bazel version to match the one supported by rules_nodejs:
     * Examine https://github.com/bazelbuild/rules_nodejs/blob/stable/index.bzl
       and find the SUPPORTED_BAZEL_VERSIONS constant.
-    * Compare the minimum bazel version supported by rules_nodejs to the one we
-      have specified in the WORKSPACE file. Modify the WORKSPACE file and
-      ci.yml with a new minimum version, if necessary.
+    * Compare the supported Bazel version from rules_nodejs with the version
+      pinned in `.bazelversion` and constrained by `MODULE.bazel`. Update those
+      files and `.github/workflows/ci.yml` together if the project deliberately
+      changes Bazel versions. Do not move to Bazel 8 without a separate
+      compatibility migration.
 
 6.  Attempt to rebuild and test TensorBoard to make sure it works:
     * `rm -rf node_modules; bazel clean --expunge; yarn`
@@ -301,7 +379,8 @@ Sample upgrade: https://github.com/tensorflow/tensorboard/pull/5977
     the rules_nodejs release notes (from Step 1) might be helpful.
 
 8.  Generate mirrors for the new versions of rules_nodejs and rules_sass and
-    update the WORKSPACE file with the new "http://mirror.tensorflow.org/" URLs.
+    update `WORKSPACE.bzlmod` with the new "http://mirror.tensorflow.org/"
+    URLs.
     Googlers, see information at go/tensorboard-tf-mirror.
 
 ## Updating Angular

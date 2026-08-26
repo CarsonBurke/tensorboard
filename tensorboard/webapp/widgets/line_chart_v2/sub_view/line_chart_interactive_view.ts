@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 import {
   CdkConnectedOverlay,
+  CdkOverlayOrigin,
   ConnectedPosition,
   Overlay,
   RepositionScrollStrategy,
@@ -128,7 +129,7 @@ export class LineChartInteractiveViewComponent
   domDim!: Dimension;
 
   @Input()
-  tooltipOriginEl!: ElementRef;
+  tooltipOriginEl!: CdkOverlayOrigin;
 
   @Input()
   tooltipTemplate?: TooltipTemplate;
@@ -554,8 +555,14 @@ export class LineChartInteractiveViewComponent
               metadata: this.seriesMetadataMap[seriesDatum.id],
             };
           })
-          .filter(({metadata}) => {
-            return metadata && metadata.visible && !Boolean(metadata.aux);
+          .filter(({seriesDatum, metadata}) => {
+            // Series without points have no point to put in the tooltip.
+            return (
+              seriesDatum.points.length > 0 &&
+              metadata &&
+              metadata.visible &&
+              !Boolean(metadata.aux)
+            );
           })
           .map(({seriesDatum, metadata}) => {
             const index = findClosestIndex(seriesDatum.points, cursorLoc.x);

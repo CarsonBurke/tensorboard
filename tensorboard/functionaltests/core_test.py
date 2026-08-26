@@ -39,9 +39,10 @@ class BasicTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         src_dir = os.environ["TEST_SRCDIR"]
-        binary = os.path.join(
-            src_dir, "org_tensorflow_tensorboard/tensorboard/tensorboard"
+        workspace = os.environ.get(
+            "TEST_WORKSPACE", "org_tensorflow_tensorboard"
         )
+        binary = os.path.join(src_dir, workspace, "tensorboard/tensorboard")
         cls.logdir = tempfile.mkdtemp(
             prefix="core_test_%s_logdir_" % cls.__name__
         )

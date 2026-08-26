@@ -13,7 +13,6 @@ licenses(["notice"])
 py_library(
     name = "custom_scalars_plugin",
     srcs = ["custom_scalars_plugin.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":protos_all_py_pb2",
@@ -25,14 +24,13 @@ py_library(
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/plugins/scalar:metadata",
         "//tensorboard/plugins/scalar:scalars_plugin",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
 py_library(
     name = "metadata",
     srcs = ["metadata.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         "//tensorboard/compat/proto:protos_all_py_pb2",
@@ -42,7 +40,6 @@ py_library(
 py_library(
     name = "summary",
     srcs = ["summary.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":protos_all_py_pb2",
@@ -54,7 +51,6 @@ py_test(
     name = "summary_test",
     size = "small",
     srcs = ["summary_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":protos_all_py_pb2",
@@ -70,7 +66,6 @@ py_test(
     name = "custom_scalars_plugin_test",
     size = "small",
     srcs = ["custom_scalars_plugin_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":custom_scalars_plugin",
         ":protos_all_py_pb2",
@@ -86,7 +81,7 @@ py_test(
         "//tensorboard/plugins/scalar:scalars_plugin",
         "//tensorboard/plugins/scalar:summary",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -96,7 +91,6 @@ py_test(
     size = "small",
     srcs = ["custom_scalars_plugin_test.py"],
     main = "custom_scalars_plugin_test.py",
-    srcs_version = "PY3",
     deps = [
         ":custom_scalars_plugin",
         ":protos_all_py_pb2",
@@ -113,7 +107,7 @@ py_test(
         "//tensorboard/plugins/scalar:scalars_plugin",
         "//tensorboard/plugins/scalar:summary",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -126,7 +120,6 @@ tb_proto_library(
 py_binary(
     name = "custom_scalar_demo",
     srcs = ["custom_scalar_demo.py"],
-    srcs_version = "PY3",
     deps = [
         ":protos_all_py_pb2",
         "//tensorboard:expect_tensorflow_installed",

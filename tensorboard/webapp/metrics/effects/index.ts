@@ -15,7 +15,7 @@ limitations under the License.
 import {Injectable} from '@angular/core';
 import {Actions, createEffect, ofType, OnInitEffects} from '@ngrx/effects';
 import {Action, createAction, createSelector, Store} from '@ngrx/store';
-import {forkJoin, merge, Observable, of} from 'rxjs';
+import {EMPTY, forkJoin, merge, Observable, of} from 'rxjs';
 import {
   catchError,
   throttleTime,
@@ -31,6 +31,7 @@ import * as routingActions from '../../app_routing/actions';
 import {State} from '../../app_state';
 import * as coreActions from '../../core/actions';
 import {getActivePlugin} from '../../core/store';
+import * as runsActions from '../../runs/actions';
 import * as selectors from '../../selectors';
 import {DataLoadState} from '../../types/data';
 import * as actions from '../actions';
@@ -46,27 +47,55 @@ import {
   Tag,
 } from '../data_source/index';
 import {
-  getCardLoadState,
   getCardMetadata,
+  getCardRunLoadStates,
   getMetricsTagMetadataLoadState,
+  getPinnedCardsWithMetadata,
 } from '../store';
 import {CardId, CardMetadata, PluginType} from '../types';
 
 export type CardFetchInfo = CardMetadata & {
   id: CardId;
-  loadState: DataLoadState;
+  /** Runs that this card's tag is known to have. */
+  tagRunIds: string[];
+  /** Load state of every run requested for this card so far. */
+  runToLoadState: {[runId: string]: DataLoadState};
 };
 
 const getCardFetchInfo = createSelector(
-  getCardLoadState,
   getCardMetadata,
-  (loadState, maybeMetadata, cardId /* props */): CardFetchInfo | null => {
+  getCardRunLoadStates,
+  (maybeMetadata, runLoadStates, cardId /* props */): CardFetchInfo | null => {
     if (!maybeMetadata) {
       return null;
     }
-    return {...maybeMetadata, loadState, id: cardId};
+    return {
+      ...maybeMetadata,
+      id: cardId,
+      tagRunIds: runLoadStates.tagRunIds,
+      runToLoadState: runLoadStates.runToLoadState,
+    };
   }
 );
+
+/**
+ * Whether a run's series must be (re)requested. Runs already in flight are
+ * never requested again. Runs that are loaded, or that failed, are requested
+ * only on an explicit reload, so scrolling cannot retry a failing backend.
+ */
+function shouldFetchRun(
+  runLoadState: DataLoadState | undefined,
+  refetchLoaded: boolean
+): boolean {
+  if (runLoadState === DataLoadState.LOADING) {
+    return false;
+  }
+  return (
+    refetchLoaded ||
+    runLoadState === undefined ||
+    runLoadState === DataLoadState.NOT_LOADED
+  );
+}
 
 const initAction = createAction('[Metrics Effects] Init');
 
@@ -122,7 +151,7 @@ export class MetricsEffects implements OnInitEffects {
           console.error('Time series response contained errors:', errors);
         }
         this.store.dispatch(
-          actions.fetchTimeSeriesLoaded({response: responses[0]})
+          actions.fetchTimeSeriesLoaded({request, response: responses[0]})
         );
       }),
       catchError(() => {
@@ -132,24 +161,53 @@ export class MetricsEffects implements OnInitEffects {
     );
   }
 
+  /**
+   * Builds and issues the time series requests missing for `fetchInfos`.
+   *
+   * Multi-run cards request only the selected runs that the card's tag
+   * actually has; a card with no such run is not requested at all. Runs absent
+   * from `runSelection` are runs whose experiment has not been loaded yet, so
+   * they are left to a later `fetchRunsSucceeded`.
+   */
   private fetchTimeSeriesForCards(
     fetchInfos: CardFetchInfo[],
-    experimentIds: string[]
+    experimentIds: string[],
+    runSelection: Map<string, boolean>,
+    refetchLoaded: boolean
   ) {
     /**
      * TODO(psybuzz): if 2 cards require the same data, we should dedupe instead of
      * making 2 identical requests.
      */
-    const requests: TimeSeriesRequest[] = fetchInfos.map((fetchInfo) => {
-      const {plugin, tag, runId, sample} = fetchInfo;
-      const partialRequest: TimeSeriesRequest = isSingleRunPlugin(plugin)
-        ? {plugin, tag, runId: runId!}
-        : {plugin, tag, experimentIds};
+    const requests: TimeSeriesRequest[] = [];
+    for (const fetchInfo of fetchInfos) {
+      const {plugin, tag, runId, sample, tagRunIds, runToLoadState} = fetchInfo;
+      let partialRequest: TimeSeriesRequest;
+      if (isSingleRunPlugin(plugin)) {
+        if (!shouldFetchRun(runToLoadState[runId!], refetchLoaded)) {
+          continue;
+        }
+        partialRequest = {plugin, tag, runId: runId!};
+      } else {
+        const runIds = tagRunIds.filter((tagRunId) => {
+          if (!runSelection.get(tagRunId)) {
+            return false;
+          }
+          return shouldFetchRun(runToLoadState[tagRunId], refetchLoaded);
+        });
+        if (!runIds.length) {
+          continue;
+        }
+        partialRequest = {plugin, tag, experimentIds, runIds};
+      }
       if (sample !== undefined) {
         partialRequest.sample = sample;
       }
-      return partialRequest;
-    });
+      requests.push(partialRequest);
+    }
+    if (!requests.length) {
+      return EMPTY;
+    }
 
     // Fetch and handle responses.
     return of(requests).pipe(
@@ -165,9 +223,15 @@ export class MetricsEffects implements OnInitEffects {
     );
   }
 
-  private readonly visibleCardsWithoutDataChanged$;
+  private readonly visibleCardsChanged$;
 
   private readonly visibleCardsReloaded$;
+
+  private readonly selectedRunsChanged$;
+
+  private readonly tagMetadataLoaded$;
+
+  private readonly purgeUnusedTimeSeries$;
 
   private readonly loadTimeSeries$;
 
@@ -270,40 +334,103 @@ export class MetricsEffects implements OnInitEffects {
       })
     );
 
-    this.visibleCardsWithoutDataChanged$ = this.actions$.pipe(
+    // Each trigger reads the visible cards' fetch state at the time it
+    // fires; `withLatestFrom` would reuse the snapshot taken when the
+    // visible card set last changed, which goes stale as runs are selected.
+    this.visibleCardsChanged$ = this.actions$.pipe(
       ofType(actions.cardVisibilityChanged),
-      withLatestFrom(this.getVisibleCardFetchInfos()),
-      map(([, fetchInfos]) => {
-        return fetchInfos.filter((fetchInfo) => {
-          return fetchInfo.loadState === DataLoadState.NOT_LOADED;
-        });
-      })
+      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
+      map((fetchInfos) => ({fetchInfos, refetchLoaded: false}))
     );
 
     this.visibleCardsReloaded$ = this.reloadRequestedWhileShown$.pipe(
-      withLatestFrom(this.getVisibleCardFetchInfos()),
-      map(([, fetchInfos]) => {
-        return fetchInfos.filter((fetchInfo) => {
-          return fetchInfo.loadState !== DataLoadState.LOADING;
-        });
+      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
+      map((fetchInfos) => ({fetchInfos, refetchLoaded: true}))
+    );
+
+    this.selectedRunsChanged$ = this.actions$.pipe(
+      ofType(
+        runsActions.runSelectionToggled,
+        runsActions.singleRunSelected,
+        runsActions.runPageSelectionToggled,
+        runsActions.runLocalStorageHydrated,
+        runsActions.fetchRunsSucceeded
+      ),
+      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
+      map((fetchInfos) => ({fetchInfos, refetchLoaded: false}))
+    );
+
+    // New tag metadata can reveal runs that a visible card has never
+    // requested; the per-run filter below picks up exactly those.
+    this.tagMetadataLoaded$ = this.actions$.pipe(
+      ofType(actions.metricsTagMetadataLoaded),
+      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
+      map((fetchInfos) => ({fetchInfos, refetchLoaded: false}))
+    );
+
+    this.purgeUnusedTimeSeries$ = this.actions$.pipe(
+      ofType(
+        runsActions.runSelectionToggled,
+        runsActions.singleRunSelected,
+        runsActions.runPageSelectionToggled,
+        runsActions.runLocalStorageHydrated,
+        runsActions.fetchRunsSucceeded,
+        actions.fetchTimeSeriesLoaded,
+        actions.fetchTimeSeriesFailed,
+        actions.cardPinStateToggled,
+        actions.metricsClearAllPinnedCards,
+        actions.metricsTagMetadataLoaded
+      ),
+      withLatestFrom(
+        this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute),
+        this.store.select(getPinnedCardsWithMetadata)
+      ),
+      tap(([, runSelection, pinnedCards]) => {
+        // An empty selection means the run list has not been written yet;
+        // purging then would drop everything that is being fetched.
+        if (!runSelection.size) {
+          return;
+        }
+        const runIds: string[] = [];
+        for (const [runId, selected] of runSelection.entries()) {
+          if (selected) {
+            runIds.push(runId);
+          }
+        }
+        // Pinned single-run cards stay visible while their run is deselected,
+        // so their series must survive the purge.
+        for (const card of pinnedCards) {
+          if (card.runId) {
+            runIds.push(card.runId);
+          }
+        }
+        this.store.dispatch(actions.unusedTimeSeriesPurged({runIds}));
       })
     );
 
     this.loadTimeSeries$ = merge(
-      this.visibleCardsWithoutDataChanged$,
-      this.visibleCardsReloaded$
+      this.visibleCardsChanged$,
+      this.visibleCardsReloaded$,
+      this.selectedRunsChanged$,
+      this.tagMetadataLoaded$
     ).pipe(
-      filter((fetchInfos) => fetchInfos.length > 0),
+      filter(({fetchInfos}) => fetchInfos.length > 0),
 
       // Ignore card visibility events until we have non-null
       // experimentIds.
       withLatestFrom(
         this.store
           .select(selectors.getExperimentIdsFromRoute)
-          .pipe(filter((experimentIds) => experimentIds !== null))
+          .pipe(filter((experimentIds) => experimentIds !== null)),
+        this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute)
       ),
-      mergeMap(([fetchInfos, experimentIds]) => {
-        return this.fetchTimeSeriesForCards(fetchInfos, experimentIds!);
+      mergeMap(([{fetchInfos, refetchLoaded}, experimentIds, runSelection]) => {
+        return this.fetchTimeSeriesForCards(
+          fetchInfos,
+          experimentIds!,
+          runSelection,
+          refetchLoaded
+        );
       })
     );
 
@@ -435,9 +562,13 @@ export class MetricsEffects implements OnInitEffects {
           this.loadTagMetadata$,
 
           /**
-           * Subscribes to: card visibility, reloads.
+           * Subscribes to: card visibility, reloads, run selection changes.
            */
           this.loadTimeSeries$,
+          /**
+           * Subscribes to: run selection changes, time series responses.
+           */
+          this.purgeUnusedTimeSeries$,
 
           /**
            * Subscribes to: cardPinStateToggled.

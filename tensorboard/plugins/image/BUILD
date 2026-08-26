@@ -1,10 +1,10 @@
 # Description:
 # TensorBoard plugin for images
 
-load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
+load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 
 package(default_visibility = ["//tensorboard:internal"])
 
@@ -18,7 +18,6 @@ filegroup(
 py_library(
     name = "images_plugin",
     srcs = ["images_plugin.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         "//tensorboard:expect_numpy_installed",
@@ -26,14 +25,13 @@ py_library(
         "//tensorboard/backend:http_util",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:img_mime_type_detector",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
 py_binary(
     name = "images_demo",
     srcs = ["images_demo.py"],
-    srcs_version = "PY3",
     deps = [
         ":summary",
         "//tensorboard:expect_tensorflow_installed",
@@ -44,7 +42,6 @@ py_test(
     name = "images_plugin_test",
     size = "small",
     srcs = ["images_plugin_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":images_plugin",
         ":summary",
@@ -55,7 +52,7 @@ py_test(
         "//tensorboard/backend/event_processing:event_multiplexer",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -65,7 +62,6 @@ py_test(
     size = "small",
     srcs = ["images_plugin_test.py"],
     main = "images_plugin_test.py",
-    srcs_version = "PY3",
     deps = [
         ":images_plugin",
         ":summary",
@@ -77,14 +73,13 @@ py_test(
         "//tensorboard/compat:no_tensorflow",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
 py_library(
     name = "summary",
     srcs = ["summary.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":summary_v2",
@@ -96,7 +91,6 @@ py_library(
 py_library(
     name = "summary_v2",
     srcs = ["summary_v2.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorboard:internal",
     ],
@@ -113,7 +107,6 @@ py_test(
     name = "summary_test",
     size = "small",
     srcs = ["summary_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":summary",
@@ -126,7 +119,6 @@ py_test(
 py_library(
     name = "metadata",
     srcs = ["metadata.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorboard:internal",
     ],

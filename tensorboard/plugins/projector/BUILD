@@ -1,9 +1,9 @@
 # Embedding Projector plugin.
 
-load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
+load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 
 package(default_visibility = ["//tensorboard:internal"])
 
@@ -15,7 +15,6 @@ py_library(
     data = [
         "//tensorboard/plugins/projector/tf_projector_plugin:projector_assets",
     ],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":protos_all_py_pb2",
@@ -29,14 +28,13 @@ py_library(
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:img_mime_type_detector",
         "//tensorboard/util:tb_logging",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
 py_library(
     name = "projector",
     srcs = ["__init__.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":metadata",
@@ -52,7 +50,6 @@ py_test(
     size = "small",
     srcs = ["projector_api_test.py"],
     main = "projector_api_test.py",
-    srcs_version = "PY3",
     deps = [
         ":projector",
         "//tensorboard:expect_protobuf_installed",
@@ -66,7 +63,6 @@ py_test(
     size = "small",
     srcs = ["projector_plugin_test.py"],
     main = "projector_plugin_test.py",
-    srcs_version = "PY3",
     deps = [
         ":projector_plugin",
         "//tensorboard:expect_numpy_installed",
@@ -78,7 +74,7 @@ py_test(
         "//tensorboard/compat/proto:protos_all_py_pb2",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -88,7 +84,6 @@ py_test(
     size = "small",
     srcs = ["projector_plugin_test.py"],
     main = "projector_plugin_test.py",
-    srcs_version = "PY3",
     deps = [
         ":projector_plugin",
         "//tensorboard:expect_numpy_installed",
@@ -101,14 +96,13 @@ py_test(
         "//tensorboard/compat/proto:protos_all_py_pb2",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
 py_library(
     name = "metadata",
     srcs = ["metadata.py"],
-    srcs_version = "PY3",
 )
 
 tb_proto_library(
@@ -120,7 +114,6 @@ tb_proto_library(
 py_binary(
     name = "projector_demo",
     srcs = ["projector_demo.py"],
-    srcs_version = "PY3",
     deps = [
         ":projector",
     ],

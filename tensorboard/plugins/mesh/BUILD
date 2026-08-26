@@ -1,7 +1,7 @@
-load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
+load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 
 package(default_visibility = ["//tensorboard:internal"])
 
@@ -11,7 +11,6 @@ licenses(["notice"])
 py_library(
     name = "mesh",
     srcs = ["__init__.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":summary",
@@ -21,7 +20,6 @@ py_library(
 py_library(
     name = "metadata",
     srcs = ["metadata.py"],
-    srcs_version = "PY3",
     deps = [
         ":protos_all_py_pb2",
         "//tensorboard/compat/proto:protos_all_py_pb2",
@@ -32,7 +30,6 @@ py_test(
     name = "metadata_test",
     size = "small",
     srcs = ["metadata_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         "//tensorboard:expect_tensorflow_installed",
@@ -42,7 +39,6 @@ py_test(
 py_library(
     name = "mesh_plugin",
     srcs = ["mesh_plugin.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":protos_all_py_pb2",
@@ -51,7 +47,7 @@ py_library(
         "//tensorboard/backend:http_util",
         "//tensorboard/data:provider",
         "//tensorboard/plugins:base_plugin",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -59,11 +55,10 @@ py_library(
     name = "test_utils",
     testonly = 1,
     srcs = ["test_utils.py"],
-    srcs_version = "PY3",
     deps = [
         ":summary",
         "//tensorboard/backend/event_processing:event_multiplexer",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -71,7 +66,6 @@ py_test(
     name = "mesh_plugin_test",
     size = "small",
     srcs = ["mesh_plugin_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":mesh_plugin",
         ":summary",
@@ -83,14 +77,13 @@ py_test(
         "//tensorboard/backend/event_processing:event_multiplexer",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
 py_library(
     name = "summary",
     srcs = ["summary.py"],
-    srcs_version = "PY3",
     visibility = [
         "//visibility:public",
     ],
@@ -105,7 +98,6 @@ py_library(
 py_library(
     name = "summary_v2",
     srcs = ["summary_v2.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         "//tensorboard/compat",
@@ -119,7 +111,6 @@ py_test(
     name = "summary_test",
     size = "small",
     srcs = ["summary_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":summary",
         ":test_utils",
@@ -131,7 +122,6 @@ py_test(
     name = "summary_v2_test",
     size = "small",
     srcs = ["summary_v2_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":protos_all_py_pb2",
@@ -149,9 +139,9 @@ tb_proto_library(
 py_library(
     name = "demo_utils",
     srcs = ["demo_utils.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard:expect_numpy_installed",
+        "//tensorboard:expect_tensorflow_installed",
         "//tensorboard/compat",
         "//tensorboard/compat:tensorflow",
     ],
@@ -164,7 +154,6 @@ py_test(
     data = [
         ":test_data",
     ],
-    srcs_version = "PY3",
     deps = [
         ":demo_utils",
         "//tensorboard/compat:tensorflow",
@@ -177,7 +166,6 @@ py_binary(
     data = [
         ":test_data",
     ],
-    srcs_version = "PY3",
     deps = [
         ":demo_utils",
         ":summary_v2",

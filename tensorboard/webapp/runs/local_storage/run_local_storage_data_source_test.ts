@@ -177,6 +177,77 @@ describe('RunLocalStorageDataSource', () => {
     );
   });
 
+  it('prefers the latest session state after a failed write', () => {
+    window.localStorage.setItem(
+      TEST_ONLY.RUN_LOCAL_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        namespaces: {
+          namespace: {
+            updatedAtMs: 1,
+            runIds: ['run1'],
+            selection: {run1: true},
+            colorOverrides: {},
+          },
+        },
+      })
+    );
+    const setItemSpy = spyOn(window.localStorage, 'setItem').and.throwError(
+      'quota exceeded'
+    );
+
+    dataSource.setState('namespace', [createRun('run1')], {
+      selection: new Map([['run1', false]]),
+      colorOverrides: new Map(),
+    });
+
+    expect(
+      dataSource.getState('namespace', [createRun('run1')]).selection
+    ).toEqual(new Map([['run1', false]]));
+
+    setItemSpy.and.callThrough();
+    dataSource.setState('namespace', [createRun('run1')], {
+      selection: new Map([['run1', false]]),
+      colorOverrides: new Map(),
+    });
+
+    expect(setItemSpy).toHaveBeenCalledTimes(2);
+    expect(
+      window.localStorage.getItem(TEST_ONLY.RUN_LOCAL_STORAGE_KEY)
+    ).toContain('"run1":false');
+  });
+
+  it('does not read stale state after a failed removal', () => {
+    window.localStorage.setItem(
+      TEST_ONLY.RUN_LOCAL_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        namespaces: {
+          namespace: {
+            updatedAtMs: 1,
+            runIds: ['run1'],
+            selection: {run1: true},
+            colorOverrides: {},
+          },
+        },
+      })
+    );
+    const removeItemSpy = spyOn(
+      window.localStorage,
+      'removeItem'
+    ).and.throwError('unavailable');
+
+    dataSource.setState('namespace', [], {
+      selection: new Map(),
+      colorOverrides: new Map(),
+    });
+
+    expect(
+      dataSource.getState('namespace', [createRun('run1')]).selection
+    ).toEqual(new Map());
+    removeItemSpy.and.callThrough();
+  });
+
   it('persists and restores the run sorting selection', () => {
     dataSource.setState('namespace', [createRun('run1')], {
       selection: new Map([['run1', true]]),

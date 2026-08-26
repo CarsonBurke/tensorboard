@@ -18,6 +18,7 @@
 files=$(git grep -L "Copyright 20[0-9][0-9] The TensorFlow" \
     'tensorboard/*.*' \
     ':!tensorboard/data/server/cargo/' \
+    ':!tensorboard/pip_package/requirements_bazel_lock.txt' \
     ':!*.'{pyc,json,png,wav,proto,pbtxt,md,in,rst,cfg,ipynb,svg,lock,bin} \
     ':!tensorboard/components/tf_imports/*.html')
 

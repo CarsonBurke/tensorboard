@@ -249,6 +249,7 @@ class TBContext:
         plugin_name_to_instance=None,
         sampling_hints=None,
         window_title=None,
+        data_ingester=None,
     ):
         """Instantiates magic container.
 
@@ -280,6 +281,8 @@ class TBContext:
               given to the `--samples_per_plugin` flag, or `None` if none was
               explicitly given for this plugin.
           window_title: A string specifying the window title.
+          data_ingester: Optional `tensorboard.data.ingester.DataIngester`
+              whose ``request_reload`` is invoked by the UI refresh button.
         """
         self.assets_zip_provider = assets_zip_provider
         self.data_provider = data_provider
@@ -289,6 +292,7 @@ class TBContext:
         self.plugin_name_to_instance = plugin_name_to_instance
         self.sampling_hints = sampling_hints
         self.window_title = window_title
+        self.data_ingester = data_ingester
 
 
 class TBLoader:

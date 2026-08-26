@@ -93,6 +93,52 @@ describe('MetricsLocalStorageEffects', () => {
     store?.resetSelectors();
   });
 
+  it('clears persisted state when metadata has no tag groups', () => {
+    store.overrideSelector(getNonEmptyCardIdsWithMetadata, []);
+    store.refreshState();
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    effects.hydrateFetchedMetadataFromLocalStorage$.subscribe();
+
+    actions.next(
+      metricsActions.metricsTagMetadataLoaded({
+        tagMetadata: {
+          scalars: {tagDescriptions: {}, runTagInfo: {}},
+          histograms: {tagDescriptions: {}, runTagInfo: {}},
+          images: {tagDescriptions: {}, tagRunSampledInfo: {}},
+        },
+      })
+    );
+
+    expect(setStateSpy).toHaveBeenCalledOnceWith(
+      jasmine.stringMatching('/tmp/tensorboard/runs'),
+      [],
+      {
+        tagGroupExpanded: new Map(),
+        tagGroupPageIndex: new Map(),
+      }
+    );
+    expect(dispatchedActions).toEqual([]);
+  });
+
+  it('does not clear persisted state before metadata has loaded', () => {
+    store.overrideSelector(getNonEmptyCardIdsWithMetadata, []);
+    store.refreshState();
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    effects.hydrateExistingMetadataFromLocalStorage$.subscribe();
+
+    actions.next(
+      coreActions.environmentLoaded({
+        environment: {
+          data_location: '/tmp/tensorboard/runs',
+          window_title: '',
+        },
+      })
+    );
+
+    expect(setStateSpy).not.toHaveBeenCalled();
+    expect(dispatchedActions).toEqual([]);
+  });
+
   it('hydrates group expansion and page index after metadata loads', () => {
     spyOn(dataSource, 'getState').and.returnValue({
       tagGroupExpanded: new Map([

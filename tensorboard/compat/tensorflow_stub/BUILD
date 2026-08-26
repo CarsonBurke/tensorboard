@@ -15,7 +15,6 @@ py_library(
         "io/__init__.py",
         "io/gfile.py",
     ],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard:expect_absl_flags_installed",
         "//tensorboard:expect_fsspec_installed",
@@ -28,7 +27,6 @@ py_test(
     name = "gfile_test",
     size = "small",
     srcs = ["io/gfile_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":tensorflow_stub",
@@ -40,7 +38,6 @@ py_test(
     name = "gfile_tf_test",
     size = "small",
     srcs = ["io/gfile_tf_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":tensorflow_stub",
@@ -52,13 +49,14 @@ py_test(
     name = "gfile_s3_test",
     size = "small",
     srcs = ["io/gfile_s3_test.py"],
-    srcs_version = "PY3",
     tags = [
         "manual",
         "notap",
     ],
     deps = [
         ":tensorflow_stub",
+        "//tensorboard:expect_boto3_installed",
+        "//tensorboard:expect_moto_installed",
         "//tensorboard:test",
     ],
 )
@@ -67,7 +65,6 @@ py_test(
     name = "gfile_fsspec_test",
     size = "small",
     srcs = ["io/gfile_fsspec_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":tensorflow_stub",

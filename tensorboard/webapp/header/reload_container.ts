@@ -14,8 +14,8 @@ limitations under the License.
 ==============================================================================*/
 import {ChangeDetectionStrategy, Component} from '@angular/core';
 import {createSelector, Store} from '@ngrx/store';
-import {Observable} from 'rxjs';
-import {combineLatestWith, map} from 'rxjs/operators';
+import {BehaviorSubject, Observable} from 'rxjs';
+import {combineLatestWith, finalize, map} from 'rxjs/operators';
 import {manualReload} from '../core/actions';
 import {
   getActivePlugin,
@@ -25,6 +25,7 @@ import {
 } from '../core/store/core_selectors';
 import {State} from '../core/store/core_types';
 import {DataLoadState} from '../types/data';
+import {TBServerDataSource} from '../webapp_data_source/tb_server_data_source';
 
 const isReloadDisabledByPlugin = createSelector(
   getPlugins,
@@ -85,19 +86,38 @@ export class ReloadContainer {
 
   lastLoadedTimeInMs$: Observable<number | null>;
 
-  constructor(private readonly store: Store<State>) {
+  private readonly backendReloadInFlight$ = new BehaviorSubject(false);
+
+  constructor(
+    private readonly store: Store<State>,
+    private readonly webappDataSource: TBServerDataSource
+  ) {
     this.reloadDisabled$ = this.store.select(isReloadDisabledByPlugin);
     this.isReloading$ = this.store.select(getCoreDataLoadedState).pipe(
-      combineLatestWith(this.reloadDisabled$),
-      map(([loadState, reloadDisabled]) => {
-        return !reloadDisabled && loadState === DataLoadState.LOADING;
+      combineLatestWith(this.reloadDisabled$, this.backendReloadInFlight$),
+      map(([loadState, reloadDisabled, backendReloadInFlight]) => {
+        return (
+          !reloadDisabled &&
+          (loadState === DataLoadState.LOADING || backendReloadInFlight)
+        );
       })
     );
     this.lastLoadedTimeInMs$ = this.store.select(getAppLastLoadedTimeInMs);
   }
 
   triggerReload() {
-    this.store.dispatch(manualReload());
+    if (this.backendReloadInFlight$.value) {
+      return;
+    }
+    this.backendReloadInFlight$.next(true);
+    this.webappDataSource
+      .requestBackendReload()
+      .pipe(finalize(() => this.backendReloadInFlight$.next(false)))
+      .subscribe({
+        next: () => this.store.dispatch(manualReload()),
+        // Keep the existing data and timestamp when the backend rescan fails.
+        error: () => undefined,
+      });
   }
 
   getReloadTitle(dateString: string | null) {

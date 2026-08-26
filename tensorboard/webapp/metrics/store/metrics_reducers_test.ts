@@ -23,8 +23,10 @@ import {nextElementId} from '../../util/dom';
 import {TimeSelectionToggleAffordance} from '../../widgets/card_fob/card_fob_types';
 import * as actions from '../actions';
 import {
+  MultiRunPluginType,
   PluginType,
   ScalarStepDatum,
+  SingleRunPluginType,
   TagMetadata as DataSourceTagMetadata,
 } from '../data_source';
 import {
@@ -46,9 +48,11 @@ import {
   HistogramMode,
   MinMaxStep,
   NonPinnedCardId,
+  TOOLTIP_ROWS_LIMIT_DEFAULT,
   TooltipSort,
   XAxisType,
 } from '../types';
+import {METRICS_SETTINGS_DEFAULT} from './metrics_types';
 import {ColumnHeaderType, DataTableMode} from '../../widgets/data_table/types';
 import {reducers} from './metrics_reducers';
 import {getCardId, getPinnedCardId} from './metrics_store_internal_utils';
@@ -1034,6 +1038,29 @@ describe('metrics reducers', () => {
       expect(nextState.settingOverrides.ignoreOutliers).toBe(false);
     });
 
+    it('uses TOOLTIP_ROWS_LIMIT_DEFAULT as the default tooltipRowsLimit', () => {
+      expect(METRICS_SETTINGS_DEFAULT.tooltipRowsLimit).toBe(
+        TOOLTIP_ROWS_LIMIT_DEFAULT
+      );
+    });
+
+    it('updates tooltipRowsLimit on metricsChangeTooltipRowsLimit', () => {
+      const prevState = buildMetricsState({
+        settings: buildMetricsSettingsState({
+          tooltipRowsLimit: TOOLTIP_ROWS_LIMIT_DEFAULT,
+        }),
+        settingOverrides: {},
+      });
+      const nextState = reducers(
+        prevState,
+        actions.metricsChangeTooltipRowsLimit({tooltipRowsLimit: 10})
+      );
+      expect(nextState.settings.tooltipRowsLimit).toBe(
+        TOOLTIP_ROWS_LIMIT_DEFAULT
+      );
+      expect(nextState.settingOverrides.tooltipRowsLimit).toBe(10);
+    });
+
     it('changes xAxisType on metricsChangeXAxisType', () => {
       const prevState = buildMetricsState({
         settings: buildMetricsSettingsState({
@@ -1285,6 +1312,160 @@ describe('metrics reducers', () => {
       });
     });
 
+    it('marks only requested run ids as loading', () => {
+      const beforeState = buildMetricsState({
+        tagMetadata: {
+          ...buildTagMetadata(),
+          scalars: {
+            tagDescriptions: {},
+            tagToRuns: {tagA: ['exp1/run1', 'exp1/run2']},
+          },
+        },
+      });
+      const nextState = reducers(
+        beforeState,
+        actions.multipleTimeSeriesRequested({
+          requests: [
+            {
+              plugin: PluginType.SCALARS,
+              tag: 'tagA',
+              experimentIds: ['exp1'],
+              runIds: ['exp1/run2'],
+            },
+          ],
+        })
+      );
+      expect(nextState.timeSeriesData.scalars['tagA'].runToLoadState).toEqual({
+        'exp1/run2': DataLoadState.LOADING,
+      });
+    });
+
+    it('marks no runs loading when requested run ids are empty', () => {
+      const beforeState = buildMetricsState({
+        tagMetadata: {
+          ...buildTagMetadata(),
+          scalars: {
+            tagDescriptions: {},
+            tagToRuns: {tagA: ['exp1/run1', 'exp1/run2']},
+          },
+        },
+      });
+      const nextState = reducers(
+        beforeState,
+        actions.multipleTimeSeriesRequested({
+          requests: [
+            {
+              plugin: PluginType.SCALARS,
+              tag: 'tagA',
+              experimentIds: ['exp1'],
+              runIds: [],
+            },
+          ],
+        })
+      );
+      expect(nextState.timeSeriesData.scalars['tagA'].runToLoadState).toEqual(
+        {}
+      );
+    });
+
+    it('drops unselected series on unusedTimeSeriesPurged', () => {
+      const beforeState = buildMetricsState({
+        timeSeriesData: {
+          ...createTimeSeriesData(),
+          [PluginType.SCALARS]: {
+            tagA: {
+              runToSeries: {
+                'exp1/run1': createScalarStepData(),
+                'exp1/run2': createScalarStepData(),
+              },
+              runToLoadState: {
+                'exp1/run1': DataLoadState.LOADED,
+                'exp1/run2': DataLoadState.LOADED,
+              },
+            },
+          },
+        },
+      });
+      const nextState = reducers(
+        beforeState,
+        actions.unusedTimeSeriesPurged({runIds: ['exp1/run2']})
+      );
+      expect(nextState.timeSeriesData.scalars['tagA']).toEqual({
+        runToSeries: {'exp1/run2': createScalarStepData()},
+        runToLoadState: {'exp1/run2': DataLoadState.LOADED},
+      });
+    });
+
+    it('recomputes ranges after purging the run with previous extrema', () => {
+      const cardId = '{"plugin":"scalars","tag":"tagA","runId":null}';
+      const pinnedCardId = 'pinnedCard';
+      const cardMetadata = {
+        plugin: PluginType.SCALARS,
+        tag: 'tagA',
+        runId: null,
+      };
+      const beforeState = buildMetricsState({
+        cardMetadataMap: {
+          [cardId]: cardMetadata,
+          [pinnedCardId]: cardMetadata,
+        },
+        cardToPinnedCopy: new Map([[cardId, pinnedCardId]]),
+        pinnedCardToOriginal: new Map([[pinnedCardId, cardId]]),
+        cardStateMap: {
+          [cardId]: {dataMinMax: {minStep: 0, maxStep: 100}},
+          [pinnedCardId]: {dataMinMax: {minStep: 0, maxStep: 100}},
+        },
+        cardStepIndex: {
+          [cardId]: {index: 4, isClosest: false},
+          [pinnedCardId]: {index: 4, isClosest: false},
+        },
+        stepMinMax: {min: 0, max: 100},
+        timeSeriesData: {
+          ...createTimeSeriesData(),
+          [PluginType.SCALARS]: {
+            tagA: {
+              runToSeries: {
+                'exp1/run1': [
+                  {step: 0, wallTime: 0, value: 0},
+                  {step: 25, wallTime: 1, value: 1},
+                  {step: 50, wallTime: 2, value: 2},
+                  {step: 75, wallTime: 3, value: 3},
+                  {step: 100, wallTime: 4, value: 4},
+                ],
+                'exp1/run2': [
+                  {step: 20, wallTime: 0, value: 0},
+                  {step: 30, wallTime: 1, value: 1},
+                ],
+              },
+              runToLoadState: {
+                'exp1/run1': DataLoadState.LOADED,
+                'exp1/run2': DataLoadState.LOADED,
+              },
+            },
+          },
+        },
+      });
+
+      const nextState = reducers(
+        beforeState,
+        actions.unusedTimeSeriesPurged({runIds: ['exp1/run2']})
+      );
+
+      expect(nextState.stepMinMax).toEqual({min: 20, max: 30});
+      expect(nextState.cardStateMap[cardId].dataMinMax).toEqual({
+        minStep: 20,
+        maxStep: 30,
+      });
+      expect(nextState.cardStateMap[pinnedCardId].dataMinMax).toEqual({
+        minStep: 20,
+        maxStep: 30,
+      });
+      expect(nextState.cardStepIndex).toEqual({
+        [cardId]: {index: 1, isClosest: false},
+        [pinnedCardId]: {index: 1, isClosest: false},
+      });
+    });
+
     it('updates store on fetch failure', () => {
       const beforeState = buildMetricsState({
         tagMetadata: {
@@ -1402,6 +1583,12 @@ describe('metrics reducers', () => {
       let nextState = reducers(
         beforeState,
         actions.fetchTimeSeriesLoaded({
+          request: {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            experimentIds: ['exp1'],
+            runIds: ['run1'],
+          },
           response: {
             plugin: PluginType.SCALARS,
             tag: 'tagA',
@@ -1412,6 +1599,11 @@ describe('metrics reducers', () => {
       nextState = reducers(
         nextState,
         actions.fetchTimeSeriesLoaded({
+          request: {
+            plugin: PluginType.HISTOGRAMS,
+            tag: 'tagB',
+            runId: 'run1',
+          },
           response: {
             plugin: PluginType.HISTOGRAMS,
             tag: 'tagB',
@@ -1423,6 +1615,12 @@ describe('metrics reducers', () => {
       nextState = reducers(
         nextState,
         actions.fetchTimeSeriesLoaded({
+          request: {
+            plugin: PluginType.IMAGES,
+            tag: 'tagC',
+            runId: 'run1',
+            sample,
+          },
           response: {
             plugin: PluginType.IMAGES,
             tag: 'tagC',
@@ -1492,27 +1690,54 @@ describe('metrics reducers', () => {
       const badSample = 9;
       const goodResponses = [
         {
-          plugin: PluginType.HISTOGRAMS,
-          tag: 'tagB',
-          runId: 'run1',
-          runToSeries: {run1: createHistogramStepData()},
+          request: {
+            plugin: PluginType.HISTOGRAMS as SingleRunPluginType,
+            tag: 'tagB',
+            runId: 'run1',
+          },
+          response: {
+            plugin: PluginType.HISTOGRAMS,
+            tag: 'tagB',
+            runId: 'run1',
+            runToSeries: {run1: createHistogramStepData()},
+          },
         },
       ];
       const badResponses = [
-        {plugin: PluginType.SCALARS, tag: 'tagA', error: 'No data found'},
         {
-          plugin: PluginType.IMAGES,
-          tag: 'tagC',
-          runId: 'run1',
-          sample: badSample,
-          error: 'Invalid sample',
+          request: {
+            plugin: PluginType.SCALARS as MultiRunPluginType,
+            tag: 'tagA',
+            experimentIds: ['exp1'],
+            runIds: ['run1', 'run2'],
+          },
+          response: {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            error: 'No data found',
+          },
+        },
+        {
+          request: {
+            plugin: PluginType.IMAGES as SingleRunPluginType,
+            tag: 'tagC',
+            runId: 'run1',
+            sample: badSample,
+          },
+          response: {
+            plugin: PluginType.IMAGES,
+            tag: 'tagC',
+            runId: 'run1',
+            sample: badSample,
+            error: 'Invalid sample',
+          },
         },
       ];
       let nextState = beforeState;
-      for (const response of [...goodResponses, ...badResponses]) {
+      for (const {request, response} of [...goodResponses, ...badResponses]) {
         nextState = reducers(
           nextState,
-          actions.fetchTimeSeriesLoaded({response})
+          actions.fetchTimeSeriesLoaded({request, response})
         );
       }
       expect(nextState.timeSeriesData).toEqual({
@@ -1538,6 +1763,50 @@ describe('metrics reducers', () => {
               runToLoadState: {run1: DataLoadState.FAILED},
             },
           },
+        },
+      });
+    });
+
+    it('settles requested runs that the response omitted', () => {
+      const beforeState = buildMetricsState({
+        tagMetadata: {
+          ...buildTagMetadata(),
+          scalars: {
+            tagDescriptions: {},
+            tagToRuns: {tagA: ['run1', 'run2']},
+          },
+        },
+      });
+      const request = {
+        plugin: PluginType.SCALARS as MultiRunPluginType,
+        tag: 'tagA',
+        experimentIds: ['exp1'],
+        runIds: ['run1', 'run2'],
+      };
+      let nextState = reducers(
+        beforeState,
+        actions.multipleTimeSeriesRequested({requests: [request]})
+      );
+
+      // 'run2' has no data for the tag, so the response leaves it out. It must
+      // not stay LOADING, or its card would show a spinner forever.
+      nextState = reducers(
+        nextState,
+        actions.fetchTimeSeriesLoaded({
+          request,
+          response: {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runToSeries: {run1: createScalarStepData()},
+          },
+        })
+      );
+
+      expect(nextState.timeSeriesData.scalars['tagA']).toEqual({
+        runToSeries: {run1: createScalarStepData()},
+        runToLoadState: {
+          run1: DataLoadState.LOADED,
+          run2: DataLoadState.LOADED,
         },
       });
     });
@@ -2331,6 +2600,12 @@ describe('metrics reducers', () => {
         };
 
         const action = actions.fetchTimeSeriesLoaded({
+          request: {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            experimentIds: ['exp1'],
+            runIds: ['run1'],
+          },
           response: {
             plugin: PluginType.SCALARS,
             tag: 'tagA',
@@ -2362,6 +2637,12 @@ describe('metrics reducers', () => {
 
         const newStepCount = 10;
         const action = actions.fetchTimeSeriesLoaded({
+          request: {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            experimentIds: ['exp1'],
+            runIds: ['run1'],
+          },
           response: {
             plugin: PluginType.SCALARS,
             tag: 'tagA',
@@ -2394,6 +2675,12 @@ describe('metrics reducers', () => {
         };
 
         const action = actions.fetchTimeSeriesLoaded({
+          request: {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            experimentIds: ['exp1'],
+            runIds: ['run1', 'run2'],
+          },
           response: {
             plugin: PluginType.SCALARS,
             tag: 'tagA',
@@ -2423,6 +2710,12 @@ describe('metrics reducers', () => {
         };
 
         const action = actions.fetchTimeSeriesLoaded({
+          request: {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            experimentIds: ['exp1'],
+            runIds: ['run1', 'run2'],
+          },
           response: {
             plugin: PluginType.SCALARS,
             tag: 'tagA',

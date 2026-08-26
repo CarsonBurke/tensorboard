@@ -26,7 +26,14 @@ path and contents printed to stdout.
 EOF
 }
 
-tarball="$0.runfiles/org_tensorflow_tensorboard/tensorboard/pip_package/pip_packages.tar.gz"
+runfiles_dir="${RUNFILES_DIR:-$0.runfiles}"
+if [ -f "${runfiles_dir}/_main/tensorboard/pip_package/pip_packages.tar.gz" ]; then
+    workspace_runfiles="${runfiles_dir}/_main"
+else
+    # Compatibility with the legacy WORKSPACE runfiles layout.
+    workspace_runfiles="${runfiles_dir}/org_tensorflow_tensorboard"
+fi
+tarball="${workspace_runfiles}/tensorboard/pip_package/pip_packages.tar.gz"
 
 case $# in
     0)

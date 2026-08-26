@@ -97,6 +97,7 @@ export interface MultiRunTimeSeriesRequest {
   tag: string;
   sample?: number;
   experimentIds: string[];
+  runIds?: string[];
 }
 
 export type TimeSeriesRequest =

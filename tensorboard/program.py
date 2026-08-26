@@ -472,6 +472,7 @@ class TensorBoard:
             data_provider,
             self.assets_zip_provider,
             deprecated_multiplexer,
+            data_ingester=self._ingester,
         )
         return self.server_class(app, self.flags)
 

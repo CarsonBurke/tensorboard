@@ -201,6 +201,21 @@ describe('runs_data_table', () => {
     expect(cells[4].componentInstance.header.name).toEqual('color');
   });
 
+  it('renders the sort control in the run header', () => {
+    const fixture = createComponent({});
+
+    const dataTable = fixture.debugElement.query(
+      By.directive(DataTableComponent)
+    );
+    const headers = dataTable.queryAll(By.directive(HeaderCellComponent));
+
+    const runHeader = headers.find(
+      (h) => h.componentInstance.header.name === 'run'
+    )!;
+
+    expect(runHeader.query(By.css('.run-sort-menu-button'))).toBeTruthy();
+  });
+
   describe('color column', () => {
     it('renders group by control in color header', () => {
       const fixture = createComponent({});
@@ -217,7 +232,7 @@ describe('runs_data_table', () => {
       expect(colorHeader.query(By.css('runs-group-menu-button'))).toBeTruthy();
     });
 
-    it('renders sort control before group by control in color header', () => {
+    it('does not render the sort control in the color header', () => {
       const fixture = createComponent({});
 
       const dataTable = fixture.debugElement.query(
@@ -228,17 +243,8 @@ describe('runs_data_table', () => {
       const colorHeader = headers.find(
         (h) => h.componentInstance.header.name === 'color'
       )!;
-      const controls = colorHeader.queryAll(
-        By.css('.run-sort-menu-button, runs-group-menu-button')
-      );
 
-      expect(controls.length).toBe(2);
-      expect(
-        controls[0].nativeElement.classList.contains('run-sort-menu-button')
-      ).toBeTrue();
-      expect(controls[1].nativeElement.tagName.toLowerCase()).toBe(
-        'runs-group-menu-button'
-      );
+      expect(colorHeader.query(By.css('.run-sort-menu-button'))).toBeNull();
     });
 
     it('emits sort requests for run sort menu options', () => {

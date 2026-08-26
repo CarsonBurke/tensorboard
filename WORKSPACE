@@ -1,3 +1,7 @@
+# Legacy `--noenable_bzlmod` builds are no longer supported. Bazel 7.7.0 reads
+# MODULE.bazel and WORKSPACE.bzlmod for supported TensorBoard builds. This file
+# remains temporarily because repository checks and downstream tooling still
+# inspect the legacy declarations.
 workspace(name = "org_tensorflow_tensorboard")
 
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
@@ -202,24 +206,32 @@ http_archive(
     ],
 )
 
+# Required by @angular/build-tooling's spec-bundling rules (spec-entrypoint.bzl).
+# Only the JsInfo/js_info providers are used; no toolchain setup is needed.
+http_archive(
+    name = "aspect_rules_js",
+    sha256 = "75c25a0f15a9e4592bbda45b57aa089e4bf17f9176fd735351e8c6444df87b52",
+    strip_prefix = "rules_js-2.1.0",
+    url = "https://github.com/aspect-build/rules_js/releases/download/v2.1.0/rules_js-v2.1.0.tar.gz",
+)
+
 load("@build_bazel_rules_nodejs//:repositories.bzl", "build_bazel_rules_nodejs_dependencies")
 
 build_bazel_rules_nodejs_dependencies()
 
 load("@build_bazel_rules_nodejs//:index.bzl", "node_repositories", "yarn_install")
 
-# Angular 17 needs Node.js 18.17 or higher. rules_nodejs 5.8.1 does not
-# include Node 18, so we add it here manually.
-# @TODO(@cdavalos7): We plan to upgrade to a newer version of rules_nodejs that includes Node 18 and remove this manual addition in next version upgrade.
+# Angular 21 supports Node.js 20.19+, 22.12+, or 24+. rules_nodejs 5.8.1
+# doesn't bundle Node 24, so we add it here manually.
 node_repositories(
     node_repositories = {
-        "18.20.8-darwin_arm64": ("node-v18.20.8-darwin-arm64.tar.gz", "node-v18.20.8-darwin-arm64", "bae4965d29d29bd32f96364eefbe3bca576a03e917ddbb70b9330d75f2cacd76"),
-        "18.20.8-darwin_amd64": ("node-v18.20.8-darwin-x64.tar.gz", "node-v18.20.8-darwin-x64", "ed2554677188f4afc0d050ecd8bd56effb2572d6518f8da6d40321ede6698509"),
-        "18.20.8-linux_arm64": ("node-v18.20.8-linux-arm64.tar.xz", "node-v18.20.8-linux-arm64", "224e569dbe7b0ea4628ce383d9d482494b57ee040566583f1c54072c86d1116b"),
-        "18.20.8-linux_amd64": ("node-v18.20.8-linux-x64.tar.xz", "node-v18.20.8-linux-x64", "5467ee62d6af1411d46b6a10e3fb5cacc92734dbcef465fea14e7b90993001c9"),
-        "18.20.8-windows_amd64": ("node-v18.20.8-win-x64.zip", "node-v18.20.8-win-x64", "1a1e40260a6facba83636e4cd0ba01eb5bd1386896824b36645afba44857384a"),
+        "24.18.0-darwin_arm64": ("node-v24.18.0-darwin-arm64.tar.gz", "node-v24.18.0-darwin-arm64", "e1a97e14c99c803e96c7339403282ea05a499c32f8d83defe9ef5ec66f979ed1"),
+        "24.18.0-darwin_amd64": ("node-v24.18.0-darwin-x64.tar.gz", "node-v24.18.0-darwin-x64", "dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080"),
+        "24.18.0-linux_arm64": ("node-v24.18.0-linux-arm64.tar.xz", "node-v24.18.0-linux-arm64", "58c9520501f6ae2b52d5b210444e24b9d0c029a58c5011b797bc1fe7105886f6"),
+        "24.18.0-linux_amd64": ("node-v24.18.0-linux-x64.tar.xz", "node-v24.18.0-linux-x64", "55aa7153f9d88f28d765fcdad5ae6945b5c0f98a36881703817e4c450fa76742"),
+        "24.18.0-windows_amd64": ("node-v24.18.0-win-x64.zip", "node-v24.18.0-win-x64", "0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821"),
     },
-    node_version = "18.20.8",
+    node_version = "24.18.0",
 )
 
 yarn_install(
@@ -237,7 +249,7 @@ yarn_install(
     # this Bazel/CI setup. Apply the generated patch artifacts directly during
     # yarn_install instead.
     post_install_patches = [
-        "//patches:@angular+build-tooling+0.0.0-2113cd7f66a089ac0208ea84eee672b2529f4f6c.patch",
+        "//patches:@angular+build-tooling+0.0.0-98b30ab5fdeeb1df3278f5257b9a8f07abb76941.patch",
         "//patches:@bazel+concatjs+5.8.1.patch",
     ],
     yarn_lock = "//:yarn.lock",

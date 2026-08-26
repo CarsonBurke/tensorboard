@@ -101,7 +101,8 @@ export class MetricsLocalStorageEffects {
                 experimentIds,
                 getTagGroups(currentCards),
                 currentExpanded,
-                currentPageIndex
+                currentPageIndex,
+                true
               );
             }
           )
@@ -133,7 +134,8 @@ export class MetricsLocalStorageEffects {
                 experimentIds,
                 getTagGroups(currentCards),
                 currentExpanded,
-                currentPageIndex
+                currentPageIndex,
+                false
               );
             }
           )
@@ -170,7 +172,7 @@ export class MetricsLocalStorageEffects {
                 environment.data_location,
                 experimentIds
               );
-              if (!namespace || !tagGroups.length) {
+              if (!namespace) {
                 return;
               }
 
@@ -191,13 +193,20 @@ export class MetricsLocalStorageEffects {
     experimentIds: string[] | null,
     tagGroups: string[],
     currentExpanded: Map<string, boolean>,
-    currentPageIndex: Map<string, number>
+    currentPageIndex: Map<string, number>,
+    removeWhenEmpty: boolean
   ) {
-    if (!tagGroups.length) {
-      return;
-    }
     const namespace = getNamespace(dataLocation, experimentIds);
     if (!namespace) {
+      return;
+    }
+    if (!tagGroups.length) {
+      if (removeWhenEmpty) {
+        this.dataSource.setState(namespace, [], {
+          tagGroupExpanded: new Map(),
+          tagGroupPageIndex: new Map(),
+        });
+      }
       return;
     }
 

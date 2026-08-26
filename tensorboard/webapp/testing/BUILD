@@ -14,7 +14,8 @@ tf_ts_library(
     ],
     deps = [
         "//tensorboard/webapp/angular:expect_angular_core_testing",
-        "//tensorboard/webapp/angular:expect_angular_platform_browser_dynamic_testing",
+        "//tensorboard/webapp/angular:expect_angular_platform_browser_testing",
+        "@npm//@angular/core",
         "@npm//@angular/localize",
     ],
 )
@@ -107,7 +108,6 @@ tf_ng_module(
         "//tensorboard/webapp:reducer_config",
         "//tensorboard/webapp/angular:expect_angular_core_testing",
         "//tensorboard/webapp/angular:expect_angular_platform_browser_animations",
-        "//tensorboard/webapp/angular:expect_angular_platform_browser_dynamic_testing",
         "//tensorboard/webapp/app_routing",
         "//tensorboard/webapp/app_routing:route_config",
         "//tensorboard/webapp/app_routing:route_registry",

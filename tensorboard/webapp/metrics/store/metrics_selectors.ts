@@ -99,19 +99,54 @@ export const getCardLoadState = createSelector(
     }
 
     const runIds = storeUtils.getRunIds(state.tagMetadata, plugin, tag, sample);
-    if (!runIds.length) {
-      throw new Error('Cannot load a card whose tag has no runs');
+    // Only the runs that have actually been requested are tracked. The
+    // dashboard requests the selected subset of a tag's runs, so requiring
+    // every run of the tag to be loaded would keep cards loading forever.
+    const trackedRunIds = runIds.filter((id) =>
+      runToLoadState.hasOwnProperty(id)
+    );
+    if (!trackedRunIds.length) {
+      return DataLoadState.NOT_LOADED;
     }
     if (
-      runIds.every((runId) => runToLoadState[runId] === DataLoadState.LOADED)
+      trackedRunIds.every((id) => runToLoadState[id] === DataLoadState.LOADED)
     ) {
       return DataLoadState.LOADED;
     }
-    return runIds.some(
-      (runId) => runToLoadState[runId] === DataLoadState.LOADING
+    return trackedRunIds.some(
+      (id) => runToLoadState[id] === DataLoadState.LOADING
     )
       ? DataLoadState.LOADING
       : DataLoadState.NOT_LOADED;
+  }
+);
+
+/**
+ * Per-run fetch bookkeeping for a card: the runs the card's tag is known to
+ * have, and the load state of every run requested for the card so far.
+ */
+export interface CardRunLoadStates {
+  tagRunIds: string[];
+  runToLoadState: {[runId: string]: DataLoadState};
+}
+
+export const getCardRunLoadStates = createSelector(
+  selectMetricsState,
+  (state: MetricsState, cardId: CardId): CardRunLoadStates => {
+    if (!state.cardMetadataMap.hasOwnProperty(cardId)) {
+      return {tagRunIds: [], runToLoadState: {}};
+    }
+    const {plugin, tag, sample} = state.cardMetadataMap[cardId];
+    const loadable = storeUtils.getTimeSeriesLoadable(
+      state.timeSeriesData,
+      plugin,
+      tag,
+      sample
+    );
+    return {
+      tagRunIds: storeUtils.getRunIds(state.tagMetadata, plugin, tag, sample),
+      runToLoadState: loadable ? loadable.runToLoadState : {},
+    };
   }
 );
 
@@ -365,6 +400,16 @@ export const getMetricsScalarSmoothing = createSelector(
 export const getMetricsScalarPartitionNonMonotonicX = createSelector(
   selectSettings,
   (settings): boolean => settings.scalarPartitionNonMonotonicX
+);
+
+export const getMetricsIsTooltipRowsLimitEnabled = createSelector(
+  selectSettings,
+  (settings): boolean => settings.isTooltipRowsLimitEnabled
+);
+
+export const getMetricsTooltipRowsLimit = createSelector(
+  selectSettings,
+  (settings): number => settings.tooltipRowsLimit
 );
 
 export const getMetricsImageBrightnessInMilli = createSelector(

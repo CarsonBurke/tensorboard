@@ -215,10 +215,16 @@ def tf_ng_web_test_suite(name, deps = [], external = [], **kwargs):
     spec_bundle(
         name = "%s_bundle" % name,
         deps = ["%s_devmode_deps" % name],
-        workspace_name = "org_tensorflow_tensorboard",
+        # Bazel 7 Bzlmod uses `_main` as the main repository's canonical
+        # runfiles name. This must match the paths that karma_web_test_suite
+        # asks RequireJS to load.
+        workspace_name = "_main",
         run_angular_linker = False,
         platform = "browser",
         external = external,
+        # io_bazel_rules_webtesting updated to browsers-0.3.4 which ships chrome 123
+        # chrome 123 headless crashes on es2022 class static blocks so we use es2021
+        target = "es2021",
     )
 
     karma_web_test_suite(

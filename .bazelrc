@@ -1,4 +1,9 @@
-common --noenable_bzlmod
+# Bazel 7.7.0 remains pinned in .bazelversion. Bzlmod is TensorBoard's only
+# supported dependency-resolution entry point. WORKSPACE.bzlmod is an internal
+# compatibility bridge for dependencies that do not yet expose module APIs.
+# Bazel must still evaluate that bridge, so --noenable_workspace is not yet
+# supported even though --noenable_bzlmod is intentionally unsupported.
+common --enable_bzlmod
 # Let the OS-specific sections below (`common:linux`, `common:macos`, etc.)
 # take effect so one `.bazelrc` can carry the required per-platform C++ flags.
 common --enable_platform_specific_config
@@ -11,6 +16,12 @@ test --incompatible_default_to_explicit_init_py
 # Use C++ backing implementations for Python proto parsing and deserialization,
 # which is much faster (~10x).
 build --define=use_fast_cpp_protos=true
+
+# Use Bazel's hermetic JDK 21 for Java targets and build tools. The default
+# target runtime is the host JDK, which can be newer than Bazel 7's Java
+# compiler and make otherwise unrelated Java compilation fail.
+build --java_runtime_version=remotejdk_21
+build --tool_java_runtime_version=remotejdk_21
 
 # Protobuf 6.31.1 requires C++17 in this build. Keep the host and target
 # language level aligned across supported platforms.

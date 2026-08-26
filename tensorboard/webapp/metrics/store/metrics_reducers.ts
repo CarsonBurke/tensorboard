@@ -42,6 +42,7 @@ import {
   CardUniqueInfo,
   SCALARS_SMOOTHING_MAX,
   SCALARS_SMOOTHING_MIN,
+  TOOLTIP_ROWS_LIMIT_MIN,
   TooltipSort,
   URLDeserializedState,
 } from '../types';
@@ -61,6 +62,7 @@ import {
   getCardId,
   getRunIds,
   getTimeSeriesLoadable,
+  retainTimeSeriesRuns,
 } from './metrics_store_internal_utils';
 import {
   CardFeatureOverride,
@@ -208,6 +210,12 @@ function buildNormalizedCardStepIndexMap(
       timeSeriesData
     );
     if (maxStepIndex === null) {
+      if (
+        cardStepIndex.hasOwnProperty(cardId) &&
+        cardStepIndex[cardId]!.index !== null
+      ) {
+        result[cardId] = {index: null, isClosest: false};
+      }
       continue;
     }
     const stepIndex = cardStepIndex.hasOwnProperty(cardId)
@@ -224,6 +232,53 @@ function buildNormalizedCardStepIndexMap(
     const shouldAutoSelectMax = stepIndex === null || prevWasMax;
     if (shouldClamp || shouldAutoSelectMax) {
       result[cardId] = {index: maxStepIndex, isClosest: false};
+    }
+  }
+  return result;
+}
+
+function getTimeSeriesStepMinMax(timeSeriesData: TimeSeriesData) {
+  let min = Infinity;
+  let max = -Infinity;
+  const recordLoadable = (loadable: TimeSeriesLoadable) => {
+    for (const series of Object.values(loadable.runToSeries)) {
+      for (const datum of series) {
+        min = Math.min(min, datum.step);
+        max = Math.max(max, datum.step);
+      }
+    }
+  };
+
+  for (const loadable of Object.values(timeSeriesData.scalars)) {
+    recordLoadable(loadable);
+  }
+  for (const loadable of Object.values(timeSeriesData.histograms)) {
+    recordLoadable(loadable);
+  }
+  for (const sampleData of Object.values(timeSeriesData.images)) {
+    for (const loadable of Object.values(sampleData)) {
+      recordLoadable(loadable);
+    }
+  }
+  return {min, max};
+}
+
+function rebuildScalarCardMinMax(
+  state: MetricsState,
+  timeSeriesData: TimeSeriesData
+): CardStateMap {
+  const result = {...state.cardStateMap};
+  for (const [tag, loadable] of Object.entries(timeSeriesData.scalars)) {
+    const cardId = getCardId({
+      plugin: PluginType.SCALARS,
+      tag,
+      runId: null,
+    });
+    const dataMinMax = generateScalarCardMinMaxStep(loadable.runToSeries);
+    result[cardId] = {...result[cardId], dataMinMax};
+    const pinnedId = state.cardToPinnedCopy.get(cardId);
+    if (pinnedId) {
+      result[pinnedId] = {...result[pinnedId], dataMinMax};
     }
   }
   return result;
@@ -643,6 +698,13 @@ const reducer = createReducer(
     if (typeof partialSettings.savingPinsEnabled === 'boolean') {
       metricsSettings.savingPinsEnabled = partialSettings.savingPinsEnabled;
     }
+    if (typeof partialSettings.isTooltipRowsLimitEnabled === 'boolean') {
+      metricsSettings.isTooltipRowsLimitEnabled =
+        partialSettings.isTooltipRowsLimitEnabled;
+    }
+    if (typeof partialSettings.tooltipRowsLimit === 'number') {
+      metricsSettings.tooltipRowsLimit = partialSettings.tooltipRowsLimit;
+    }
 
     const isSettingsPaneOpen =
       partialSettings.timeSeriesSettingsPaneOpened ?? state.isSettingsPaneOpen;
@@ -874,6 +936,28 @@ const reducer = createReducer(
       },
     };
   }),
+  on(actions.metricsToggleLimitTooltipRows, (state) => {
+    const nextIsTooltipRowsLimitEnabled = !(
+      state.settingOverrides.isTooltipRowsLimitEnabled ??
+      state.settings.isTooltipRowsLimitEnabled
+    );
+    return {
+      ...state,
+      settingOverrides: {
+        ...state.settingOverrides,
+        isTooltipRowsLimitEnabled: nextIsTooltipRowsLimitEnabled,
+      },
+    };
+  }),
+  on(actions.metricsChangeTooltipRowsLimit, (state, {tooltipRowsLimit}) => {
+    return {
+      ...state,
+      settingOverrides: {
+        ...state.settingOverrides,
+        tooltipRowsLimit: Math.max(tooltipRowsLimit, TOOLTIP_ROWS_LIMIT_MIN),
+      },
+    };
+  }),
   on(actions.metricsScalarPartitionNonMonotonicXToggled, (state) => {
     const nextScalarPartitionNonMonotonicX = !(
       state.settingOverrides.scalarPartitionNonMonotonicX ??
@@ -1010,9 +1094,7 @@ const reducer = createReducer(
           tag,
           sample
         )!;
-        const runIds = isSingleRunTimeSeriesRequest(request)
-          ? [request.runId]
-          : getRunIds(state.tagMetadata, plugin, tag, sample);
+        const runIds = getRequestedRunIds(request, state.tagMetadata);
         loadable.runToLoadState = createRunToLoadState(
           DataLoadState.LOADING,
           runIds,
@@ -1043,9 +1125,7 @@ const reducer = createReducer(
         tag,
         sample
       )!;
-      const runIds = isSingleRunTimeSeriesRequest(request)
-        ? [request.runId]
-        : getRunIds(state.tagMetadata, plugin, tag, sample);
+      const runIds = getRequestedRunIds(request, state.tagMetadata);
       loadable.runToLoadState = createRunToLoadState(
         DataLoadState.FAILED,
         runIds,
@@ -1058,7 +1138,10 @@ const reducer = createReducer(
     actions.fetchTimeSeriesLoaded,
     (
       state: MetricsState,
-      {response}: {response: TimeSeriesResponse}
+      {
+        request,
+        response,
+      }: {request: TimeSeriesRequest; response: TimeSeriesResponse}
     ): MetricsState => {
       const nextStepMinMax = {...state.stepMinMax};
       const nextCardStateMap = {...state.cardStateMap};
@@ -1078,19 +1161,24 @@ const reducer = createReducer(
         tag,
         sample
       )!;
+      // The response only names the runs that had data. Every run that was
+      // requested must leave the LOADING state, or its card would show a
+      // spinner forever.
+      const requestedRunIds = getRequestedRunIds(request, state.tagMetadata);
       if (isFailedTimeSeriesResponse(response)) {
-        const runIds = runId
-          ? [runId]
-          : getRunIds(state.tagMetadata, plugin, tag, sample);
         loadable.runToLoadState = createRunToLoadState(
           DataLoadState.FAILED,
-          runIds,
+          requestedRunIds,
           loadable.runToLoadState
         );
       } else {
         const runToSeries = response.runToSeries;
         loadable.runToSeries = {...loadable.runToSeries};
-        loadable.runToLoadState = {...loadable.runToLoadState};
+        loadable.runToLoadState = createRunToLoadState(
+          DataLoadState.LOADED,
+          requestedRunIds,
+          loadable.runToLoadState
+        );
         for (const runId in runToSeries) {
           if (runToSeries.hasOwnProperty(runId)) {
             loadable.runToSeries[runId] = runToSeries[runId];
@@ -1621,8 +1709,42 @@ const reducer = createReducer(
       cardToPinnedCopyCache: new Map() as CardToPinnedCard,
       pinnedCardToOriginal: new Map() as PinnedCardToCard,
     };
+  }),
+  on(actions.unusedTimeSeriesPurged, (state, {runIds}) => {
+    const timeSeriesData = retainTimeSeriesRuns(
+      state.timeSeriesData,
+      new Set(runIds)
+    );
+    if (timeSeriesData === state.timeSeriesData) {
+      return state;
+    }
+    return {
+      ...state,
+      timeSeriesData,
+      cardStepIndex: buildNormalizedCardStepIndexMap(
+        state.cardMetadataMap,
+        state.cardStepIndex,
+        timeSeriesData,
+        state.timeSeriesData
+      ),
+      stepMinMax: getTimeSeriesStepMinMax(timeSeriesData),
+      cardStateMap: rebuildScalarCardMinMax(state, timeSeriesData),
+    };
   })
 );
+
+function getRequestedRunIds(
+  request: TimeSeriesRequest,
+  tagMetadata: TagMetadata
+): string[] {
+  if (isSingleRunTimeSeriesRequest(request)) {
+    return [request.runId];
+  }
+  if (request.runIds !== undefined) {
+    return request.runIds;
+  }
+  return getRunIds(tagMetadata, request.plugin, request.tag, request.sample);
+}
 
 export function reducers(state: MetricsState | undefined, action: Action) {
   return composeReducers(reducer, namespaceContextedReducer)(state, action);

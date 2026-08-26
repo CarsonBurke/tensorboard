@@ -28,6 +28,7 @@ from werkzeug import wrappers
 
 from tensorboard import plugin_util
 from tensorboard.backend import http_util
+from tensorboard.data import ingester as ingester_lib
 from tensorboard.plugins import base_plugin
 from tensorboard.util import grpc_util
 from tensorboard.util import tb_logging
@@ -73,6 +74,7 @@ class CorePlugin(base_plugin.TBPlugin):
         self._path_prefix = context.flags.path_prefix if context.flags else None
         self._assets_zip_provider = context.assets_zip_provider
         self._data_provider = context.data_provider
+        self._data_ingester = getattr(context, "data_ingester", None)
         self._include_debug_info = bool(include_debug_info)
 
     def is_active(self):
@@ -84,6 +86,7 @@ class CorePlugin(base_plugin.TBPlugin):
             "/audio": self._redirect_to_index,
             "/data/environment": self._serve_environment,
             "/data/logdir": self._serve_logdir,
+            "/data/reload": self._serve_reload,
             "/data/runs": self._serve_runs,
             "/data/experiments": self._serve_experiments,
             "/data/experiment_runs": self._serve_experiment_runs,
@@ -173,6 +176,32 @@ class CorePlugin(base_plugin.TBPlugin):
         # gzipping.
         return http_util.Respond(
             request, content, "text/html", content_encoding="identity"
+        )
+
+    @wrappers.Request.application
+    def _serve_reload(self, request):
+        """Rescan the logdir so a UI refresh can see newly created runs.
+
+        Accepts GET and POST. GET exists because some embeddings (Colab)
+        cannot issue POST. Blocks until the ingester finishes the scan,
+        then returns ``{"status": "ok"}``.
+        """
+        honored = False
+        if self._data_ingester is not None:
+            try:
+                honored = bool(self._data_ingester.request_reload())
+            except ingester_lib.ReloadError as e:
+                logger.warning("On-demand reload failed: %s", e)
+                return http_util.Respond(
+                    request,
+                    {"status": "error", "error": str(e)},
+                    "application/json",
+                    code=500,
+                )
+        return http_util.Respond(
+            request,
+            {"status": "ok", "reloaded": honored},
+            "application/json",
         )
 
     @wrappers.Request.application

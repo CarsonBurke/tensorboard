@@ -1,10 +1,10 @@
 # Description:
 # TensorBoard plugin for the Text
 
-load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
+load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 
 package(default_visibility = ["//tensorboard:internal"])
 
@@ -14,15 +14,14 @@ licenses(["notice"])
 py_library(
     name = "text_plugin",
     srcs = ["text_plugin.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         "//tensorboard:plugin_util",
         "//tensorboard/backend:http_util",
         "//tensorboard/data:provider",
         "//tensorboard/plugins:base_plugin",
-        "@org_pocoo_werkzeug",
         "@org_pythonhosted_markdown",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -31,7 +30,6 @@ py_test(
     size = "small",
     srcs = ["text_plugin_test.py"],
     main = "text_plugin_test.py",
-    srcs_version = "PY3",
     deps = [
         ":text_plugin",
         "//tensorboard:context",
@@ -41,7 +39,7 @@ py_test(
         "//tensorboard/backend/event_processing:event_multiplexer",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -51,7 +49,6 @@ py_test(
     size = "small",
     srcs = ["text_plugin_test.py"],
     main = "text_plugin_test.py",
-    srcs_version = "PY3",
     deps = [
         ":text_plugin",
         "//tensorboard:context",
@@ -62,14 +59,13 @@ py_test(
         "//tensorboard/compat:no_tensorflow",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:test_util",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
 py_binary(
     name = "text_demo",
     srcs = ["text_demo.py"],
-    srcs_version = "PY3",
     deps = [
         ":summary_v2",
         "//tensorboard:expect_absl_logging_installed",
@@ -80,7 +76,6 @@ py_binary(
 py_library(
     name = "summary",
     srcs = ["summary.py"],
-    srcs_version = "PY3",
     visibility = [
         "//visibility:public",
     ],
@@ -94,7 +89,6 @@ py_library(
 py_library(
     name = "summary_v2",
     srcs = ["summary_v2.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorboard:internal",
     ],
@@ -111,7 +105,6 @@ py_test(
     name = "summary_test",
     size = "small",
     srcs = ["summary_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":metadata",
         ":summary",
@@ -125,7 +118,6 @@ py_test(
 py_library(
     name = "metadata",
     srcs = ["metadata.py"],
-    srcs_version = "PY3",
     visibility = [
         "//tensorboard:internal",
     ],

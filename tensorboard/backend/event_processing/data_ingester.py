@@ -93,6 +93,21 @@ class LocalDataIngester(ingester.DataIngester):
     def deprecated_multiplexer(self):
         return self._multiplexer
 
+    def request_reload(self, timeout=None):
+        """Scan logdirs now and reload every accumulator.
+
+        Runs synchronously in the calling thread so a UI refresh can wait
+        until newly created runs are visible. Safe to call whether or not
+        ``start`` has already launched the background reloader.
+        """
+        del timeout
+        logger.info("TensorBoard on-demand reload beginning")
+        for path, name in self._path_to_run.items():
+            self._multiplexer.AddRunsFromDirectory(path, name)
+        self._multiplexer.Reload()
+        logger.info("TensorBoard on-demand reload finished")
+        return True
+
     def start(self):
         """Starts ingesting data based on the ingester flag configuration."""
 

@@ -4,6 +4,7 @@
 load("@rules_python//python:py_binary.bzl", "py_binary")
 load("@rules_python//python:py_library.bzl", "py_library")
 load("@rules_python//python:py_test.bzl", "py_test")
+load("@tensorboard_pip_deps//:requirements.bzl", "requirement")
 load("//tensorboard/defs:py_repl.bzl", "py_repl")
 load("//tensorboard/defs:web.bzl", "tf_web_library")
 load("//tensorboard/defs:zipper.bzl", "tensorboard_zip_file")
@@ -24,7 +25,6 @@ py_binary(
     name = "tensorboard",
     srcs = ["main.py"],
     main = "main.py",
-    srcs_version = "PY3",
     deps = [
         ":assets_lib",  # link dep for webfiles assets
         ":default",
@@ -42,7 +42,6 @@ py_binary(
 py_library(
     name = "main_lib",
     srcs = ["main_lib.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard:expect_absl_logging_installed",
         "//tensorboard/compat",
@@ -55,7 +54,6 @@ py_binary(
     srcs = ["main_dev.py"],
     data = ["dev_webfiles.zip"],
     main = "main_dev.py",
-    srcs_version = "PY3",
     deps = [
         ":default",
         ":dynamic_plugins",  # loads internal dynamic plugin like projector
@@ -81,7 +79,6 @@ py_repl(
 py_library(
     name = "lib",
     srcs = ["__init__.py"],
-    srcs_version = "PY3",
     visibility = ["//tensorboard:internal"],
     deps = [
         ":errors",
@@ -103,7 +100,6 @@ py_library(
 py_library(
     name = "lib_init_only",
     srcs = ["__init__.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":lazy",
@@ -115,7 +111,6 @@ py_test(
     name = "lib_test",
     size = "small",
     srcs = ["lib_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     visibility = ["//tensorboard:internal"],
     deps = [":lib"],
@@ -125,7 +120,6 @@ py_library(
     name = "assets_lib",
     srcs = ["assets.py"],
     data = ["webfiles.zip"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard/util:tb_logging",
     ],
@@ -135,7 +129,6 @@ py_test(
     name = "assets_lib_test",
     srcs = ["assets_test.py"],
     main = "assets_test.py",
-    srcs_version = "PY3",
     deps = [
         ":assets_lib",
         "//tensorboard:test",
@@ -145,14 +138,12 @@ py_test(
 py_library(
     name = "auth",
     srcs = ["auth.py"],
-    srcs_version = "PY3",
 )
 
 py_test(
     name = "auth_test",
     size = "small",
     srcs = ["auth_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":auth",
@@ -163,7 +154,6 @@ py_test(
 py_library(
     name = "context",
     srcs = ["context.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":auth",
@@ -174,7 +164,6 @@ py_test(
     name = "context_test",
     size = "small",
     srcs = ["context_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":auth",
@@ -186,13 +175,11 @@ py_test(
 py_library(
     name = "errors",
     srcs = ["errors.py"],
-    srcs_version = "PY3",
 )
 
 py_test(
     name = "errors_test",
     srcs = ["errors_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":errors",
         ":test",
@@ -202,7 +189,6 @@ py_test(
 py_library(
     name = "manager",
     srcs = ["manager.py"],
-    srcs_version = "PY3",
     visibility = ["//tensorboard:internal"],
     deps = [
         ":version",
@@ -214,7 +200,6 @@ py_test(
     name = "manager_test",
     size = "large",
     srcs = ["manager_test.py"],
-    srcs_version = "PY3",
     tags = [
         "exclusive",
         "support_notf",
@@ -240,7 +225,6 @@ py_test(
     # high parallelism; TensorBoard subprocess time out instead of
     # launching successfully.
     flaky = True,
-    srcs_version = "PY3",
     visibility = ["//tensorboard:internal"],
     deps = [
         ":manager",
@@ -251,7 +235,6 @@ py_test(
 py_library(
     name = "notebook",
     srcs = ["notebook.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":manager",
@@ -261,7 +244,6 @@ py_library(
 py_library(
     name = "program",
     srcs = ["program.py"],
-    srcs_version = "PY3",
     deps = [
         ":manager",
         ":version",
@@ -271,7 +253,7 @@ py_library(
         "//tensorboard/backend/event_processing:event_file_inspector",
         "//tensorboard/data:server_ingester",
         "//tensorboard/plugins/core:core_plugin",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -279,7 +261,6 @@ py_test(
     name = "program_test",
     size = "large",
     srcs = ["program_test.py"],
-    srcs_version = "PY3",
     tags = [
         "exclusive",
         "support_notf",
@@ -290,7 +271,7 @@ py_test(
         ":test",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/plugins/core:core_plugin",
-        "@org_pocoo_werkzeug",
+        "@tensorboard_pip_deps//werkzeug",
     ],
 )
 
@@ -298,7 +279,6 @@ py_library(
     name = "test",
     testonly = 1,
     srcs = ["test.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard:expect_absl_testing_absltest_installed",
         "//tensorboard/util:tb_logging",
@@ -308,7 +288,6 @@ py_library(
 py_library(
     name = "default",
     srcs = ["default.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard/backend:experimental_plugin",
         "//tensorboard/plugins/audio:audio_plugin",
@@ -332,7 +311,6 @@ py_library(
 
 py_library(
     name = "dynamic_plugins",
-    srcs_version = "PY3",
     deps = [
         "//tensorboard/plugins/projector:projector_plugin",
     ],
@@ -342,7 +320,6 @@ py_test(
     name = "default_test",
     size = "small",
     srcs = ["default_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":default",
@@ -354,14 +331,12 @@ py_test(
 py_library(
     name = "version",
     srcs = ["version.py"],
-    srcs_version = "PY3",
 )
 
 py_test(
     name = "version_test",
     size = "small",
     srcs = ["version_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":test",
@@ -397,29 +372,33 @@ tensorboard_zip_file(
     deps = ["//tensorboard/webapp/dev_assets"],
 )
 
-# This is a dummy rule used as a numpy dependency in open-source.
-# We expect numpy to already be installed on the system, e.g. via
-# `pip install numpy`
-py_library(name = "expect_numpy_installed")
+# These compatibility targets retain their historical names so existing BUILD
+# files do not need to know how Python packages are resolved. Their packages
+# now come from the locked Bzlmod pip hub rather than host site-packages.
+py_library(
+    name = "expect_numpy_installed",
+    deps = [requirement("numpy")],
+)
 
-# This is a dummy rule used as a pillow dependency in open-source.
-# We expect pillow to already be installed on the system, e.g. via
-# `pip install pillow`
-py_library(name = "expect_pillow_installed")
+# Pillow compatibility target.
+py_library(
+    name = "expect_pillow_installed",
+    deps = [requirement("pillow")],
+)
 
-# This is a dummy rule used as a grpc dependency in open-source.
-# We expect grpc to already be installed on the system, e.g. via
-# `pip install grpcio`
-py_library(name = "expect_grpc_installed")
+# grpcio compatibility target.
+py_library(
+    name = "expect_grpc_installed",
+    deps = [requirement("grpcio")],
+)
 
-# This is a dummy rule used as a grpc_testing dependency in open-source.
-# We expect grpc_testing to already be installed on the system, e.g. via
-# `pip install grpcio_testing`
-py_library(name = "expect_grpc_testing_installed")
+# grpcio-testing compatibility target.
+py_library(
+    name = "expect_grpc_testing_installed",
+    deps = [requirement("grpcio-testing")],
+)
 
-# This is a dummy rule used as a TensorFlow dependency in open-source.
-# We expect TensorFlow to already be installed on the system, e.g. via
-# `pip install tensorflow`
+# TensorFlow compatibility target.
 #
 # NOTE: we include the dep on //tensorboard/summary:tf_summary so that
 # any TensorBoard code that depends on TF also depends on the tf.summary
@@ -432,6 +411,7 @@ py_library(
     name = "expect_tensorflow_installed",
     deps = [
         "//tensorboard/summary:tf_summary",
+        requirement("tensorflow"),
     ],
 )
 
@@ -443,41 +423,72 @@ py_library(name = "expect_tensorflow_datasets_installed")
 # This is a dummy rule used as a absl-py dependency in open-source.
 # We expect absl-py to already be installed on the system, e.g. via
 # `pip install absl-py`
-py_library(name = "expect_absl_app_installed")
+py_library(
+    name = "expect_absl_app_installed",
+    deps = [requirement("absl-py")],
+)
 
 # This is a dummy rule used as a absl-py dependency in open-source.
 # We expect absl-py to already be installed on the system, e.g. via
 # `pip install absl-py`
-py_library(name = "expect_absl_flags_installed")
+py_library(
+    name = "expect_absl_flags_installed",
+    deps = [requirement("absl-py")],
+)
 
 # This is a dummy rule used as a absl-py dependency in open-source.
 # We expect absl-py to already be installed on the system, e.g. via
 # `pip install absl-py`
-py_library(name = "expect_absl_logging_installed")
+py_library(
+    name = "expect_absl_logging_installed",
+    deps = [requirement("absl-py")],
+)
 
 # This is a dummy rule used as a absl-py dependency in open-source.
 # We expect absl-py to already be installed on the system, e.g. via
 # `pip install absl-py`
-py_library(name = "expect_absl_testing_absltest_installed")
+py_library(
+    name = "expect_absl_testing_absltest_installed",
+    deps = [requirement("absl-py")],
+)
 
 # This is a dummy rule used as a packaging dependency in open-source.
 # We expect packaging to already be installed on the system, e.g. via
 # `pip install packaging`.
-py_library(name = "expect_packaging_installed")
+py_library(
+    name = "expect_packaging_installed",
+    deps = [requirement("packaging")],
+)
 
 # This is a dummy rule used as a pandas dependency in open-source.
 # We expect pandas to already be installed on the system, e.g. via
 # `pip install pandas`.
 # NOTE: Unlike other parallel dependencies in this file, pandas is an
 # optional dependency.
-py_library(name = "expect_pandas_installed")
+py_library(
+    name = "expect_pandas_installed",
+    deps = [requirement("pandas")],
+)
 
 # This is a dummy rule used as a fsspec dependency in open-source.
 # We expect fsspec to already be installed on the system, e.g. via
 # `pip install fsspec`.
 # NOTE: Unlike other parallel dependencies in this file, fsspec is an
 # optional dependency.
-py_library(name = "expect_fsspec_installed")
+py_library(
+    name = "expect_fsspec_installed",
+    deps = [requirement("fsspec")],
+)
+
+py_library(
+    name = "expect_boto3_installed",
+    deps = [requirement("boto3")],
+)
+
+py_library(
+    name = "expect_moto_installed",
+    deps = [requirement("moto")],
+)
 
 # This is a dummy rule used as a protobuf dependency in open-source.
 # We expect protobuf to already be installed on the system, e.g. via
@@ -488,12 +499,14 @@ py_library(name = "expect_fsspec_installed")
 # done by protoc as part of the build process. The protoc version may
 # differ from the runtime version, but to be compatible, the runtime
 # version should always be >= the protoc version.
-py_library(name = "expect_protobuf_installed")
+py_library(
+    name = "expect_protobuf_installed",
+    deps = [requirement("protobuf")],
+)
 
 py_library(
     name = "data_compat",
     srcs = ["data_compat.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard:expect_protobuf_installed",
         "//tensorboard/compat/proto:protos_all_py_pb2",
@@ -509,7 +522,6 @@ py_test(
     name = "data_compat_test",
     size = "small",
     srcs = ["data_compat_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":data_compat",
         "//tensorboard:expect_numpy_installed",
@@ -530,7 +542,6 @@ py_test(
 py_library(
     name = "dataclass_compat",
     srcs = ["dataclass_compat.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard/compat/proto:protos_all_py_pb2",
         "//tensorboard/plugins/audio:metadata",
@@ -551,7 +562,6 @@ py_test(
     name = "dataclass_compat_test",
     size = "small",
     srcs = ["dataclass_compat_test.py"],
-    srcs_version = "PY3",
     deps = [
         ":dataclass_compat",
         "//tensorboard:expect_numpy_installed",
@@ -577,7 +587,6 @@ py_test(
 py_binary(
     name = "encode_png_benchmark",
     srcs = ["encode_png_benchmark.py"],
-    srcs_version = "PY3",
     deps = [
         "//tensorboard:expect_absl_logging_installed",
         "//tensorboard:expect_numpy_installed",
@@ -590,10 +599,10 @@ py_binary(
 py_library(
     name = "plugin_util",
     srcs = ["plugin_util.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":context",
+        "//tensorboard:expect_packaging_installed",
         "//tensorboard:expect_protobuf_installed",
         "//tensorboard/backend:experiment_id",
         "//tensorboard/util:tb_logging",
@@ -606,7 +615,6 @@ py_test(
     name = "plugin_util_test",
     size = "small",
     srcs = ["plugin_util_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [
         ":context",
@@ -625,14 +633,12 @@ alias(
 py_library(
     name = "lazy",
     srcs = ["lazy.py"],
-    srcs_version = "PY3",
 )
 
 py_test(
     name = "lazy_test",
     size = "small",
     srcs = ["lazy_test.py"],
-    srcs_version = "PY3",
     tags = ["support_notf"],
     deps = [":lazy"],
 )

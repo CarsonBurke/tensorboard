@@ -1,8 +1,8 @@
-load("//tensorboard/defs:protos.bzl", "tb_proto_library")
-load("@rules_python//python:py_binary.bzl", "py_binary")
-load("@rules_python//python:py_test.bzl", "py_test")
 load("@build_bazel_rules_nodejs//:index.bzl", "nodejs_binary")
 load("@npm//@bazel/concatjs:index.bzl", "ts_library")
+load("@rules_python//python:py_binary.bzl", "py_binary")
+load("@rules_python//python:py_test.bzl", "py_test")
+load("//tensorboard/defs:protos.bzl", "tb_proto_library")
 
 package(default_visibility = ["//tensorboard:internal"])
 
@@ -11,8 +11,6 @@ licenses(["notice"])
 py_binary(
     name = "inline_images",
     srcs = ["inline_images.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
 )
 
 py_test(

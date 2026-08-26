@@ -1,6 +1,6 @@
 # Limit resources since GitHub Actions VMs have 2 cores and 7 GB RAM.
-build --local_cpu_resources=2
-build --local_ram_resources=4000
+build --local_resources=cpu=2
+build --local_resources=memory=4000
 build --worker_max_instances=2
 
 # Ensure sandboxing is on to increase hermeticity.
@@ -30,11 +30,5 @@ build --worker_verbose
 test --test_output=errors
 test --test_verbose_timeout_warnings
 
-# Enable remote caching. This cache is publicly readable, but only writable on
-# trusted commits (e.g., commits to master). We don't write the actual test
-# statuses (or read them if they happen to be there) because not all tests are
-# actually hermetic, and they run pretty quickly, anyway.
-common --remote_cache=https://storage.googleapis.com/tensorboard-build-cache
-common --remote_upload_local_results=false
-test --remote_upload_local_results=false
+# Do not cache test results because not all tests are hermetic.
 test --cache_test_results=false

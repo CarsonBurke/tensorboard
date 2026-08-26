@@ -125,7 +125,7 @@ function createSampledTagDataWithLoadable<P extends SampledPluginType>(
 }
 
 function buildTimeSeriesLoadable<
-  P extends PluginType
+  P extends PluginType,
 >(): TimeSeriesLoadables[P] {
   return {
     runToSeries: {},
@@ -179,6 +179,114 @@ export function getRunIds(
   }
   const tagToRunIds = tagMetadata[plugin].tagToRuns;
   return tagToRunIds.hasOwnProperty(tag) ? tagToRunIds[tag] : [];
+}
+
+/**
+ * Drops series and load-state entries whose run ids are not in `keepRunIds`.
+ *
+ * Returns the input objects, unchanged, wherever nothing is dropped. Callers
+ * run this on every time series response, so allocating a fresh state would
+ * invalidate every card's selectors and re-render charts that did not change.
+ */
+export function retainTimeSeriesRuns(
+  timeSeriesData: TimeSeriesData,
+  keepRunIds: ReadonlySet<string>
+): TimeSeriesData {
+  const scalars = retainNonSampledPluginData(
+    timeSeriesData[PluginType.SCALARS],
+    keepRunIds
+  );
+  const histograms = retainNonSampledPluginData(
+    timeSeriesData[PluginType.HISTOGRAMS],
+    keepRunIds
+  );
+  const images = retainSampledPluginData(
+    timeSeriesData[PluginType.IMAGES],
+    keepRunIds
+  );
+  if (
+    scalars === timeSeriesData[PluginType.SCALARS] &&
+    histograms === timeSeriesData[PluginType.HISTOGRAMS] &&
+    images === timeSeriesData[PluginType.IMAGES]
+  ) {
+    return timeSeriesData;
+  }
+  return {
+    [PluginType.SCALARS]: scalars,
+    [PluginType.HISTOGRAMS]: histograms,
+    [PluginType.IMAGES]: images,
+  };
+}
+
+function retainNonSampledPluginData<
+  T extends {runToSeries: {}; runToLoadState: {}},
+>(pluginData: Record<string, T>, keepRunIds: ReadonlySet<string>) {
+  let changed = false;
+  const nextPluginData: Record<string, T> = {};
+  for (const [tag, loadable] of Object.entries(pluginData)) {
+    const nextLoadable = retainLoadableRuns(loadable, keepRunIds);
+    changed = changed || nextLoadable !== loadable;
+    nextPluginData[tag] = nextLoadable;
+  }
+  return changed ? nextPluginData : pluginData;
+}
+
+function retainSampledPluginData<
+  T extends {runToSeries: {}; runToLoadState: {}},
+>(
+  pluginData: Record<string, Record<number, T>>,
+  keepRunIds: ReadonlySet<string>
+) {
+  let changed = false;
+  const nextPluginData: Record<string, Record<number, T>> = {};
+  for (const [tag, sampleData] of Object.entries(pluginData)) {
+    let sampleChanged = false;
+    const nextSampleData: Record<number, T> = {};
+    for (const [sample, loadable] of Object.entries(sampleData)) {
+      const nextLoadable = retainLoadableRuns(loadable, keepRunIds);
+      sampleChanged = sampleChanged || nextLoadable !== loadable;
+      nextSampleData[Number(sample)] = nextLoadable;
+    }
+    changed = changed || sampleChanged;
+    nextPluginData[tag] = sampleChanged ? nextSampleData : sampleData;
+  }
+  return changed ? nextPluginData : pluginData;
+}
+
+function retainLoadableRuns<
+  T extends {runToSeries: {}; runToLoadState: {[runId: string]: DataLoadState}},
+>(loadable: T, keepRunIds: ReadonlySet<string>): T {
+  // A purge cannot cancel a request that is already in flight, so its
+  // bookkeeping stays; the response settles it and triggers another purge.
+  const keepLoadState = (runId: string) =>
+    keepRunIds.has(runId) ||
+    loadable.runToLoadState[runId] === DataLoadState.LOADING;
+  const seriesRunIds = Object.keys(loadable.runToSeries);
+  const loadStateRunIds = Object.keys(loadable.runToLoadState);
+  if (
+    seriesRunIds.every((runId) => keepRunIds.has(runId)) &&
+    loadStateRunIds.every(keepLoadState)
+  ) {
+    return loadable;
+  }
+  const runToSeries = {} as Record<string, unknown>;
+  for (const runId of seriesRunIds) {
+    if (keepRunIds.has(runId)) {
+      runToSeries[runId] =
+        loadable.runToSeries[runId as keyof typeof loadable.runToSeries];
+    }
+  }
+  const runToLoadState = {} as Record<string, DataLoadState>;
+  for (const runId of loadStateRunIds) {
+    if (keepLoadState(runId)) {
+      runToLoadState[runId] = loadable.runToLoadState[runId];
+    }
+  }
+  return {
+    ...loadable,
+    runToSeries: runToSeries as T['runToSeries'],
+    runToLoadState: runToLoadState as T['runToLoadState'],
+  };
 }
 
 /**
@@ -392,12 +500,12 @@ export function generateScalarCardMinMaxStep(
   let minStep = Infinity;
   let maxStep = -Infinity;
 
-  Object.values(runsToSeries)
-    .flat()
-    .forEach((stepDatum) => {
+  for (const series of Object.values(runsToSeries)) {
+    for (const stepDatum of series) {
       minStep = Math.min(minStep, stepDatum.step);
       maxStep = Math.max(maxStep, stepDatum.step);
-    });
+    }
+  }
 
   return {
     minStep,

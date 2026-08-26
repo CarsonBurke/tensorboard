@@ -164,6 +164,9 @@ function namespacesAreEquivalent(
 
 @Injectable({providedIn: 'root'})
 export class RunLocalStorageDataSource {
+  private inMemoryValue: string | null | undefined;
+  private hasPendingWrite = false;
+
   getState(namespaceId: string, currentRuns: Run[]): RunLocalStorageState {
     const currentRunIds = new Set(currentRuns.map((run) => run.id));
     const storedState = safeParse(this.getItem());
@@ -199,6 +202,7 @@ export class RunLocalStorageDataSource {
 
     const storedState = safeParse(this.getItem());
     if (
+      !this.hasPendingWrite &&
       Object.keys(storedState.namespaces).length === 1 &&
       namespacesAreEquivalent(
         storedState.namespaces[namespaceId],
@@ -219,6 +223,9 @@ export class RunLocalStorageDataSource {
   }
 
   private getItem(): string | null {
+    if (this.inMemoryValue !== undefined) {
+      return this.inMemoryValue;
+    }
     try {
       return window.localStorage.getItem(RUN_LOCAL_STORAGE_KEY);
     } catch {
@@ -229,17 +236,24 @@ export class RunLocalStorageDataSource {
   private setItem(value: string) {
     try {
       window.localStorage.setItem(RUN_LOCAL_STORAGE_KEY, value);
+      this.inMemoryValue = undefined;
+      this.hasPendingWrite = false;
     } catch {
-      // localStorage can be unavailable or full. Run state persistence should
-      // never break TensorBoard itself.
+      // Keep the newest value for this session so a stale stored value cannot
+      // overwrite live state after quota or availability failures.
+      this.inMemoryValue = value;
+      this.hasPendingWrite = true;
     }
   }
 
   private removeItem() {
     try {
       window.localStorage.removeItem(RUN_LOCAL_STORAGE_KEY);
+      this.inMemoryValue = undefined;
+      this.hasPendingWrite = false;
     } catch {
-      // Ignore localStorage failures.
+      this.inMemoryValue = null;
+      this.hasPendingWrite = true;
     }
   }
 }

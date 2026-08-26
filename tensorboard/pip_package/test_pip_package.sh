@@ -77,6 +77,12 @@ parse_args() {
   if [ -z "${RUNFILES+set}" ]; then
     RUNFILES="$(CDPATH="" cd -- "$0.runfiles" && pwd)"
   fi
+  if [ -d "${RUNFILES}/_main/tensorboard" ]; then
+    TENSORBOARD_RUNFILES="${RUNFILES}/_main"
+  else
+    # Compatibility with the legacy WORKSPACE runfiles layout.
+    TENSORBOARD_RUNFILES="${RUNFILES}/org_tensorflow_tensorboard"
+  fi
 }
 
 initialize_workdir() {
@@ -89,7 +95,7 @@ initialize_workdir() {
 # Extract '*.whl' files from runfiles and put them into "${wheels}".
 extract_wheels() {
   tar xzvf \
-      "${RUNFILES}/org_tensorflow_tensorboard/tensorboard/pip_package/pip_packages.tar.gz" \
+      "${TENSORBOARD_RUNFILES}/tensorboard/pip_package/pip_packages.tar.gz" \
       -C "${wheels}"
 }
 

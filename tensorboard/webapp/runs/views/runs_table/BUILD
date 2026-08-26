@@ -163,7 +163,7 @@ tf_ts_library(
         "//tensorboard/webapp/angular:expect_angular_material_sort",
         "//tensorboard/webapp/angular:expect_angular_material_table",
         "//tensorboard/webapp/angular:expect_angular_platform_browser_animations",
-        "//tensorboard/webapp/angular:expect_angular_platform_browser_dynamic_testing",
+        "//tensorboard/webapp/angular:expect_angular_platform_browser_testing",
         "//tensorboard/webapp/angular:expect_ngrx_store_testing",
         "//tensorboard/webapp/app_routing:testing",
         "//tensorboard/webapp/app_routing:types",
