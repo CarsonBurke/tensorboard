@@ -264,6 +264,85 @@ class MultiplexerDataProviderTest(tf.test.TestCase):
         )
         self.assertEqual(result, {})
 
+    def test_list_scalars_with_finite_filter_uses_direct_lookups(self):
+        metadata = summary_pb2.SummaryMetadata()
+        metadata.data_class = summary_pb2.DATA_CLASS_SCALAR
+        metadata.plugin_data.plugin_name = scalar_metadata.PLUGIN_NAME
+
+        class FakeTensorEvent:
+            step = 1
+            wall_time = 2.0
+
+        class FakeMultiplexer:
+            def __init__(self):
+                self.summary_metadata_calls = []
+
+            def AllSummaryMetadata(self):
+                raise AssertionError("full metadata index should not be loaded")
+
+            def SummaryMetadata(self, run, tag):
+                self.summary_metadata_calls.append((run, tag))
+                if (run, tag) == ("run", "tag"):
+                    return metadata
+                raise KeyError((run, tag))
+
+            def Tensors(multiplexer, run, tag):
+                self.assertEqual((run, tag), ("run", "tag"))
+                return [FakeTensorEvent()]
+
+        multiplexer = FakeMultiplexer()
+        provider = data_provider.MultiplexerDataProvider(
+            multiplexer, "fake_logdir"
+        )
+        result = provider.list_scalars(
+            self.ctx,
+            experiment_id="unused",
+            plugin_name=scalar_metadata.PLUGIN_NAME,
+            run_tag_filter=base_provider.RunTagFilter(
+                runs=["run", "missing_run"],
+                tags=["tag", "missing_tag"],
+            ),
+        )
+
+        self.assertEqual(result.keys(), {"run"})
+        self.assertEqual(result["run"].keys(), {"tag"})
+        self.assertCountEqual(
+            multiplexer.summary_metadata_calls,
+            [
+                ("run", "tag"),
+                ("run", "missing_tag"),
+                ("missing_run", "tag"),
+                ("missing_run", "missing_tag"),
+            ],
+        )
+
+    def test_read_downsamples_before_converting(self):
+        events = list(range(500))
+
+        class FakeMultiplexer:
+            def Tensors(multiplexer, run, tag):
+                self.assertEqual((run, tag), ("run", "tag"))
+                return list(events)
+
+        converted = []
+
+        def convert_event(event):
+            converted.append(event)
+            return event
+
+        provider = data_provider.MultiplexerDataProvider(
+            FakeMultiplexer(), "fake_logdir"
+        )
+        result = provider._read(
+            convert_event,
+            {"run": {"tag": object()}},
+            downsample=51,
+        )
+        expected = data_provider._downsample(events, 51)
+
+        self.assertEqual(result, {"run": {"tag": expected}})
+        self.assertEqual(converted, expected)
+
     def test_read_scalars(self):
         multiplexer = self.create_multiplexer()
         provider = data_provider.MultiplexerDataProvider(

@@ -209,18 +209,25 @@ class MultiplexerDataProvider(provider.DataProvider):
         runs = run_tag_filter.runs
         tags = run_tag_filter.tags
 
-        # Optimization for a common case, reading a single time series.
-        if runs and len(runs) == 1 and tags and len(tags) == 1:
-            (run,) = runs
-            (tag,) = tags
-            try:
-                metadata = self._multiplexer.SummaryMetadata(run, tag)
-            except KeyError:
-                return {}
-            all_metadata = {run: {tag: metadata}}
+        if (runs is not None and not runs) or (
+            tags is not None and not tags
+        ):
+            return {}
+
+        # Avoid materializing and scanning the complete metadata index when both
+        # dimensions are bounded. Metrics data requests commonly select many
+        # runs but only one tag, making direct lookup substantially cheaper.
+        if runs is not None and tags is not None:
+            all_metadata = {}
+            for run in runs:
+                for tag in tags:
+                    try:
+                        metadata = self._multiplexer.SummaryMetadata(run, tag)
+                    except KeyError:
+                        continue
+                    all_metadata.setdefault(run, {})[tag] = metadata
         else:
             all_metadata = self._multiplexer.AllSummaryMetadata()
-
         result = {}
         for run, tag_to_metadata in all_metadata.items():
             if runs is not None and run not in runs:
@@ -261,7 +268,6 @@ class MultiplexerDataProvider(provider.DataProvider):
                         max_step = event.step
                     if max_wall_time is None or max_wall_time < event.wall_time:
                         max_wall_time = event.wall_time
-                summary_metadata = self._multiplexer.SummaryMetadata(run, tag)
                 result_for_run[tag] = construct_time_series(
                     max_step=max_step,
                     max_wall_time=max_wall_time,
@@ -290,9 +296,10 @@ class MultiplexerDataProvider(provider.DataProvider):
             result_for_run = {}
             result[run] = result_for_run
             for tag, metadata in tags_for_run.items():
-                events = self._multiplexer.Tensors(run, tag)
-                data = [convert_event(e) for e in events]
-                result_for_run[tag] = _downsample(data, downsample)
+                events = _downsample(
+                    self._multiplexer.Tensors(run, tag), downsample
+                )
+                result_for_run[tag] = [convert_event(e) for e in events]
         return result
 
     def list_blob_sequences(

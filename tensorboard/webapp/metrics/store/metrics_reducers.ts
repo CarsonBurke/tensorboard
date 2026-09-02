@@ -1767,7 +1767,12 @@ function buildTagToRuns(runTagInfo: {[run: string]: string[]}) {
   const tagToRuns: {[tag: string]: string[]} = {};
   for (const run in runTagInfo) {
     for (const tag of runTagInfo[run]) {
-      tagToRuns[tag] = [...(tagToRuns[tag] || []), run];
+      const runs = tagToRuns[tag];
+      if (runs) {
+        runs.push(run);
+      } else {
+        tagToRuns[tag] = [run];
+      }
     }
   }
   return tagToRuns;
