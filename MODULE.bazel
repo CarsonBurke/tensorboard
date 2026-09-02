@@ -141,6 +141,7 @@ archive_override(
     patches = [
         "//patches:protobuf_6_31_1_bzlmod.patch",
         "//patches:protobuf_6_31_1_java_export.patch",
+        "//patches:protobuf_6_31_1_system_python.patch",
     ],
     strip_prefix = "protobuf-6.31.1",
     urls = [

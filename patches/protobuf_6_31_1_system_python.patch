@@ -1,0 +1,52 @@
+diff --git a/python/dist/system_python.bzl b/python/dist/system_python.bzl
+--- a/python/dist/system_python.bzl
++++ b/python/dist/system_python.bzl
+@@ -154,14 +154,17 @@
+     pass
+ """
+ 
+-def _get_python_version(repository_ctx):
++def _get_python_version(repository_ctx, python3):
+     py_program = "import sys; print(str(sys.version_info.major) + '.' + str(sys.version_info.minor) + '.' + str(sys.version_info.micro))"
+-    result = repository_ctx.execute(["python3", "-c", py_program])
++    result = repository_ctx.execute([str(python3), "-c", py_program])
+     return (result.stdout).strip().split(".")
+ 
+-def _get_python_path(repository_ctx):
+-    py_program = "import sysconfig; print(sysconfig.get_config_var('%s'), end='')"
+-    result = repository_ctx.execute(["python3", "-c", py_program % ("INCLUDEPY")])
++def _get_python_path(repository_ctx, python3):
++    # Relocatable CPython (rules_python hermetic runtimes) reports INCLUDEPY as
++    # the install-layout path (/install/include/...), which does not exist on
++    # disk. sysconfig.get_paths()['include'] is the real header tree.
++    py_program = "import sysconfig; print(sysconfig.get_paths()['include'], end='')"
++    result = repository_ctx.execute([str(python3), "-c", py_program])
+     if result.return_code != 0:
+         return None
+     return result.stdout
+@@ -215,11 +218,14 @@
+     ctx.file("fuzzing_py.bzl", _mock_fuzzing_py)
+ 
+ def _system_python_impl(repository_ctx):
+-    path = _get_python_path(repository_ctx)
+-    python3 = repository_ctx.which("python3")
+-    python_version = _get_python_version(repository_ctx)
++    if repository_ctx.attr.interpreter:
++        python3 = repository_ctx.path(repository_ctx.attr.interpreter)
++    else:
++        python3 = repository_ctx.which("python3")
++    path = _get_python_path(repository_ctx, python3) if python3 else None
++    python_version = _get_python_version(repository_ctx, python3) if python3 else []
+ 
+-    if path and python_version[0] == "3":
++    if path and python3 and python_version and python_version[0] == "3":
+         _populate_package(repository_ctx, path, python3, python_version)
+     else:
+         # buildifier: disable=print
+@@ -267,5 +273,6 @@
+     local = True,
+     attrs = {
+         "minimum_python_version": attr.string(default = "3.9"),
++        "interpreter": attr.label(allow_single_file = True),
+     },
+ )

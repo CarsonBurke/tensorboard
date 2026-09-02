@@ -32,6 +32,7 @@ exceptions = frozenset(
         "patches/@bazel+concatjs+5.8.1.patch",
         "patches/protobuf_6_31_1_bzlmod.patch",
         "patches/protobuf_6_31_1_java_export.patch",
+        "patches/protobuf_6_31_1_system_python.patch",
         "patches/rules_web_testing_python_py310.patch",
     ]
 )

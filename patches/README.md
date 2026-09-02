@@ -115,13 +115,31 @@ correctly when protobuf is a dependency rather than the root module:
 - The apparent `@system_python` name points to a rules_python toolchain
   repository, which does not provide the `version.bzl` and Python-header
   targets that `//python/dist` expects. The patch creates protobuf's intended
-  system-Python repository under that name instead.
+  system-Python repository under that name instead, wired to the hermetic
+  CPython 3.10 interpreter TensorBoard's `py_binary` actions actually run.
 - `//python/dist` loads `@protobuf_pip_deps`, but protobuf declares the pip
   extension that creates it as development-only. The patch makes the extension
   available to downstream modules such as TensorBoard.
 
 Removal is planned once protobuf's own module metadata provides both
 repositories to downstream consumers without a source override.
+
+## `protobuf_6_31_1_system_python.patch`
+
+**Modified files:**
+- `python/dist/system_python.bzl`
+
+**What it does:**
+Lets `@system_python` take an explicit interpreter label instead of always
+running the host `python3`. Relocatable CPython (the rules_python 3.10
+runtime) reports `INCLUDEPY` as `/install/include/...`, which is not a real
+path, so header discovery uses `sysconfig.get_paths()['include']`.
+
+Without this, `google.protobuf.pyext._message` is compiled against the host
+Python (3.14 here) and then imported by hermetic 3.10, which fails with
+`undefined symbol: PyFrame_GetGlobals`.
+
+Removal is planned with the bzlmod protobuf override.
 
 
 ## `rules_cc_protobuf.patch`
