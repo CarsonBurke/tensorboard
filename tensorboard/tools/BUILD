@@ -29,3 +29,17 @@ py_binary(
     name = "inline_file_content",
     srcs = ["inline_file_content.py"],
 )
+
+py_binary(
+    name = "benchmark_metrics",
+    srcs = ["benchmark_metrics.py"],
+    deps = [
+        "//tensorboard:context",
+        "//tensorboard/backend:http_util",
+        "//tensorboard/data:grpc_provider",
+        "//tensorboard/data/proto:protos_all_py_pb2",
+        "//tensorboard/plugins:base_plugin",
+        "//tensorboard/plugins/metrics:metrics_plugin",
+        "@tensorboard_pip_deps//werkzeug",
+    ],
+)
