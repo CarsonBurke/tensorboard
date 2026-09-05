@@ -12,7 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-import {ChangeDetectionStrategy, Component, Input} from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  HostListener,
+  Input,
+} from '@angular/core';
 import {RunsTableColumn} from '../runs_table/types';
 
 @Component({
@@ -22,6 +27,8 @@ import {RunsTableColumn} from '../runs_table/types';
     <runs-table
       [columns]="columns"
       [experimentIds]="experimentIds"
+      [scrollTop]="scrollTop"
+      [viewportHeight]="viewportHeight"
     ></runs-table>
   `,
   styles: [
@@ -43,4 +50,14 @@ import {RunsTableColumn} from '../runs_table/types';
 export class RunsSelectorComponent {
   @Input() experimentIds!: string[];
   @Input() columns!: RunsTableColumn[];
+
+  scrollTop = 0;
+  viewportHeight = 0;
+
+  @HostListener('scroll', ['$event'])
+  onScroll(event: Event) {
+    const element = event.currentTarget as HTMLElement;
+    this.scrollTop = element.scrollTop;
+    this.viewportHeight = element.clientHeight;
+  }
 }

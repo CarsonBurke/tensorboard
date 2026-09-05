@@ -70,6 +70,16 @@ tb-data-table-header-cell {
   height: 48px;
 }
 
+.virtual-spacer {
+  display: table-row;
+  pointer-events: none;
+
+  &::after {
+    content: '';
+    display: table-cell;
+  }
+}
+
 tb-data-table-content-cell,
 tb-data-table-header-cell {
   padding: 0 4px;

@@ -53,7 +53,7 @@ limitations under the License.
               <mat-checkbox
                 [checked]="allRowsSelected()"
                 [indeterminate]="!allRowsSelected() && someRowsSelected()"
-                (click)="handleSelectAll($event)"
+                (click)="handleSelectAll()"
               ></mat-checkbox>
             </div>
             <span class="run-sort-menu-container" *ngSwitchCase="'run'">
@@ -77,7 +77,12 @@ limitations under the License.
     ></ng-container>
 
     <ng-container content>
-      <ng-container *ngFor="let dataRow of data; trackBy: trackByRuns">
+      <div
+        *ngIf="topSpacerHeightInPx"
+        class="virtual-spacer"
+        [style.height.px]="topSpacerHeightInPx"
+      ></div>
+      <ng-container *ngFor="let dataRow of visibleData; trackBy: trackByRuns">
         <tb-data-table-content-row [attr.data-id]="dataRow.id">
           <ng-container *ngFor="let header of extendHeaders(headers)">
             <tb-data-table-content-cell
@@ -115,6 +120,11 @@ limitations under the License.
           </ng-container>
         </tb-data-table-content-row>
       </ng-container>
+      <div
+        *ngIf="bottomSpacerHeightInPx"
+        class="virtual-spacer"
+        [style.height.px]="bottomSpacerHeightInPx"
+      ></div>
     </ng-container>
   </tb-data-table>
 </div>

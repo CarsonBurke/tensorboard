@@ -17,7 +17,9 @@ import {
   Component,
   EventEmitter,
   Input,
+  OnChanges,
   Output,
+  SimpleChanges,
 } from '@angular/core';
 import {
   ColumnHeader,
@@ -34,6 +36,10 @@ import {
 import {memoize} from '../../../util/memoize';
 import {RUN_START_TIME_SORT_KEY} from './sorting_utils';
 
+const ROW_HEIGHT_IN_PX = 48;
+const OVERSCAN_ROWS = 10;
+const INITIAL_RENDERED_ROWS = 50;
+
 @Component({
   standalone: false,
   selector: 'runs-data-table',
@@ -41,7 +47,7 @@ import {RUN_START_TIME_SORT_KEY} from './sorting_utils';
   styleUrls: ['runs_data_table.css'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class RunsDataTable {
+export class RunsDataTable implements OnChanges {
   @Input() headers!: ColumnHeader[];
   @Input() data!: TableData[];
   @Input() sortingInfo!: SortingInfo;
@@ -52,10 +58,20 @@ export class RunsDataTable {
   @Input() numColumnsToLoad!: number;
   @Input() loading!: boolean;
   @Input() columnFilters!: Map<string, DiscreteFilter | IntervalFilter>;
+  @Input() scrollTop = 0;
+  @Input() viewportHeight = 0;
 
   ColumnHeaderType = ColumnHeaderType;
   SortingOrder = SortingOrder;
   runStartTimeSortKey = RUN_START_TIME_SORT_KEY;
+
+  visibleData: TableData[] = [];
+  topSpacerHeightInPx = 0;
+  bottomSpacerHeightInPx = 0;
+
+  private renderedData: TableData[] | null = null;
+  private renderedStart = -1;
+  private renderedEnd = -1;
 
   @Output() sortDataBy = new EventEmitter<SortingInfo>();
   @Output() orderColumns = new EventEmitter<ReorderColumnEvent>();
@@ -99,17 +115,57 @@ export class RunsDataTable {
     );
   }
 
-  selectionClick(event: MouseEvent, runId: string) {
-    // Prevent checkbox from switching checked state on its own.
-    event.preventDefault();
-
-    // event.details on mouse click events gives the number of clicks in quick
-    // succession. This logic is used to differentiate between single and double
-    // clicks.
-    // Note: This means any successive click after the second are noops.
-    if (event.detail === 1) {
-      this.onSelectionToggle.emit(runId);
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes['data'] || changes['scrollTop'] || changes['viewportHeight']) {
+      this.updateVisibleData();
     }
+  }
+
+  private updateVisibleData() {
+    if (!this.data?.length) {
+      this.visibleData = [];
+      this.topSpacerHeightInPx = 0;
+      this.bottomSpacerHeightInPx = 0;
+      return;
+    }
+
+    const viewportRows = this.viewportHeight
+      ? Math.ceil(this.viewportHeight / ROW_HEIGHT_IN_PX)
+      : INITIAL_RENDERED_ROWS;
+    const renderedRows = viewportRows + 2 * OVERSCAN_ROWS;
+    const firstVisibleRow = Math.floor(this.scrollTop / ROW_HEIGHT_IN_PX);
+    const start = Math.min(
+      Math.max(0, this.data.length - renderedRows),
+      Math.max(0, firstVisibleRow - OVERSCAN_ROWS)
+    );
+    const end = Math.min(this.data.length, start + renderedRows);
+
+    if (
+      this.renderedData === this.data &&
+      this.renderedStart === start &&
+      this.renderedEnd === end
+    ) {
+      return;
+    }
+    this.renderedData = this.data;
+    this.renderedStart = start;
+    this.renderedEnd = end;
+
+    this.visibleData = this.data.slice(start, end);
+    this.topSpacerHeightInPx = start * ROW_HEIGHT_IN_PX;
+    this.bottomSpacerHeightInPx = (this.data.length - end) * ROW_HEIGHT_IN_PX;
+  }
+
+  selectionClick(event: MouseEvent, runId: string) {
+    // Keyboard activation has detail 0; the first mouse click has detail 1.
+    if (event.detail <= 1) {
+      this.onSelectionToggle.emit(runId);
+      return;
+    }
+
+    // Keep later clicks from toggling the controlled checkbox away from the
+    // single-run selection produced by a double click.
+    event.preventDefault();
     if (event.detail === 2) {
       this.onSelectionDblClick.emit(runId);
     }
@@ -123,8 +179,7 @@ export class RunsDataTable {
     return this.data?.some((row) => row['selected']);
   }
 
-  handleSelectAll(event: MouseEvent) {
-    event.preventDefault();
+  handleSelectAll() {
     this.onAllSelectionToggle.emit(this.data?.map((row) => row.id));
   }
 
@@ -156,14 +211,11 @@ export class RunsDataTable {
   }
 
   /**
-   * Using the `trackBy` directive allows you to control when an element contained
-   * by an `ngFor` is rerendered. In this case it is important that changes to
-   * the `color` attribute do NOT trigger rerenders because doing so will recreate
-   * and close the colorPicker.
+   * Keep row components stable while their displayed values update. Reusing by
+   * run ID avoids serializing every row during each change detection pass and
+   * prevents large run tables from rebuilding unchanged controls.
    */
   trackByRuns(index: number, data: TableData) {
-    const dataWithoutColor = {...data};
-    delete dataWithoutColor['color'];
-    return JSON.stringify(dataWithoutColor);
+    return data.id;
   }
 }

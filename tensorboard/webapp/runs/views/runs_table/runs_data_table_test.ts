@@ -51,6 +51,8 @@ import {RUN_START_TIME_SORT_KEY} from './sorting_utils';
       [data]="data"
       [headers]="headers"
       [sortingInfo]="sortingInfo"
+      [scrollTop]="scrollTop"
+      [viewportHeight]="viewportHeight"
       (sortDataBy)="sortDataBy($event)"
       (orderColumns)="orderColumns($event)"
       (onSelectionToggle)="onSelectionToggle($event)"
@@ -67,6 +69,8 @@ class TestableComponent {
   @Input() headers!: ColumnHeader[];
   @Input() data!: TableData[];
   @Input() sortingInfo!: SortingInfo;
+  @Input() scrollTop = 0;
+  @Input() viewportHeight = 0;
 
   @Input() onSelectionToggle!: (runId: string) => void;
   @Input() onAllSelectionToggle!: (runIds: string[]) => void;
@@ -87,11 +91,15 @@ describe('runs_data_table', () => {
     data?: TableData[];
     headers?: ColumnHeader[];
     sortingInfo?: SortingInfo;
+    scrollTop?: number;
+    viewportHeight?: number;
   }) {
     const fixture = TestBed.createComponent(TestableComponent);
     fixture.componentInstance.data = input.data || [
       {id: 'runid', run: 'run name'},
     ];
+    fixture.componentInstance.scrollTop = input.scrollTop || 0;
+    fixture.componentInstance.viewportHeight = input.viewportHeight || 0;
 
     fixture.componentInstance.headers = input.headers || [
       {
@@ -403,6 +411,22 @@ describe('runs_data_table', () => {
     expect(onSelectionToggleSpy).toHaveBeenCalledWith('runid');
   });
 
+  it('visually checks a run immediately when clicked', () => {
+    const fixture = createComponent({});
+    const dataTable = fixture.debugElement.query(
+      By.directive(DataTableComponent)
+    );
+    const selectedCell = dataTable
+      .queryAll(By.directive(ContentCellComponent))
+      .find((cell) => cell.componentInstance.header.name === 'selected')!;
+    const checkbox = selectedCell.query(By.css('input[type="checkbox"]'));
+
+    checkbox.nativeElement.click();
+    fixture.detectChanges();
+
+    expect(checkbox.nativeElement.checked).toBeTrue();
+  });
+
   it('emits onSelectionDblClick event when selected header checkbox is double clicked', () => {
     const fixture = createComponent({});
 
@@ -434,20 +458,45 @@ describe('runs_data_table', () => {
     expect(onRegexFilterChangeSpy).toHaveBeenCalledWith('myRegex');
   });
 
-  it('trackByRuns serializes data while ignoring color', () => {
-    const fixture = createComponent({});
-    const dataTable = fixture.debugElement.query(By.directive(RunsDataTable));
+  it('keeps a run row mounted when its displayed values change', () => {
+    const fixture = createComponent({
+      data: [{id: 'run1', run: 'Original', color: 'orange'}],
+    });
+    const firstRow = fixture.debugElement.query(
+      By.css('tb-data-table-content-row')
+    ).nativeElement;
+
+    fixture.componentInstance.data = [
+      {id: 'run1', run: 'Renamed', color: 'blue'},
+    ];
+    fixture.detectChanges();
+
+    const updatedRow = fixture.debugElement.query(
+      By.css('tb-data-table-content-row')
+    ).nativeElement;
+    expect(updatedRow).toBe(firstRow);
+    expect(updatedRow.textContent).toContain('Renamed');
+  });
+
+  it('only renders the visible window of a large run list', () => {
+    const data = Array.from({length: 100}, (_, index) => ({
+      id: `run${index}`,
+      run: `Run ${index}`,
+    }));
+    const fixture = createComponent({
+      data,
+      scrollTop: 80 * 48,
+      viewportHeight: 10 * 48,
+    });
+
     expect(
-      dataTable.componentInstance.trackByRuns(0, {
-        id: 'run1',
-        color: 'orange',
-        hparam1: 1.234,
-      })
-    ).toEqual(
-      JSON.stringify({
-        id: 'run1',
-        hparam1: 1.234,
-      })
-    );
+      fixture.debugElement.queryAll(By.css('tb-data-table-content-row')).length
+    ).toBeLessThan(data.length);
+
+    const renderedRunIds = fixture.debugElement
+      .queryAll(By.css('tb-data-table-content-row'))
+      .map((row) => row.attributes['data-id']);
+    expect(renderedRunIds).not.toContain('run0');
+    expect(renderedRunIds).toContain('run99');
   });
 });

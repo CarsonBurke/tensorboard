@@ -103,6 +103,8 @@ const getRunsLoading = createSelector<
       [columnFilters]="columnFilters$ | async"
       [sortingInfo]="sortingInfo$ | async"
       [experimentIds]="experimentIds"
+      [scrollTop]="scrollTop"
+      [viewportHeight]="viewportHeight"
       [regexFilter]="regexFilter$ | async"
       [loading]="loading$ | async"
       (sortDataBy)="sortDataBy($event)"
@@ -144,6 +146,8 @@ export class RunsTableContainer implements OnInit, OnDestroy {
   columns: RunsTableColumn[];
 
   @Input() experimentIds!: string[];
+  @Input() scrollTop = 0;
+  @Input() viewportHeight = 0;
 
   regexFilter$;
   runsColumns$;
