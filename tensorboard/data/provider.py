@@ -209,6 +209,22 @@ class DataProvider(metaclass=abc.ABCMeta):
         """
         pass
 
+    def list_scalars_metadata(
+        self, ctx=None, *, experiment_id, plugin_name, run_tag_filter=None
+    ):
+        """List scalar metadata without requiring point-derived statistics.
+
+        Providers may override this method to avoid computing `max_step` and
+        `max_wall_time`. The returned values otherwise have the same shape as
+        `list_scalars`; their point-derived fields may be `None`.
+        """
+        return self.list_scalars(
+            ctx,
+            experiment_id=experiment_id,
+            plugin_name=plugin_name,
+            run_tag_filter=run_tag_filter,
+        )
+
     @abc.abstractmethod
     def read_scalars(
         self,
@@ -316,6 +332,22 @@ class DataProvider(metaclass=abc.ABCMeta):
           tensorboard.errors.PublicError: See `DataProvider` class docstring.
         """
         pass
+
+    def list_tensors_metadata(
+        self, ctx=None, *, experiment_id, plugin_name, run_tag_filter=None
+    ):
+        """List tensor metadata without requiring point-derived statistics.
+
+        Providers may override this method to avoid computing `max_step` and
+        `max_wall_time`. The returned values otherwise have the same shape as
+        `list_tensors`; their point-derived fields may be `None`.
+        """
+        return self.list_tensors(
+            ctx,
+            experiment_id=experiment_id,
+            plugin_name=plugin_name,
+            run_tag_filter=run_tag_filter,
+        )
 
     def read_tensors(
         self,

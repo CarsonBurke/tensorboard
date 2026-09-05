@@ -316,6 +316,33 @@ class MultiplexerDataProviderTest(tf.test.TestCase):
             ],
         )
 
+    def test_list_scalars_metadata_does_not_read_events(self):
+        metadata = summary_pb2.SummaryMetadata()
+        metadata.data_class = summary_pb2.DATA_CLASS_SCALAR
+        metadata.plugin_data.plugin_name = scalar_metadata.PLUGIN_NAME
+        metadata.summary_description = "description"
+
+        class FakeMultiplexer:
+            def AllSummaryMetadata(self):
+                return {"run": {"tag": metadata}}
+
+            def Tensors(self, run, tag):
+                raise AssertionError("metadata listing should not read events")
+
+        provider = data_provider.MultiplexerDataProvider(
+            FakeMultiplexer(), "fake_logdir"
+        )
+        result = provider.list_scalars_metadata(
+            self.ctx,
+            experiment_id="unused",
+            plugin_name=scalar_metadata.PLUGIN_NAME,
+        )
+
+        series = result["run"]["tag"]
+        self.assertIsNone(series.max_step)
+        self.assertIsNone(series.max_wall_time)
+        self.assertEqual(series.description, "description")
+
     def test_read_downsamples_before_converting(self):
         events = list(range(500))
 
@@ -620,6 +647,12 @@ class MultiplexerDataProviderTest(tf.test.TestCase):
 
 class DownsampleTest(tf.test.TestCase):
     """Tests for the `_downsample` private helper function."""
+
+    def test_sample_all_returns_independent_ordered_list(self):
+        for xs in ([], [3], [9, 2, 9, 1]):
+            actual = data_provider._downsample(xs, len(xs))
+            self.assertEqual(actual, xs)
+            self.assertIsNot(actual, xs)
 
     def test_deterministic(self):
         xs = "abcdefg"

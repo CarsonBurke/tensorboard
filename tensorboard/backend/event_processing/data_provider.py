@@ -121,6 +121,16 @@ class MultiplexerDataProvider(provider.DataProvider):
         )
         return self._list(provider.ScalarTimeSeries, index)
 
+    def list_scalars_metadata(
+        self, ctx=None, *, experiment_id, plugin_name, run_tag_filter=None
+    ):
+        self._validate_context(ctx)
+        self._validate_experiment_id(experiment_id)
+        index = self._index(
+            plugin_name, run_tag_filter, summary_pb2.DATA_CLASS_SCALAR
+        )
+        return self._list_metadata(provider.ScalarTimeSeries, index)
+
     def read_scalars(
         self,
         ctx=None,
@@ -171,6 +181,16 @@ class MultiplexerDataProvider(provider.DataProvider):
             plugin_name, run_tag_filter, summary_pb2.DATA_CLASS_TENSOR
         )
         return self._list(provider.TensorTimeSeries, index)
+
+    def list_tensors_metadata(
+        self, ctx=None, *, experiment_id, plugin_name, run_tag_filter=None
+    ):
+        self._validate_context(ctx)
+        self._validate_experiment_id(experiment_id)
+        index = self._index(
+            plugin_name, run_tag_filter, summary_pb2.DATA_CLASS_TENSOR
+        )
+        return self._list_metadata(provider.TensorTimeSeries, index)
 
     def read_tensors(
         self,
@@ -243,6 +263,21 @@ class MultiplexerDataProvider(provider.DataProvider):
                 result[run] = result_for_run
                 result_for_run[tag] = metadata
 
+        return result
+
+    def _list_metadata(self, construct_time_series, index):
+        result = {}
+        for run, tag_to_metadata in index.items():
+            result_for_run = {}
+            result[run] = result_for_run
+            for tag, summary_metadata in tag_to_metadata.items():
+                result_for_run[tag] = construct_time_series(
+                    max_step=None,
+                    max_wall_time=None,
+                    plugin_content=summary_metadata.plugin_data.content,
+                    description=summary_metadata.summary_description,
+                    display_name=summary_metadata.display_name,
+                )
         return result
 
     def _list(self, construct_time_series, index):
@@ -535,7 +570,7 @@ def _downsample(xs, k):
       element of `xs`, uniformly selected among such subsequences.
     """
 
-    if k > len(xs):
+    if k >= len(xs):
         return list(xs)
     if k == 0:
         return []

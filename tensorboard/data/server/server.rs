@@ -143,36 +143,38 @@ impl TensorBoardDataProvider for DataProviderHandler {
         let runs = self.read_runs()?;
 
         let mut res: data::ListScalarsResponse = Default::default();
-        for (run, data) in runs.iter() {
-            if !run_filter.want(run) {
-                continue;
-            }
+        for (run, data) in run_filter.entries(&runs) {
             let data = data
                 .read()
                 .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
             let mut run_res: data::list_scalars_response::RunEntry = Default::default();
-            for (tag, ts) in &data.scalars {
-                if !tag_filter.want(tag) {
-                    continue;
-                }
+            for (tag, ts) in tag_filter.entries(&data.scalars) {
                 if plugin_name(&ts.metadata) != Some(&want_plugin) {
                     continue;
                 }
-                let max_step = match ts.valid_values().last() {
-                    None => continue,
-                    Some((step, _, _)) => step,
+                let (max_step, max_wall_time) = if req.skip_statistics {
+                    if ts.valid_values().next().is_none() {
+                        continue;
+                    }
+                    (0, 0.0)
+                } else {
+                    let max_step = match ts.valid_values().next_back() {
+                        None => continue,
+                        Some((step, _, _)) => step.into(),
+                    };
+                    let max_wall_time = ts
+                        .valid_values()
+                        .map(|(_, wt, _)| wt)
+                        .max()
+                        .expect("have valid values for step but not wall time")
+                        .into();
+                    (max_step, max_wall_time)
                 };
-                // TODO(@wchargin): Consider tracking this on the time series itself?
-                let max_wall_time = ts
-                    .valid_values()
-                    .map(|(_, wt, _)| wt)
-                    .max()
-                    .expect("have valid values for step but not wall time");
                 run_res.tags.push(data::list_scalars_response::TagEntry {
                     tag_name: tag.0.clone(),
                     metadata: Some(data::ScalarMetadata {
-                        max_step: max_step.into(),
-                        max_wall_time: max_wall_time.into(),
+                        max_step,
+                        max_wall_time,
                         summary_metadata: Some(*ts.metadata.clone()),
                         ..Default::default()
                     }),
@@ -198,24 +200,17 @@ impl TensorBoardDataProvider for DataProviderHandler {
         let runs = self.read_runs()?;
 
         let mut res: data::ReadScalarsResponse = Default::default();
-        for (run, data) in runs.iter() {
-            if !run_filter.want(run) {
-                continue;
-            }
+        for (run, data) in run_filter.entries(&runs) {
             let data = data
                 .read()
                 .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
             let mut run_res: data::read_scalars_response::RunEntry = Default::default();
-            for (tag, ts) in &data.scalars {
-                if !tag_filter.want(tag) {
-                    continue;
-                }
+            for (tag, ts) in tag_filter.entries(&data.scalars) {
                 if plugin_name(&ts.metadata) != Some(&want_plugin) {
                     continue;
                 }
 
-                let mut points = ts.valid_values().collect::<Vec<_>>();
-                downsample::downsample(&mut points, num_points);
+                let points = downsample::downsample_valid(ts.valid_values(), num_points);
                 let n = points.len();
                 let mut steps = Vec::with_capacity(n);
                 let mut wall_times = Vec::with_capacity(n);
@@ -254,36 +249,38 @@ impl TensorBoardDataProvider for DataProviderHandler {
         let runs = self.read_runs()?;
 
         let mut res: data::ListTensorsResponse = Default::default();
-        for (run, data) in runs.iter() {
-            if !run_filter.want(run) {
-                continue;
-            }
+        for (run, data) in run_filter.entries(&runs) {
             let data = data
                 .read()
                 .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
             let mut run_res: data::list_tensors_response::RunEntry = Default::default();
-            for (tag, ts) in &data.tensors {
-                if !tag_filter.want(tag) {
-                    continue;
-                }
+            for (tag, ts) in tag_filter.entries(&data.tensors) {
                 if plugin_name(&ts.metadata) != Some(&want_plugin) {
                     continue;
                 }
-                let max_step = match ts.valid_values().last() {
-                    None => continue,
-                    Some((step, _, _)) => step,
+                let (max_step, max_wall_time) = if req.skip_statistics {
+                    if ts.valid_values().next().is_none() {
+                        continue;
+                    }
+                    (0, 0.0)
+                } else {
+                    let max_step = match ts.valid_values().next_back() {
+                        None => continue,
+                        Some((step, _, _)) => step.into(),
+                    };
+                    let max_wall_time = ts
+                        .valid_values()
+                        .map(|(_, wt, _)| wt)
+                        .max()
+                        .expect("have valid values for step but not wall time")
+                        .into();
+                    (max_step, max_wall_time)
                 };
-                // TODO(@wchargin): Consider tracking this on the time series itself?
-                let max_wall_time = ts
-                    .valid_values()
-                    .map(|(_, wt, _)| wt)
-                    .max()
-                    .expect("have valid values for step but not wall time");
                 run_res.tags.push(data::list_tensors_response::TagEntry {
                     tag_name: tag.0.clone(),
                     metadata: Some(data::TensorMetadata {
-                        max_step: max_step.into(),
-                        max_wall_time: max_wall_time.into(),
+                        max_step,
+                        max_wall_time,
                         summary_metadata: Some(*ts.metadata.clone()),
                         ..Default::default()
                     }),
@@ -309,24 +306,17 @@ impl TensorBoardDataProvider for DataProviderHandler {
         let runs = self.read_runs()?;
 
         let mut res: data::ReadTensorsResponse = Default::default();
-        for (run, data) in runs.iter() {
-            if !run_filter.want(run) {
-                continue;
-            }
+        for (run, data) in run_filter.entries(&runs) {
             let data = data
                 .read()
                 .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
             let mut run_res: data::read_tensors_response::RunEntry = Default::default();
-            for (tag, ts) in &data.tensors {
-                if !tag_filter.want(tag) {
-                    continue;
-                }
+            for (tag, ts) in tag_filter.entries(&data.tensors) {
                 if plugin_name(&ts.metadata) != Some(&want_plugin) {
                     continue;
                 }
 
-                let mut points = ts.valid_values().collect::<Vec<_>>();
-                downsample::downsample(&mut points, num_points);
+                let points = downsample::downsample_valid(ts.valid_values(), num_points);
                 let n = points.len();
                 let mut steps = Vec::with_capacity(n);
                 let mut wall_times = Vec::with_capacity(n);
@@ -366,18 +356,12 @@ impl TensorBoardDataProvider for DataProviderHandler {
         let runs = self.read_runs()?;
 
         let mut res: data::ListBlobSequencesResponse = Default::default();
-        for (run, data) in runs.iter() {
-            if !run_filter.want(run) {
-                continue;
-            }
+        for (run, data) in run_filter.entries(&runs) {
             let data = data
                 .read()
                 .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
             let mut run_res: data::list_blob_sequences_response::RunEntry = Default::default();
-            for (tag, ts) in &data.blob_sequences {
-                if !tag_filter.want(tag) {
-                    continue;
-                }
+            for (tag, ts) in tag_filter.entries(&data.blob_sequences) {
                 if plugin_name(&ts.metadata) != Some(&want_plugin) {
                     continue;
                 }
@@ -430,24 +414,17 @@ impl TensorBoardDataProvider for DataProviderHandler {
         let runs = self.read_runs()?;
 
         let mut res: data::ReadBlobSequencesResponse = Default::default();
-        for (run, data) in runs.iter() {
-            if !run_filter.want(run) {
-                continue;
-            }
+        for (run, data) in run_filter.entries(&runs) {
             let data = data
                 .read()
                 .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
             let mut run_res: data::read_blob_sequences_response::RunEntry = Default::default();
-            for (tag, ts) in &data.blob_sequences {
-                if !tag_filter.want(tag) {
-                    continue;
-                }
+            for (tag, ts) in tag_filter.entries(&data.blob_sequences) {
                 if plugin_name(&ts.metadata) != Some(&want_plugin) {
                     continue;
                 }
 
-                let mut points = ts.valid_values().collect::<Vec<_>>();
-                downsample::downsample(&mut points, num_points);
+                let points = downsample::downsample_valid(ts.valid_values(), num_points);
                 let n = points.len();
                 let mut steps = Vec::with_capacity(n);
                 let mut wall_times = Vec::with_capacity(n);
@@ -614,11 +591,22 @@ enum Filter<T> {
 }
 
 impl<T: Hash + Eq> Filter<T> {
+    /// Iterates matching entries, looking up explicit keys when the filter is smaller.
+    /// Like HashMap iteration, the order of returned entries is unspecified.
+    fn entries<'a, V>(
+        &'a self,
+        map: &'a HashMap<T, V>,
+    ) -> Box<dyn Iterator<Item = (&'a T, &'a V)> + 'a> {
+        match self {
+            Filter::All => Box::new(map.iter()),
+            Filter::Just(which) if which.len() < map.len() => {
+                Box::new(which.iter().filter_map(move |key| map.get_key_value(key)))
+            }
+            Filter::Just(_) => Box::new(map.iter().filter(move |(key, _)| self.want(*key))),
+        }
+    }
+
     /// Tests whether this filter matches a specific item.
-    //
-    // TODO(@wchargin): Consider offering a function that enables callers with a `Filter<T>` and a
-    // `HashMap<K, V>` to iterate over matching `(&K, &V)`s by only iterating over this filter's
-    // explicit set in the `Just` case, optimizing for the case when `Just` is small.
     pub fn want<Q: ?Sized>(&self, value: &Q) -> bool
     where
         T: Borrow<Q>,
@@ -647,6 +635,23 @@ mod tests {
         DataProviderHandler {
             data_location: String::from("./logs/mnist"),
             commit: Arc::new(commit),
+        }
+    }
+
+    #[test]
+    fn test_filter_entries() {
+        let map: HashMap<_, _> = (0..10).map(|i| (i, i * 2)).collect();
+        let filters = vec![
+            Filter::All,
+            Filter::Just(HashSet::new()),
+            Filter::Just(vec![1, 1, 5, 99].into_iter().collect()),
+            Filter::Just((5..20).collect()),
+        ];
+        for filter in filters {
+            let expected: HashMap<_, _> = map.iter().filter(|(key, _)| filter.want(*key)).collect();
+            assert_eq!(filter.entries(&map).collect::<HashMap<_, _>>(), expected);
+            let empty: HashMap<i32, i32> = HashMap::new();
+            assert_eq!(filter.entries(&empty).count(), 0);
         }
     }
 
@@ -865,6 +870,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_scalars_can_skip_statistics() {
+        let commit = CommitBuilder::new()
+            .scalars("train", "loss", |mut b| {
+                b.wall_time_start(1235.0).step_start(7).len(3).build()
+            })
+            .build();
+        let handler = sample_handler(commit);
+        let req = Request::new(data::ListScalarsRequest {
+            experiment_id: "123".to_string(),
+            plugin_filter: Some(data::PluginFilter {
+                plugin_name: "scalars".to_string(),
+            }),
+            skip_statistics: true,
+            ..Default::default()
+        });
+        let res = handler.list_scalars(req).await.unwrap().into_inner();
+        let map = run_tag_map!(res.runs);
+        let metadata = map[&Run("train".to_string())][&Tag("loss".to_string())]
+            .metadata
+            .as_ref()
+            .unwrap();
+
+        assert_eq!(metadata.max_step, 0);
+        assert_eq!(metadata.max_wall_time, 0.0);
+        assert_eq!(
+            metadata
+                .summary_metadata
+                .as_ref()
+                .unwrap()
+                .plugin_data
+                .as_ref()
+                .unwrap()
+                .plugin_name,
+            "scalars"
+        );
+    }
+
+    #[tokio::test]
     async fn test_read_scalars() {
         let commit = CommitBuilder::new()
             .scalars("train", "xent", |mut b| {
@@ -986,6 +1029,44 @@ mod tests {
                 .unwrap()
                 .plugin_name,
             "tensors".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_tensors_can_skip_statistics() {
+        let commit = CommitBuilder::new()
+            .tensors("train", "weights", |mut b| {
+                b.wall_time_start(1235.0).step_start(7).len(3).build()
+            })
+            .build();
+        let handler = sample_handler(commit);
+        let req = Request::new(data::ListTensorsRequest {
+            experiment_id: "123".to_string(),
+            plugin_filter: Some(data::PluginFilter {
+                plugin_name: "tensors".to_string(),
+            }),
+            skip_statistics: true,
+            ..Default::default()
+        });
+        let res = handler.list_tensors(req).await.unwrap().into_inner();
+        let map = run_tag_map!(res.runs);
+        let metadata = map[&Run("train".to_string())][&Tag("weights".to_string())]
+            .metadata
+            .as_ref()
+            .unwrap();
+
+        assert_eq!(metadata.max_step, 0);
+        assert_eq!(metadata.max_wall_time, 0.0);
+        assert_eq!(
+            metadata
+                .summary_metadata
+                .as_ref()
+                .unwrap()
+                .plugin_data
+                .as_ref()
+                .unwrap()
+                .plugin_name,
+            "tensors"
         );
     }
 

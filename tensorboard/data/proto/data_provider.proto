@@ -143,6 +143,9 @@ message ListScalarsRequest {
   PluginFilter plugin_filter = 2;
   // Optional filter for time series. If omitted, all time series match.
   RunTagFilter run_tag_filter = 3;
+  // Skip point-derived max step and wall time when the caller only needs
+  // atemporal metadata. Existing clients retain full statistics by default.
+  bool skip_statistics = 4;
 }
 
 message ListScalarsResponse {
@@ -210,6 +213,9 @@ message ListTensorsRequest {
   PluginFilter plugin_filter = 2;
   // Optional filter for time series. If omitted, all time series match.
   RunTagFilter run_tag_filter = 3;
+  // Skip point-derived max step and wall time when the caller only needs
+  // atemporal metadata. Existing clients retain full statistics by default.
+  bool skip_statistics = 4;
 }
 
 message ListTensorsResponse {

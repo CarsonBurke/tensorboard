@@ -324,7 +324,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
             A nested dict 'd' with keys in ("scalars", "histograms", "images")
                 and values being the return type of _format_*mapping.
         """
-        scalar_mapping = self._data_provider.list_scalars(
+        scalar_mapping = self._data_provider.list_scalars_metadata(
             ctx,
             experiment_id=experiment,
             plugin_name=scalar_metadata.PLUGIN_NAME,
@@ -335,7 +335,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
             self._scalar_version_checker,
         )
 
-        histogram_mapping = self._data_provider.list_tensors(
+        histogram_mapping = self._data_provider.list_tensors_metadata(
             ctx,
             experiment_id=experiment,
             plugin_name=histogram_metadata.PLUGIN_NAME,

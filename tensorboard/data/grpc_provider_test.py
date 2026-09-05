@@ -195,6 +195,27 @@ class GrpcDataProviderTest(tb_test.TestCase):
         req.run_tag_filter.tags.names.extend(["accuracy", "xent"])  # sorted
         self.stub.ListScalars.assert_called_once_with(req)
 
+    def test_list_scalars_metadata_skips_statistics(self):
+        res = data_provider_pb2.ListScalarsResponse()
+        tag = res.runs.add(run_name="train").tags.add(tag_name="loss")
+        tag.metadata.summary_metadata.summary_description = "Loss"
+        self.stub.ListScalars.return_value = res
+
+        actual = self.provider.list_scalars_metadata(
+            self.ctx, experiment_id="123", plugin_name="scalars"
+        )
+
+        self.assertIsNone(actual["train"]["loss"].max_step)
+        self.assertEqual(actual["train"]["loss"].description, "Loss")
+        req = data_provider_pb2.ListScalarsRequest(
+            experiment_id="123",
+            plugin_filter=data_provider_pb2.PluginFilter(
+                plugin_name="scalars"
+            ),
+            skip_statistics=True,
+        )
+        self.stub.ListScalars.assert_called_once_with(req)
+
     def test_read_scalars(self):
         res = data_provider_pb2.ReadScalarsResponse()
         run = res.runs.add(run_name="test")
@@ -343,6 +364,27 @@ class GrpcDataProviderTest(tb_test.TestCase):
         req.experiment_id = "123"
         req.plugin_filter.plugin_name = "histograms"
         req.run_tag_filter.tags.names.extend(["other", "weights"])  # sorted
+        self.stub.ListTensors.assert_called_once_with(req)
+
+    def test_list_tensors_metadata_skips_statistics(self):
+        res = data_provider_pb2.ListTensorsResponse()
+        tag = res.runs.add(run_name="train").tags.add(tag_name="weights")
+        tag.metadata.summary_metadata.summary_description = "Weights"
+        self.stub.ListTensors.return_value = res
+
+        actual = self.provider.list_tensors_metadata(
+            self.ctx, experiment_id="123", plugin_name="histograms"
+        )
+
+        self.assertIsNone(actual["train"]["weights"].max_step)
+        self.assertEqual(actual["train"]["weights"].description, "Weights")
+        req = data_provider_pb2.ListTensorsRequest(
+            experiment_id="123",
+            plugin_filter=data_provider_pb2.PluginFilter(
+                plugin_name="histograms"
+            ),
+            skip_statistics=True,
+        )
         self.stub.ListTensors.assert_called_once_with(req)
 
     def test_read_tensors(self):

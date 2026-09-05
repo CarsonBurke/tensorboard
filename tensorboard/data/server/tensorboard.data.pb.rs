@@ -136,6 +136,10 @@ pub struct ListScalarsRequest {
     /// Optional filter for time series. If omitted, all time series match.
     #[prost(message, optional, tag="3")]
     pub run_tag_filter: ::core::option::Option<RunTagFilter>,
+    /// Skip point-derived max step and wall time when the caller only needs
+    /// atemporal metadata. Existing clients retain full statistics by default.
+    #[prost(bool, tag="4")]
+    pub skip_statistics: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListScalarsResponse {
@@ -236,6 +240,10 @@ pub struct ListTensorsRequest {
     /// Optional filter for time series. If omitted, all time series match.
     #[prost(message, optional, tag="3")]
     pub run_tag_filter: ::core::option::Option<RunTagFilter>,
+    /// Skip point-derived max step and wall time when the caller only needs
+    /// atemporal metadata. Existing clients retain full statistics by default.
+    #[prost(bool, tag="4")]
+    pub skip_statistics: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListTensorsResponse {
