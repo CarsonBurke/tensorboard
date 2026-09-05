@@ -24,6 +24,32 @@ const logScale = createScale(ScaleType.LOG10);
 
 describe('line_chart_v2/sub_view/interactive_utils test', () => {
   describe('#findClosestIndex', () => {
+    it('preserves duplicate-point and boundary selection', () => {
+      const points = [0, 10, 10, 10, 20].map((x) => ({x, y: 0}));
+      for (const [target, expected] of [
+        [-Infinity, 0],
+        [10, 3],
+        [15, 3],
+        [Infinity, 4],
+      ]) {
+        expect(findClosestIndex(points, target)).toBe(expected);
+      }
+      expect(findClosestIndex([{x: 1, y: 2}], 100)).toBe(0);
+    });
+
+    it('reads logarithmically many x coordinates for large series', () => {
+      let reads = 0;
+      const points = Array.from({length: 65536}, (_, x) => ({
+        get x() {
+          reads++;
+          return x;
+        },
+        y: 0,
+      }));
+      expect(findClosestIndex(points, 30000.25)).toBe(30000);
+      expect(reads).toBeLessThan(25);
+    });
+
     it('finds the closests point in the x dimension', () => {
       const index = findClosestIndex(
         [

@@ -28,6 +28,51 @@ function isFinite(x: number): boolean {
 
 describe('line_chart_v2/line_chart_internal_utils test', () => {
   describe('#computeDataSeriesExtent', () => {
+    it('matches sorted bounds with and without outlier filtering', () => {
+      let seed = 1;
+      const points = Array.from({length: 1001}, (_, x) => {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        return {x, y: x % 11 === 0 ? NaN : (seed % 1000) - 500};
+      });
+      const sorted = points
+        .map(({y}) => y)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      for (const ignoreOutliers of [false, true]) {
+        const actual = computeDataSeriesExtent(
+          [buildSeries({id: 'foo', points})],
+          {foo: buildMetadata({id: 'foo'})},
+          ignoreOutliers,
+          isFinite,
+          isFinite
+        );
+        const lo = ignoreOutliers ? Math.ceil((sorted.length - 1) * 0.05) : 0;
+        const hi = ignoreOutliers
+          ? Math.floor((sorted.length - 1) * 0.95)
+          : sorted.length - 1;
+        expect(actual).toEqual({x: [0, 1000], y: [sorted[lo], sorted[hi]]});
+      }
+    });
+
+    it('preserves stable bounds for signed zero', () => {
+      for (const values of [
+        [0, -0],
+        [-0, 0],
+      ]) {
+        for (const ignoreOutliers of [false, true]) {
+          const actual = computeDataSeriesExtent(
+            [buildSeries({id: 'foo', points: values.map((y, x) => ({x, y}))})],
+            {foo: buildMetadata({id: 'foo'})},
+            ignoreOutliers,
+            isFinite,
+            isFinite
+          );
+          expect(Object.is(actual.y![0], values[0])).toBeTrue();
+          expect(Object.is(actual.y![1], values[1])).toBeTrue();
+        }
+      }
+    });
+
     it('returns min and max from all series', () => {
       const actual = computeDataSeriesExtent(
         [
