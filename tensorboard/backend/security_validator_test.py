@@ -100,6 +100,7 @@ class SecurityValidatorMiddlewareTest(tb_test.TestCase):
                 content_type="text/html; charset=UTF-8",
                 content_security_policy=(
                     "DEFAult-src 'self';script-src https://google.com;"
+                    "worker-src 'self' blob:;"
                     "style-src  'self'   https://example; object-src   "
                 ),
             ),

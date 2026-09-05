@@ -34,6 +34,8 @@ _CSP_IGNORE = {
     "style-src": ["'unsafe-inline'", "data:"],
     # Used in canvas
     "img-src": ["blob:", "data:"],
+    # Chart workers are bundled as blob URLs.
+    "worker-src": ["blob:"],
     # Used by numericjs.
     # TODO(stephanwlee): remove it eventually.
     "script-src": ["'unsafe-eval'"],

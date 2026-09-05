@@ -228,6 +228,8 @@ def Respond(
                     "blob:",
                     *_CSP_IMG_DOMAINS_WHITELIST,
                 ),
+                # Chart workers are bundled as blob URLs.
+                "worker-src 'self' blob:",
                 "object-src 'none'",
                 "style-src %s"
                 % _create_csp_string(
