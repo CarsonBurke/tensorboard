@@ -37,9 +37,10 @@ export function computeDataSeriesExtent(
 ): {x: [number, number] | undefined; y: [number, number] | undefined} {
   let xMin: number | null = null;
   let xMax: number | null = null;
-  let yPoints: number[] = [];
+  let yMin: number | undefined;
+  let yMax: number | undefined;
+  const yPoints: number[] = [];
 
-  let pointIndex = 0;
   for (const {id, points} of data) {
     const meta = metadataMap[id];
     if (!meta || meta.aux || !meta.visible) continue;
@@ -51,17 +52,18 @@ export function computeDataSeriesExtent(
         xMax = xMax === null || x > xMax ? x : xMax;
       }
       if (isYSafeNumber(y)) {
-        yPoints.push(y);
+        if (ignoreYOutliers) {
+          yPoints.push(y);
+        }
+        yMin = yMin === undefined || y < yMin ? y : yMin;
+        // Keep the last equal maximum, as the stable sort does (including -0).
+        yMax = yMax === undefined || y >= yMax ? y : yMax;
       }
-      pointIndex++;
     }
   }
 
-  yPoints.sort(d3.ascending);
-  let yMin = yPoints[0];
-  let yMax = yPoints[yPoints.length - 1];
-
   if (ignoreYOutliers && yPoints.length > 2) {
+    yPoints.sort(d3.ascending);
     yMin = yPoints[Math.ceil((yPoints.length - 1) * 0.05)];
     yMax = yPoints[Math.floor((yPoints.length - 1) * 0.95)];
   }

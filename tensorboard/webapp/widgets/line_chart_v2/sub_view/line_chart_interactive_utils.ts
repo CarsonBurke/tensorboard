@@ -13,8 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-import {bisect} from '../../../third_party/d3';
+import {bisector} from '../../../third_party/d3';
 import {Dimension, Extent, Point, Scale} from '../lib/public_types';
+
+const bisectPoints = bisector((point: Point) => point.x).right;
 
 /**
  * @param sortedPoints DataSeries points that requires points to be sorted in `x`.
@@ -25,10 +27,7 @@ export function findClosestIndex(
   targetX: number
 ): number {
   const right = Math.min(
-    bisect(
-      sortedPoints.map(({x}) => x),
-      targetX
-    ),
+    bisectPoints(sortedPoints, targetX),
     sortedPoints.length - 1
   );
 
