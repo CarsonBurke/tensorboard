@@ -14,14 +14,71 @@ limitations under the License.
 ==============================================================================*/
 import {ExperimentAlias} from '../../../experiments/types';
 import {Run} from '../../../runs/store/runs_types';
-import {TimeSelection} from '../../types';
+import {TimeSelection, XAxisType} from '../../types';
+import {ScalarStepDatum} from '../../data_source';
 import {
   MinMaxStep,
   PartialSeries,
   PartitionedSeries,
   ScalarCardDataSeries,
   ScalarCardSeriesMetadataMap,
+  ScalarCardPoint,
 } from './scalar_card_types';
+
+// Keep only the latest settings per immutable source array. Weak keys release
+// completed/removed runs; pinned copies share the same computed point arrays.
+const transformedScalars = new WeakMap<
+  ScalarStepDatum[],
+  {
+    axis: XAxisType;
+    partition: boolean;
+    points: ScalarCardPoint[][];
+  }
+>();
+
+export function transformScalarSeries(
+  runId: string,
+  data: ScalarStepDatum[],
+  axis: XAxisType,
+  partition: boolean
+): PartitionedSeries[] {
+  let cached = transformedScalars.get(data);
+  if (!cached || cached.axis !== axis || cached.partition !== partition) {
+    const partitions: ScalarCardPoint[][] = [[]];
+    let points = partitions[0];
+    let lastX = -Infinity;
+    let firstWallTime = data[0]?.wallTime * 1000;
+    for (const datum of data) {
+      const wallTime = datum.wallTime * 1000;
+      const rawX = axis === XAxisType.STEP ? datum.step : wallTime;
+      if (Number.isFinite(rawX)) {
+        if (partition && rawX < lastX) {
+          points = [];
+          partitions.push(points);
+          firstWallTime = wallTime;
+        }
+        lastX = rawX;
+      }
+      const relativeTimeInMs = wallTime - firstWallTime;
+      points.push({
+        ...datum,
+        wallTime,
+        relativeTimeInMs,
+        x: axis === XAxisType.RELATIVE ? relativeTimeInMs : rawX,
+        y: datum.value,
+      });
+    }
+    cached = {axis, partition, points: partitions};
+    transformedScalars.set(data, cached);
+  }
+  return cached.points.map((points, index) => ({
+    runId,
+    points,
+    seriesId: partition ? JSON.stringify([runId, index]) : runId,
+    partitionIndex: index,
+    partitionSize: cached!.points.length,
+  }));
+}
 
 export function getDisplayNameForRun(
   runId: string,

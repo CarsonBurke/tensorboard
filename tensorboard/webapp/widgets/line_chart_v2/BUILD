@@ -1,5 +1,6 @@
 load("@io_bazel_rules_sass//:defs.bzl", "sass_binary")
-load("//tensorboard/defs:defs.bzl", "tf_ng_module", "tf_ts_library")
+load("//tensorboard/defs:defs.bzl", "tf_js_binary", "tf_ng_module", "tf_ts_library")
+load("//tensorboard/defs:js.bzl", "tf_resource_digest_suffixer")
 
 package(default_visibility = ["//tensorboard:internal"])
 
@@ -57,10 +58,39 @@ tf_ts_library(
     name = "line_chart_utils",
     srcs = [
         "data_transformer.ts",
+        "smoothing_worker_client.ts",
+        "smoothing_resource.ts",
     ],
     deps = [
+        ":smoothing_kernel",
         "//tensorboard/webapp/widgets/line_chart_v2/lib:public_types",
+        "//tensorboard/webapp/widgets/line_chart_v2/lib:worker",
     ],
+)
+
+tf_ts_library(
+    name = "smoothing_kernel",
+    srcs = ["smoothing_kernel.ts"],
+)
+
+tf_ts_library(
+    name = "smoothing_worker_lib",
+    srcs = ["smoothing_worker_bridge.ts"],
+    deps = [":smoothing_kernel"],
+)
+
+tf_js_binary(
+    name = "smoothing_worker",
+    compile = True,
+    entry_point = "smoothing_worker_bridge.ts",
+    deps = [":smoothing_worker_lib"],
+)
+
+tf_resource_digest_suffixer(
+    name = "smoothing_resource",
+    out = "smoothing_resource.ts",
+    resources = {"%SMOOTHING_WORKER.js%": ":smoothing_worker.js"},
+    template = "smoothing_resource.template.ts",
 )
 
 tf_ts_library(
@@ -72,6 +102,7 @@ tf_ts_library(
         "line_chart_internal_utils_test.ts",
     ],
     deps = [
+        ":smoothing_kernel",
         ":internal_utils",
         ":line_chart_utils",
         ":line_chart_v2",

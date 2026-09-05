@@ -32,6 +32,7 @@ import {
   isSingleRunTimeSeriesRequest,
   NonSampledPluginType,
   PluginType,
+  ScalarStepDatum,
   TagMetadata as DataSourceTagMetadata,
   TimeSeriesRequest,
   TimeSeriesResponse,
@@ -324,6 +325,7 @@ const {initialState, reducers: namespaceContextedReducer} =
   >(
     {
       // Backend data.
+      tagMetadataSource: undefined,
       tagMetadataLoadState: {
         state: DataLoadState.NOT_LOADED,
         lastLoadedTimeInMs: null,
@@ -566,6 +568,7 @@ const {initialState, reducers: namespaceContextedReducer} =
           // tagMetadata, cardList, cardMetadataMap. These are the key inputs
           // for deciding which cards to render and which runs to render on
           // those cards (See b/225162725).
+          tagMetadataSource: undefined,
           tagMetadataLoadState: {
             state: DataLoadState.NOT_LOADED,
             lastLoadedTimeInMs: null,
@@ -793,6 +796,18 @@ const reducer = createReducer(
       state: MetricsState,
       {tagMetadata}: {tagMetadata: DataSourceTagMetadata}
     ): MetricsState => {
+      if (
+        state.tagMetadataSource === tagMetadata &&
+        !state.unresolvedImportedPinnedCards.length
+      ) {
+        return {
+          ...state,
+          tagMetadataLoadState: {
+            state: DataLoadState.LOADED,
+            lastLoadedTimeInMs: Date.now(),
+          },
+        };
+      }
       const nextTagMetadata: TagMetadata = {
         scalars: buildPluginTagData(tagMetadata, PluginType.SCALARS),
         histograms: buildPluginTagData(tagMetadata, PluginType.HISTOGRAMS),
@@ -866,6 +881,7 @@ const reducer = createReducer(
           lastLoadedTimeInMs: Date.now(),
         },
         tagMetadata: nextTagMetadata,
+        tagMetadataSource: tagMetadata,
         cardList: nextCardList,
       };
     }
@@ -1199,7 +1215,21 @@ const reducer = createReducer(
         );
         for (const runId in runToSeries) {
           if (runToSeries.hasOwnProperty(runId)) {
-            loadable.runToSeries[runId] = runToSeries[runId];
+            const previous = loadable.runToSeries[runId];
+            const incoming = runToSeries[runId];
+            const unchanged =
+              plugin === PluginType.SCALARS &&
+              previous &&
+              previous.length === incoming.length &&
+              (incoming as ScalarStepDatum[]).every((point, index) => {
+                const old = previous[index] as ScalarStepDatum;
+                return (
+                  Object.is(point.step, old.step) &&
+                  Object.is(point.wallTime, old.wallTime) &&
+                  Object.is(point.value, old.value)
+                );
+              });
+            loadable.runToSeries[runId] = unchanged ? previous : incoming;
             loadable.runToLoadState[runId] = DataLoadState.LOADED;
 
             for (const step of runToSeries[runId]) {

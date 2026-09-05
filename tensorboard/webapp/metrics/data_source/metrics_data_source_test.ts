@@ -59,6 +59,46 @@ describe('TBMetricsDataSource test', () => {
   });
 
   describe('fetchTagMetadata', () => {
+    it('retains metadata identity for matching revisions and invalidates on changes', () => {
+      const body: BackendTagMetadata = {
+        scalars: {runTagInfo: {run: ['loss']}, tagDescriptions: {}},
+        histograms: {runTagInfo: {}, tagDescriptions: {}},
+        images: {tagRunSampledInfo: {}, tagDescriptions: {}},
+      };
+      const results: unknown[] = [];
+      const fetch = () => {
+        dataSource
+          .fetchTagMetadata(['exp1'])
+          .subscribe((result) => results.push(result));
+        return httpMock.expectOne(
+          '/experiment/exp1/data/plugin/timeseries/tags'
+        );
+      };
+      const first = fetch();
+      expect(first.request.headers.get('X-TensorBoard-Metadata-Revision')).toBe(
+        ''
+      );
+      first.flush({revision: 'one', metadata: body});
+      const second = fetch();
+      expect(
+        second.request.headers.get('X-TensorBoard-Metadata-Revision')
+      ).toBe('one');
+      second.flush({revision: 'one', metadata: null});
+      expect(results[1]).toBe(results[0]);
+      fetch().flush({
+        revision: 'two',
+        metadata: {
+          ...body,
+          scalars: {...body.scalars, runTagInfo: {run: ['loss', 'accuracy']}},
+        },
+      });
+      expect(results[2]).not.toBe(results[1]);
+      store.overrideSelector(selectors.getIsMetricsImageSupportEnabled, false);
+      store.refreshState();
+      fetch().flush({revision: 'two', metadata: null});
+      expect(results[3]).not.toBe(results[2]);
+    });
+
     it('does not fetch when no experiment is passed', () => {
       const resultSpy = jasmine.createSpy();
       dataSource.fetchTagMetadata([]).subscribe(resultSpy);

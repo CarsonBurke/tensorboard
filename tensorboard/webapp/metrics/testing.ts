@@ -89,6 +89,7 @@ export function buildMetricsSettingsOverrides(
 
 function buildBlankState(): MetricsState {
   return {
+    tagMetadataSource: undefined,
     tagMetadataLoadState: {
       state: DataLoadState.NOT_LOADED,
       lastLoadedTimeInMs: null,

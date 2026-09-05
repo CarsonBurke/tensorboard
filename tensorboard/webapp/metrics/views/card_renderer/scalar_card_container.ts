@@ -23,7 +23,7 @@ import {
   Output,
 } from '@angular/core';
 import {Store} from '@ngrx/store';
-import {combineLatest, from, Observable, of, Subject} from 'rxjs';
+import {combineLatest, Observable, of, Subject} from 'rxjs';
 import {
   combineLatestWith,
   debounceTime,
@@ -85,7 +85,7 @@ import {
   dataTableColumnOrderChanged,
   dataTableColumnToggled,
 } from '../../actions';
-import {PluginType, ScalarStepDatum} from '../../data_source';
+import {PluginType} from '../../data_source';
 import {
   CardState,
   getCardMetadata,
@@ -118,10 +118,8 @@ import {getTagDisplayName} from '../utils';
 import {DataDownloadDialogContainer} from './data_download_dialog_container';
 import {
   MinMaxStep,
-  PartialSeries,
   PartitionedSeries,
   ScalarCardDataSeries,
-  ScalarCardPoint,
   ScalarCardSeriesMetadataMap,
   SeriesType,
 } from './scalar_card_types';
@@ -134,7 +132,7 @@ import {
 } from '../../../widgets/data_table/types';
 import {
   maybeClipTimeSelectionView,
-  partitionSeries,
+  transformScalarSeries,
   TimeSelectionView,
 } from './utils';
 
@@ -143,25 +141,17 @@ type ScalarCardMetadata = CardMetadata & {
 };
 
 function areSeriesEqual(
-  listA: PartialSeries[],
-  listB: PartialSeries[]
+  listA: PartitionedSeries[],
+  listB: PartitionedSeries[]
 ): boolean {
-  if (listA.length !== listB.length) {
-    return false;
-  }
-  return listA.every((listAVal, index) => {
-    const listBVal = listB[index];
-    const listAPoints = listAVal.points;
-    const listBPoints = listBVal.points;
-    return (
-      listAVal.runId === listBVal.runId &&
-      listAPoints.length === listBPoints.length &&
-      listAPoints.every((listAPoint, index) => {
-        const listBPoint = listBPoints[index];
-        return listAPoint.x === listBPoint.x && listAPoint.y === listBPoint.y;
-      })
-    );
-  });
+  return (
+    listA.length === listB.length &&
+    listA.every(
+      (series, index) =>
+        series.seriesId === listB[index].seriesId &&
+        series.points === listB[index].points
+    )
+  );
 }
 
 @Component({
@@ -362,81 +352,22 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
         shareReplay(1)
       );
 
-    const partialSeries$ = nonNullRunsToScalarSeries$.pipe(
-      combineLatestWith(this.store.select(getMetricsXAxisType)),
-      map(([runToSeries, xAxisType]) => {
-        const runIds = Object.keys(runToSeries);
-        const results = runIds.map((runId) => {
-          return {
-            runId,
-            points: this.stepSeriesToLineSeries(runToSeries[runId], xAxisType),
-          };
-        });
-        return results;
-      }),
-      distinctUntilChanged(areSeriesEqual)
-    );
-
     function getSmoothedSeriesId(seriesId: string): string {
       return JSON.stringify(['smoothed', seriesId]);
     }
 
-    const partitionedSeries$ = partialSeries$.pipe(
-      combineLatestWith(
-        this.store.select(getMetricsScalarPartitionNonMonotonicX)
+    const partitionedSeries$ = combineLatest([
+      nonNullRunsToScalarSeries$,
+      this.store.select(getMetricsXAxisType),
+      this.store.select(getMetricsScalarPartitionNonMonotonicX),
+    ]).pipe(
+      map(([runToSeries, axis, partition]) =>
+        Object.keys(runToSeries).flatMap((runId) =>
+          transformScalarSeries(runId, runToSeries[runId], axis, partition)
+        )
       ),
+      distinctUntilChanged(areSeriesEqual),
       takeUntil(this.ngUnsubscribe),
-      map<[PartialSeries[], boolean], PartitionedSeries[]>(
-        ([normalizedSeries, enablePartition]) => {
-          if (enablePartition) return partitionSeries(normalizedSeries);
-
-          return normalizedSeries.map((series) => {
-            return {
-              ...series,
-              seriesId: series.runId,
-              partitionIndex: 0,
-              partitionSize: 1,
-            };
-          });
-        }
-      ),
-      map((partitionedSeriesList) => {
-        return partitionedSeriesList.map((partitionedSeries) => {
-          const firstWallTime = partitionedSeries.points[0]?.wallTime;
-          return {
-            ...partitionedSeries,
-            points: partitionedSeries.points.map((point) => {
-              return {
-                ...point,
-                relativeTimeInMs: point.wallTime - firstWallTime,
-              };
-            }),
-          };
-        });
-      }),
-      combineLatestWith(this.store.select(getMetricsXAxisType)),
-      map(([partitionedSeriesList, xAxisType]) => {
-        return partitionedSeriesList.map((series) => {
-          return {
-            ...series,
-            points: series.points.map((point) => {
-              let x: number;
-              switch (xAxisType) {
-                case XAxisType.RELATIVE:
-                  x = point.relativeTimeInMs;
-                  break;
-                case XAxisType.WALL_TIME:
-                  x = point.wallTime;
-                  break;
-                case XAxisType.STEP:
-                default:
-                  x = point.step;
-              }
-              return {...point, x};
-            }),
-          };
-        });
-      }),
       shareReplay(1)
     );
 
@@ -475,22 +406,27 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
           return of(cleanedRunsData);
         }
 
-        return from(classicSmoothing(cleanedRunsData, smoothing)).pipe(
-          map((smoothedDataSeriesList) => {
-            const smoothedList = cleanedRunsData.map((dataSeries, index) => {
-              return {
-                id: getSmoothedSeriesId(dataSeries.id),
-                points: smoothedDataSeriesList[index].points.map(
-                  ({y}, pointIndex) => {
-                    return {...dataSeries.points[pointIndex], y};
-                  }
-                ),
-              };
-            });
-            return [...cleanedRunsData, ...smoothedList];
-          })
-        );
+        return new Observable<ScalarCardDataSeries[]>((subscriber) => {
+          const controller = new AbortController();
+          classicSmoothing(cleanedRunsData, smoothing, controller.signal).then(
+            (smoothed) => {
+              subscriber.next([
+                ...cleanedRunsData,
+                ...smoothed.map((series) => ({
+                  id: getSmoothedSeriesId(series.id),
+                  points: series.points,
+                })),
+              ]);
+              subscriber.complete();
+            },
+            (error) => {
+              if (!controller.signal.aborted) subscriber.error(error);
+            }
+          );
+          return () => controller.abort();
+        });
       }),
+      takeUntil(this.ngUnsubscribe),
       startWith([] as ScalarCardDataSeries[])
     );
 
@@ -591,8 +527,8 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
                   : displayName,
               visible: Boolean(
                 runSelectionMap &&
-                runSelectionMap.get(runId) &&
-                renderableRuns.has(runId)
+                  runSelectionMap.get(runId) &&
+                  renderableRuns.has(runId)
               ),
               color: colorMap[runId] ?? '#fff',
               aux: false,
@@ -677,29 +613,6 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
         };
       })
     );
-  }
-
-  private stepSeriesToLineSeries(
-    stepSeries: ScalarStepDatum[],
-    xAxisType: XAxisType
-  ): ScalarCardPoint[] {
-    const isStepBased = xAxisType === XAxisType.STEP;
-    return stepSeries.map((stepDatum) => {
-      // Normalize data and convert wallTime in seconds to milliseconds.
-      // TODO(stephanwlee): when the legacy line chart is removed, do the conversion
-      // at the effects.
-      const wallTime = stepDatum.wallTime * 1000;
-      return {
-        ...stepDatum,
-        x: isStepBased ? stepDatum.step : wallTime,
-        y: stepDatum.value,
-        wallTime,
-        // Put a fake relative time so we can work around with types too much.
-        // The real value would be set after we partition the timeseries so
-        // we can have a relative time per partition.
-        relativeTimeInMs: 0,
-      };
-    });
   }
 
   onDataTableSorting(sortingInfo: SortingInfo) {

@@ -16,7 +16,79 @@ limitations under the License.
 import {classicSmoothing} from './data_transformer';
 import {buildSeries} from './lib/testing';
 
+import {smoothPackedValues} from './smoothing_kernel';
+import {SmoothingWorkerClient} from './smoothing_worker_client';
+
 describe('line_chart_v2/data_transformer test', () => {
+  it('reuses immutable smoothing results and preserves point metadata', async () => {
+    const points = [
+      {x: 1, y: 2, wallTime: 99},
+      {x: 2, y: 5, wallTime: 100},
+    ];
+    const first = await classicSmoothing([{id: 'run', points}], 0.6);
+    const pinned = await classicSmoothing([{id: 'pinned', points}], 0.6);
+    expect(pinned[0].points).toBe(first[0].points);
+    expect(pinned[0].points[0].wallTime).toBe(99);
+    const [low, high] = await Promise.all([
+      classicSmoothing([{id: 'run', points}], 0.2),
+      classicSmoothing([{id: 'run', points}], 0.9),
+    ]);
+    expect(low[0].points[1].y).not.toBe(high[0].points[1].y);
+  });
+
+  it('transfers worker buffers, cancels stale jobs, and recovers from worker failure', async () => {
+    const listeners = new Map<string, (event: any) => void>();
+    const messages: any[] = [];
+    const fake = {
+      addEventListener: (name: string, listener: (event: any) => void) =>
+        listeners.set(name, listener),
+      postMessage: (message: any, transfer: Transferable[]) => {
+        if (!message.cancel) expect(transfer).toEqual([message.buffer]);
+        messages.push(message);
+      },
+      terminate: jasmine.createSpy('terminate'),
+    } as unknown as Worker;
+    const client = new SmoothingWorkerClient(() => fake);
+    const makeValues = () =>
+      Float64Array.from({length: 8192}, (_, i) => i % 13);
+    const first = client.smooth(makeValues, [8192], 0.6);
+    const request = messages[0];
+    await smoothPackedValues(
+      new Float64Array(request.buffer),
+      request.lengths,
+      request.weight
+    );
+    listeners.get('message')!({data: {id: request.id, buffer: request.buffer}});
+    const expected = await first;
+    const controller = new AbortController();
+    const stale = client.smooth(makeValues, [8192], 0.2, controller.signal);
+    controller.abort();
+    await expectAsync(stale).toBeRejectedWithError('Smoothing cancelled');
+    expect(messages[messages.length - 1].cancel).toBeTrue();
+    const failed = client.smooth(makeValues, [8192], 0.6);
+    listeners.get('error')!({});
+    expect(await failed).toEqual(expected);
+    expect(fake.terminate).toHaveBeenCalled();
+  });
+
+  it('stops the kernel at a cancellation checkpoint', async () => {
+    let cancelled = false;
+    const values = Float64Array.from({length: 20000}, (_, i) => i % 7);
+    const originalTail = values.slice(8192);
+    await expectAsync(
+      smoothPackedValues(
+        values,
+        [values.length],
+        0.6,
+        () => cancelled,
+        async () => {
+          cancelled = true;
+        }
+      )
+    ).toBeRejectedWithError('Smoothing cancelled');
+    expect(values.slice(8192)).toEqual(originalTail);
+  });
+
   describe('#classicSmoothing', () => {
     it('smoothes data series', async () => {
       const dataSeries = [

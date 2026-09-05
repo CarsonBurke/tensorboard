@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {Injectable} from '@angular/core';
+import {HttpHeaders} from '@angular/common/http';
 import {Store} from '@ngrx/store';
 import {forkJoin, Observable, of} from 'rxjs';
 import {filter, map, take, withLatestFrom} from 'rxjs/operators';
@@ -175,6 +176,15 @@ function buildCombinedTagMetadata(results: TagMetadata[]): TagMetadata {
  */
 @Injectable()
 export class TBMetricsDataSource implements MetricsDataSource {
+  private readonly tagCache = new Map<
+    string,
+    {revision: string; metadata: TagMetadata}
+  >();
+  private combinedTags?: {
+    results: TagMetadata[];
+    images: boolean;
+    metadata: TagMetadata;
+  };
   constructor(
     private readonly http: TBHttpClient,
     private readonly store: Store<FeatureFlagAppState>
@@ -183,11 +193,47 @@ export class TBMetricsDataSource implements MetricsDataSource {
   fetchTagMetadata(experimentIds: string[]) {
     const fetches = experimentIds.map((experimentId) => {
       const url = `/experiment/${experimentId}/${HTTP_PATH_PREFIX}/tags`;
-      return this.http.get<BackendTagMetadata>(url).pipe(
-        map((tagMetadata) => {
-          return buildFrontendTagMetadata(tagMetadata, experimentId);
+      const cached = this.tagCache.get(experimentId);
+      return this.http
+        .get<
+          | BackendTagMetadata
+          | {revision: string | null; metadata: BackendTagMetadata | null}
+        >(url, {
+          headers: new HttpHeaders({
+            'X-TensorBoard-Metadata-Revision': cached?.revision ?? '',
+          }),
         })
-      );
+        .pipe(
+          map((response) => {
+            // Older/custom servers can continue returning the original body.
+            if (!('metadata' in response)) {
+              this.tagCache.delete(experimentId);
+              return buildFrontendTagMetadata(response, experimentId);
+            }
+            if (response.metadata === null) {
+              if (!cached || response.revision !== cached.revision) {
+                throw new Error(
+                  'Metadata revision response has no matching cached data'
+                );
+              }
+              return cached.metadata;
+            }
+            const metadata = buildFrontendTagMetadata(
+              response.metadata,
+              experimentId
+            );
+            this.tagCache.delete(experimentId);
+            if (response.revision) {
+              this.tagCache.set(experimentId, {
+                revision: response.revision,
+                metadata,
+              });
+              if (this.tagCache.size > 8)
+                this.tagCache.delete(this.tagCache.keys().next().value!);
+            }
+            return metadata;
+          })
+        );
     });
     const isImagesSupported$ = this.store.select(getIsFeatureFlagsLoaded).pipe(
       filter(Boolean),
@@ -200,6 +246,15 @@ export class TBMetricsDataSource implements MetricsDataSource {
     return forkJoin(fetches).pipe(
       withLatestFrom(isImagesSupported$),
       map(([results, isImagesSupported]) => {
+        const previous = this.combinedTags;
+        if (
+          previous &&
+          previous.images === isImagesSupported &&
+          previous.results.length === results.length &&
+          results.every((result, index) => result === previous.results[index])
+        ) {
+          return previous.metadata;
+        }
         const tagMetadata = buildCombinedTagMetadata(results);
         if (!isImagesSupported) {
           tagMetadata[PluginType.IMAGES] = {
@@ -207,6 +262,11 @@ export class TBMetricsDataSource implements MetricsDataSource {
             tagRunSampledInfo: {},
           };
         }
+        this.combinedTags = {
+          results,
+          images: isImagesSupported,
+          metadata: tagMetadata,
+        };
         return tagMetadata;
       })
     );

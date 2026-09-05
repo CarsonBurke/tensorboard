@@ -254,6 +254,7 @@ tf_ts_library(
         ":scalar_card_types",
         "//tensorboard/webapp/experiments:types",
         "//tensorboard/webapp/metrics:types",
+        "//tensorboard/webapp/metrics/data_source",
         "//tensorboard/webapp/runs/store:types",
     ],
 )

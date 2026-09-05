@@ -209,6 +209,37 @@ describe('metrics reducers', () => {
       });
     });
 
+    it('retains metadata indexes on unchanged success and still resolves imported pins', () => {
+      const tagMetadata = {
+        ...buildDataSourceTagMetadata(),
+        scalars: {tagDescriptions: {}, runTagInfo: {run1: ['loss']}},
+      };
+      const loaded = reducers(
+        buildMetricsState(),
+        actions.metricsTagMetadataLoaded({tagMetadata})
+      );
+      const refreshed = reducers(
+        loaded,
+        actions.metricsTagMetadataLoaded({tagMetadata})
+      );
+      expect(refreshed.tagMetadata).toBe(loaded.tagMetadata);
+      expect(refreshed.cardMetadataMap).toBe(loaded.cardMetadataMap);
+      expect(refreshed.cardList).toBe(loaded.cardList);
+      expect(refreshed.tagMetadataLoadState.state).toBe(DataLoadState.LOADED);
+      const pending = {
+        ...refreshed,
+        unresolvedImportedPinnedCards: [
+          {plugin: PluginType.SCALARS as const, tag: 'loss'},
+        ],
+      };
+      const resolved = reducers(
+        pending,
+        actions.metricsTagMetadataLoaded({tagMetadata})
+      );
+      expect(resolved.unresolvedImportedPinnedCards).toEqual([]);
+      expect(resolved.cardToPinnedCopy.size).toBe(1);
+    });
+
     it('sets cardMetadataMap, cardList, and tagGroupExpanded on tag metadata loaded', () => {
       const beforeState = buildMetricsState();
       const tagMetadata: DataSourceTagMetadata = {
@@ -1548,6 +1579,59 @@ describe('metrics reducers', () => {
           },
         },
       });
+    });
+
+    it('reuses equal scalar arrays while detecting tooltip and reservoir replacements', () => {
+      const request = {
+        plugin: PluginType.SCALARS as const,
+        tag: 'loss',
+        experimentIds: ['exp'],
+        runIds: ['run'],
+      };
+      const load = (state: MetricsState, points: ScalarStepDatum[]) =>
+        reducers(
+          state,
+          actions.fetchTimeSeriesLoaded({
+            requestResponses: [
+              {
+                request,
+                response: {
+                  plugin: PluginType.SCALARS,
+                  tag: 'loss',
+                  runToSeries: {run: points},
+                },
+              },
+            ],
+          })
+        );
+      const original = [
+        {step: 0, wallTime: 1, value: NaN},
+        {step: 1, wallTime: 2, value: -0},
+      ];
+      let state = load(buildMetricsState(), original);
+      state = load(
+        state,
+        original.map((point) => ({...point}))
+      );
+      expect(state.timeSeriesData.scalars['loss'].runToSeries['run']).toBe(
+        original
+      );
+      const changed = original.map((point) => ({
+        ...point,
+        wallTime: point.wallTime + 1,
+      }));
+      state = load(state, changed);
+      expect(state.timeSeriesData.scalars['loss'].runToSeries['run']).toBe(
+        changed
+      );
+      const replaced = [
+        {...changed[0], step: 10},
+        {...changed[1], value: 0},
+      ];
+      state = load(state, replaced);
+      expect(state.timeSeriesData.scalars['loss'].runToSeries['run']).toBe(
+        replaced
+      );
     });
 
     it('updates store on fetch loaded successfully', () => {

@@ -14,74 +14,73 @@ limitations under the License.
 ==============================================================================*/
 
 import {DataSeries} from './lib/public_types';
+import {yieldToEventLoop} from './smoothing_kernel';
+import {smoothOffThread} from './smoothing_worker_client';
 
-/**
- * Smoothes data series in y axis using smoothing algorithm from classical TensorBoard
- * circa 2019-2020. 1st-order IIR low-pass filter to attenuate the higher-frequency
- * components of the time-series.
- * @param data DataSeries to smooth
- * @param smoothingWeight Degree of smoothing. Number between 0 and 1, inclusive.
- */
-export async function classicSmoothing(
-  data: DataSeries[],
-  smoothingWeight: number
-): Promise<DataSeries[]> {
-  if (!data.length) [];
-
-  if (!Number.isFinite(smoothingWeight)) {
-    smoothingWeight = 0;
+// Cache only the most recent weight. Weak keys do not retain removed series.
+const smoothedPoints = new WeakMap<
+  DataSeries['points'],
+  {
+    weight: number;
+    points: DataSeries['points'];
   }
-  smoothingWeight = Math.max(0, Math.min(smoothingWeight, 1));
+>();
 
-  const results: Array<{id: string; points: DataSeries['points']}> = [];
-
-  for (const series of data) {
-    const initialYVal = series.points[0]?.y;
-    const isConstant = series.points.every((point) => point.y == initialYVal);
-
-    // See #786.
-    if (isConstant) {
-      results.push(series);
-      continue;
-    }
-
-    let last = series.points.length > 0 ? 0 : NaN;
-    let numAccum = 0;
-
-    const smoothedPoints = series.points.map((point) => {
-      const nextVal = point.y;
-      if (!Number.isFinite(nextVal)) {
-        return {
-          x: point.x,
-          y: nextVal,
-        };
-      } else {
-        last = last * smoothingWeight + (1 - smoothingWeight) * nextVal;
-        numAccum++;
-        // The uncorrected moving average is biased towards the initial value.
-        // For example, if initialized with `0`, with smoothingWeight `s`, where
-        // every data point is `c`, after `t` steps the moving average is
-        // ```
-        //   EMA = 0*s^(t) + c*(1 - s)*s^(t-1) + c*(1 - s)*s^(t-2) + ...
-        //       = c*(1 - s^t)
-        // ```
-        // If initialized with `0`, dividing by (1 - s^t) is enough to debias
-        // the moving average. We count the number of finite data points and
-        // divide appropriately before storing the data.
-        const debiasWeight =
-          smoothingWeight === 1 ? 1 : 1 - Math.pow(smoothingWeight, numAccum);
-
-        return {
-          x: point.x,
-          y: last / debiasWeight,
-        };
+/** Classical TensorBoard EMA, preserving point metadata and immutable inputs. */
+export async function classicSmoothing<T extends DataSeries>(
+  data: T[],
+  smoothingWeight: number,
+  signal?: AbortSignal
+): Promise<T[]> {
+  // Coalesce synchronous setting emissions before packing/transferring points.
+  await Promise.resolve();
+  if (signal?.aborted) throw new Error('Smoothing cancelled');
+  let weight = Number.isFinite(smoothingWeight) ? smoothingWeight : 0;
+  weight = Math.max(0, Math.min(weight, 1));
+  const results = new Map<DataSeries['points'], DataSeries['points']>();
+  const missing = data.filter(({points}) => {
+    const cached = smoothedPoints.get(points);
+    if (cached?.weight !== weight) return true;
+    results.set(points, cached.points);
+    return false;
+  });
+  if (missing.length) {
+    const lengths = missing.map(({points}) => points.length);
+    const makeValues = () => {
+      const values = new Float64Array(
+        lengths.reduce((sum, length) => sum + length, 0)
+      );
+      let index = 0;
+      for (const {points} of missing)
+        for (const point of points) values[index++] = point.y;
+      return values;
+    };
+    const values = await smoothOffThread(makeValues, lengths, weight, signal);
+    if (signal?.aborted) throw new Error('Smoothing cancelled');
+    let offset = 0;
+    let sinceYield = 0;
+    for (const {points} of missing) {
+      const original = points;
+      const initial = points[0]?.y;
+      const constant = points.every((point) => point.y === initial);
+      const result = constant
+        ? original
+        : points.map((point, i) => ({...point, y: values[offset + i]}));
+      smoothedPoints.set(original, {weight, points: result});
+      results.set(original, result);
+      offset += points.length;
+      sinceYield += points.length;
+      if (sinceYield >= 8192 && offset < values.length) {
+        sinceYield = 0;
+        await yieldToEventLoop();
+        if (signal?.aborted) throw new Error('Smoothing cancelled');
       }
-    });
-    results.push({
-      id: series.id,
-      points: smoothedPoints,
-    });
+    }
   }
-
-  return results;
+  // Another chart can finish a different weight concurrently; retain results
+  // belonging to this invocation, not a later cache writer's weight.
+  return data.map((series) => {
+    const points = results.get(series.points)!;
+    return points === series.points ? series : {...series, points};
+  });
 }

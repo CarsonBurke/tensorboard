@@ -77,7 +77,10 @@ tf_ts_library(
 tf_ts_library(
     name = "worker",
     srcs = ["worker.ts"],
-    visibility = ["//tensorboard/webapp/widgets/line_chart_v2/lib/worker:__pkg__"],
+    visibility = [
+        "//tensorboard/webapp/widgets/line_chart_v2:__pkg__",
+        "//tensorboard/webapp/widgets/line_chart_v2/lib/worker:__pkg__",
+    ],
 )
 
 tf_ts_library(

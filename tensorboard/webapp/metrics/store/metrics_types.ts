@@ -22,6 +22,7 @@ import {
   PluginType,
   SampledPluginType,
   ScalarStepDatum,
+  TagMetadata as DataSourceTagMetadata,
   TagToDescription,
   TagToRunSampledInfo,
 } from '../data_source';
@@ -179,6 +180,8 @@ export type CardToPinnedCard = Map<NonPinnedCardId, PinnedCardId>;
 export type PinnedCardToCard = Map<PinnedCardId, NonPinnedCardId>;
 
 export interface MetricsNamespacedState {
+  /** Immutable source response, retained to skip unchanged metadata rebuilds. */
+  tagMetadataSource?: DataSourceTagMetadata | undefined;
   tagMetadataLoadState: LoadState;
   tagMetadata: TagMetadata;
   // A list of card ids in the main content area, excluding pinned copies.

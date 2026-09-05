@@ -12,6 +12,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+import {XAxisType} from '../../types';
+import {ScalarStepDatum} from '../../data_source';
 import {buildRun} from '../../../runs/store/testing';
 import {PartialSeries} from './scalar_card_types';
 import {
@@ -23,9 +25,63 @@ import {
   maybeOmitTimeSelectionEnd,
   maybeSetClosestStartStep,
   partitionSeries,
+  transformScalarSeries,
 } from './utils';
 
 describe('metrics card_renderer utils test', () => {
+  it('matches normalized partition coordinates for every axis and partition mode', () => {
+    const data = [
+      {step: 2, wallTime: 4, value: NaN},
+      {step: 1, wallTime: 5, value: Infinity},
+      {step: 1, wallTime: 3, value: -0},
+      {step: NaN, wallTime: Infinity, value: 5},
+      {step: 0, wallTime: 0, value: -Infinity},
+    ];
+    for (const source of [data, [] as ScalarStepDatum[]]) {
+      for (const axis of [
+        XAxisType.STEP,
+        XAxisType.WALL_TIME,
+        XAxisType.RELATIVE,
+      ]) {
+        for (const partition of [false, true]) {
+          const normalized = source.map((datum) => ({
+            ...datum,
+            wallTime: datum.wallTime * 1000,
+            x: axis === XAxisType.STEP ? datum.step : datum.wallTime * 1000,
+            y: datum.value,
+            relativeTimeInMs: 0,
+          }));
+          const original = partition
+            ? partitionSeries([{runId: 'run', points: normalized}])
+            : [
+                {
+                  runId: 'run',
+                  seriesId: 'run',
+                  partitionIndex: 0,
+                  partitionSize: 1,
+                  points: normalized,
+                },
+              ];
+          const expected = original.map((series) => ({
+            ...series,
+            points: series.points.map((point) => ({
+              ...point,
+              relativeTimeInMs: point.wallTime - series.points[0]?.wallTime,
+              x:
+                axis === XAxisType.RELATIVE
+                  ? point.wallTime - series.points[0]?.wallTime
+                  : point.x,
+            })),
+          }));
+          const actual = transformScalarSeries('run', source, axis, partition);
+          expect(actual).toEqual(expected);
+          const pinned = transformScalarSeries('run', source, axis, partition);
+          expect(pinned[0].points).toBe(actual[0].points);
+        }
+      }
+    }
+  });
+
   describe('#getDisplayNameForRun', () => {
     it('returns runId when Run and experimentId are not present', () => {
       expect(getDisplayNameForRun('rid', null, null)).toBe('rid');
