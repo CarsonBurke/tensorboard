@@ -48,6 +48,42 @@ class GrpcDataProviderTest(tb_test.TestCase):
         self.provider = grpc_provider.GrpcDataProvider(addr, self.stub)
         self.ctx = context.RequestContext()
 
+    def test_metadata_revision_support_and_older_server(self):
+        self.stub.GetExperiment.return_value = (
+            data_provider_pb2.GetExperimentResponse()
+        )
+        self.assertIsNone(
+            self.provider.metadata_revision(self.ctx, experiment_id="123")
+        )
+        self.stub.GetExperiment.return_value.metadata_revision = "epoch:1"
+        self.assertEqual(
+            self.provider.metadata_revision(self.ctx, experiment_id="123"),
+            "epoch:1",
+        )
+
+    def test_scalar_columns_preserve_values_without_datum_objects(self):
+        res = data_provider_pb2.ReadScalarsResponse()
+        tag = res.runs.add(run_name="run").tags.add(tag_name="tag")
+        tag.data.step.extend([2**60, 2**60 + 1])
+        tag.data.wall_time.extend([1.25, 2.5])
+        tag.data.value.extend([-0.0, float("inf")])
+        self.stub.ReadScalars.return_value = res
+        with mock.patch.object(
+            provider,
+            "ScalarDatum",
+            side_effect=AssertionError("allocated datum"),
+        ):
+            result = self.provider.read_scalar_columns(
+                self.ctx,
+                experiment_id="123",
+                plugin_name="scalars",
+                downsample=2,
+            )
+        columns = result["run"]["tag"]
+        self.assertEqual(list(columns.steps), [2**60, 2**60 + 1])
+        self.assertEqual(list(columns.wall_times), [1.25, 2.5])
+        self.assertEqual(list(columns.values), [-0.0, float("inf")])
+
     def test_experiment_metadata_when_only_data_location_set(self):
         res = data_provider_pb2.GetExperimentResponse()
         self.stub.GetExperiment.return_value = res
@@ -209,9 +245,7 @@ class GrpcDataProviderTest(tb_test.TestCase):
         self.assertEqual(actual["train"]["loss"].description, "Loss")
         req = data_provider_pb2.ListScalarsRequest(
             experiment_id="123",
-            plugin_filter=data_provider_pb2.PluginFilter(
-                plugin_name="scalars"
-            ),
+            plugin_filter=data_provider_pb2.PluginFilter(plugin_name="scalars"),
             skip_statistics=True,
         )
         self.stub.ListScalars.assert_called_once_with(req)

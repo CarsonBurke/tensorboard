@@ -63,6 +63,16 @@ class GrpcDataProvider(provider.DataProvider):
         )
         return res
 
+    def metadata_revision(self, ctx, *, experiment_id):
+        # Like the other RPCs, this provider exposes the local server's entire
+        # view. Older servers omit this optional field and remain uncached.
+        req = data_provider_pb2.GetExperimentRequest(
+            experiment_id=experiment_id
+        )
+        with _translate_grpc_error():
+            res = self._stub.GetExperiment(req)
+        return res.metadata_revision or None
+
     def list_plugins(self, ctx, *, experiment_id):
         req = data_provider_pb2.ListPluginsRequest()
         req.experiment_id = experiment_id
@@ -119,12 +129,14 @@ class GrpcDataProvider(provider.DataProvider):
                 for tag_entry in run_entry.tags:
                     time_series = tag_entry.metadata
                     tags[tag_entry.tag_name] = provider.ScalarTimeSeries(
-                        max_step=None
-                        if skip_statistics
-                        else time_series.max_step,
-                        max_wall_time=None
-                        if skip_statistics
-                        else time_series.max_wall_time,
+                        max_step=(
+                            None if skip_statistics else time_series.max_step
+                        ),
+                        max_wall_time=(
+                            None
+                            if skip_statistics
+                            else time_series.max_wall_time
+                        ),
                         plugin_content=time_series.summary_metadata.plugin_data.content,
                         description=time_series.summary_metadata.summary_description,
                         display_name=time_series.summary_metadata.display_name,
@@ -133,6 +145,34 @@ class GrpcDataProvider(provider.DataProvider):
 
     @timing.log_latency
     def read_scalars(
+        self,
+        ctx,
+        *,
+        experiment_id,
+        plugin_name,
+        downsample=None,
+        run_tag_filter=None,
+    ):
+        columns = self.read_scalar_columns(
+            ctx,
+            experiment_id=experiment_id,
+            plugin_name=plugin_name,
+            downsample=downsample,
+            run_tag_filter=run_tag_filter,
+        )
+        return {
+            run: {
+                tag: [
+                    provider.ScalarDatum(step=step, wall_time=wt, value=value)
+                    for step, wt, value in zip(d.steps, d.wall_times, d.values)
+                ]
+                for tag, d in tags.items()
+            }
+            for run, tags in columns.items()
+        }
+
+    @timing.log_latency
+    def read_scalar_columns(
         self,
         ctx,
         *,
@@ -156,16 +196,10 @@ class GrpcDataProvider(provider.DataProvider):
                 tags = {}
                 result[run_entry.run_name] = tags
                 for tag_entry in run_entry.tags:
-                    series = []
-                    tags[tag_entry.tag_name] = series
                     d = tag_entry.data
-                    for step, wt, value in zip(d.step, d.wall_time, d.value):
-                        point = provider.ScalarDatum(
-                            step=step,
-                            wall_time=wt,
-                            value=value,
-                        )
-                        series.append(point)
+                    tags[tag_entry.tag_name] = provider.ScalarColumnData(
+                        d.step, d.wall_time, d.value
+                    )
             return result
 
     @timing.log_latency
@@ -241,12 +275,14 @@ class GrpcDataProvider(provider.DataProvider):
                 for tag_entry in run_entry.tags:
                     time_series = tag_entry.metadata
                     tags[tag_entry.tag_name] = provider.TensorTimeSeries(
-                        max_step=None
-                        if skip_statistics
-                        else time_series.max_step,
-                        max_wall_time=None
-                        if skip_statistics
-                        else time_series.max_wall_time,
+                        max_step=(
+                            None if skip_statistics else time_series.max_step
+                        ),
+                        max_wall_time=(
+                            None
+                            if skip_statistics
+                            else time_series.max_wall_time
+                        ),
                         plugin_content=time_series.summary_metadata.plugin_data.content,
                         description=time_series.summary_metadata.summary_description,
                         display_name=time_series.summary_metadata.display_name,

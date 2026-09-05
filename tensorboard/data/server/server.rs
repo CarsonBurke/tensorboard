@@ -65,6 +65,7 @@ impl TensorBoardDataProvider for DataProviderHandler {
     ) -> Result<Response<data::GetExperimentResponse>, Status> {
         Ok(Response::new(data::GetExperimentResponse {
             data_location: self.data_location.clone(),
+            metadata_revision: self.commit.metadata_revision(),
             ..Default::default()
         }))
     }

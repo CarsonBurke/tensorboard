@@ -46,6 +46,12 @@ pub struct GetExperimentResponse {
     /// May be unset if no creation time is known.
     #[prost(message, optional, tag="4")]
     pub creation_time: ::core::option::Option<::prost_types::Timestamp>,
+    /// Optional opaque revision of tag membership, summary metadata, and maximum
+    /// blob sequence lengths. Excludes max step and wall time. A supporting server
+    /// must change this on metadata changes and across restarts. Empty means that
+    /// metadata revision checks are unsupported.
+    #[prost(string, tag="5")]
+    pub metadata_revision: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PluginFilter {

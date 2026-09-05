@@ -20,7 +20,7 @@ use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::commit::Commit;
 use crate::run::RunLoader;
@@ -178,8 +178,9 @@ where
                 runs_store.remove(run);
             }
             for run in added {
-                runs_store.insert(run.clone(), Default::default());
+                runs_store.insert(run.clone(), RwLock::new(self.commit.new_run_data()));
             }
+            self.commit.invalidate_metadata();
         }
 
         // Add new runs.
@@ -365,7 +366,12 @@ mod tests {
         };
 
         assert_eq!(get_test_scalar(), None);
+        let initial_revision = commit.metadata_revision();
         loader.reload();
+        assert_ne!(initial_revision, commit.metadata_revision());
+        let loaded_revision = commit.metadata_revision();
+        loader.reload();
+        assert_eq!(loaded_revision, commit.metadata_revision());
         assert_eq!(get_run_names(), vec!["test", "train"]);
         assert_eq!(get_test_scalar(), Some(0.75));
 
@@ -377,6 +383,7 @@ mod tests {
 
         loader.reload();
         assert_eq!(get_run_names(), vec!["test", "val"]);
+        assert_ne!(loaded_revision, commit.metadata_revision());
         assert_eq!(get_test_scalar(), Some(0.75));
 
         Ok(())

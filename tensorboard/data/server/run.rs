@@ -143,14 +143,29 @@ impl StageTimeSeries {
     /// Writes all staged data for this time series into the commit.
     fn commit(&mut self, tag: &Tag, run: &mut commit::RunData) {
         use pb::DataClass;
-        match self.data_class {
-            DataClass::Scalar => self.commit_to(tag, &mut run.scalars, |ev, _| ev.into_scalar()),
-            DataClass::Tensor => self.commit_to(tag, &mut run.tensors, EventValue::into_tensor),
-            DataClass::BlobSequence => {
-                self.commit_to(tag, &mut run.blob_sequences, EventValue::into_blob_sequence)
+        let changed = match self.data_class {
+            DataClass::Scalar => self.commit_to(
+                tag,
+                &mut run.scalars,
+                |ev, _| ev.into_scalar(),
+                |ts| ts.valid_values().next().map(|_| 0),
+            ),
+            DataClass::Tensor => {
+                self.commit_to(tag, &mut run.tensors, EventValue::into_tensor, |ts| {
+                    ts.valid_values().next().map(|_| 0)
+                })
             }
-            _ => (),
+            DataClass::BlobSequence => self.commit_to(
+                tag,
+                &mut run.blob_sequences,
+                EventValue::into_blob_sequence,
+                |ts| ts.valid_values().map(|(_, _, value)| value.0.len()).max(),
+            ),
+            _ => false,
         };
+        if changed {
+            run.invalidate_metadata();
+        }
     }
 
     /// Helper for `commit`: writes staged data for this time series into storage for a statically
@@ -160,15 +175,22 @@ impl StageTimeSeries {
         tag: &Tag,
         store: &mut commit::TagStore<V>,
         mut enrich: F,
-    ) {
+        metadata_shape: impl Fn(&commit::TimeSeries<V>) -> Option<usize>,
+    ) -> bool {
+        let inserted = !store.contains_key(tag);
         let commit_ts = store
             .entry(tag.clone())
             .or_insert_with(|| commit::TimeSeries::new(self.metadata.clone()));
+        if !inserted && !self.rsv.has_pending_changes(&commit_ts.basin) {
+            return false;
+        }
         let metadata = self.metadata.as_ref();
+        let before = metadata_shape(commit_ts);
         self.rsv
             .commit_map(&mut commit_ts.basin, |StageValue { wall_time, payload }| {
                 (wall_time, enrich(payload, metadata))
             });
+        inserted || before != metadata_shape(commit_ts)
     }
 }
 
@@ -426,6 +448,99 @@ mod test {
     use crate::disk_logdir::DiskLogdir;
     use crate::types::Run;
     use crate::writer::SummaryWriteExt;
+
+    #[test]
+    fn metadata_revision_tracks_presence_and_blob_length() {
+        use crate::data_compat::SummaryValue;
+        let commit = Commit::new();
+        assert_ne!(
+            commit.metadata_revision(),
+            Commit::new().metadata_revision()
+        );
+        let mut run = commit.new_run_data();
+        let tag = Tag("tag".into());
+        let mut scalar = StageTimeSeries {
+            data_class: pb::DataClass::Scalar,
+            metadata: Box::new(pb::SummaryMetadata::default()),
+            rsv: StageReservoir::new(1),
+        };
+        let wt = WallTime::new(1.0).unwrap();
+        for (i, (valid, changed)) in [
+            (false, true),
+            (true, true),
+            (true, false),
+            (false, true),
+            (true, true),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let value = if *valid {
+                pb::summary::value::Value::SimpleValue(1.0)
+            } else {
+                pb::summary::value::Value::Tensor(pb::TensorProto::default())
+            };
+            scalar.rsv.offer(
+                Step(i as i64),
+                StageValue {
+                    wall_time: wt,
+                    payload: EventValue::Summary(SummaryValue(Box::new(value))),
+                },
+            );
+            let before = commit.metadata_revision();
+            scalar.commit(&tag, &mut run);
+            assert_eq!(before != commit.metadata_revision(), *changed);
+            let idle = commit.metadata_revision();
+            scalar.commit(&tag, &mut run);
+            assert_eq!(idle, commit.metadata_revision());
+        }
+        let mut blobs = StageTimeSeries {
+            data_class: pb::DataClass::BlobSequence,
+            metadata: Box::new(pb::SummaryMetadata::default()),
+            rsv: StageReservoir::new(1),
+        };
+        // Empty valid sequences differ from no valid sequence; maximum lengths
+        // may decrease when the reservoir evicts the previous maximum.
+        for (i, (length, changed)) in [
+            (Some(0), true),
+            (Some(3), true),
+            (Some(3), false),
+            (Some(1), true),
+            (None, true),
+            (Some(0), true),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let value = match length {
+                None => pb::TensorProto::default(),
+                Some(n) => pb::TensorProto {
+                    dtype: pb::DataType::DtString.into(),
+                    tensor_shape: Some(pb::TensorShapeProto {
+                        dim: vec![pb::tensor_shape_proto::Dim {
+                            size: *n as i64,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                    string_val: vec![Bytes::new(); *n],
+                    ..Default::default()
+                },
+            };
+            blobs.rsv.offer(
+                Step(i as i64),
+                StageValue {
+                    wall_time: wt,
+                    payload: EventValue::Summary(SummaryValue(Box::new(
+                        pb::summary::value::Value::Tensor(value),
+                    ))),
+                },
+            );
+            let before = commit.metadata_revision();
+            blobs.commit(&tag, &mut run);
+            assert_eq!(before != commit.metadata_revision(), *changed);
+        }
+    }
 
     #[test]
     fn test() -> Result<(), Box<dyn std::error::Error>> {

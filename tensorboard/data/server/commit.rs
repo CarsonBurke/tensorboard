@@ -18,7 +18,8 @@ limitations under the License.
 
 use bytes::Bytes;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 use crate::proto::tensorboard as pb;
 use crate::reservoir::Basin;
@@ -32,15 +33,48 @@ use crate::types::{Run, Step, Tag, WallTime};
 ///
 /// Deadlock safety: any thread should obtain the outer lock (around the hash map) before an inner
 /// lock (around the run data), and should obtain at most one `RunData` lock at once.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Commit {
     pub runs: RwLock<HashMap<Run, RwLock<RunData>>>,
+    metadata_epoch: u128,
+    metadata_revision: Arc<AtomicU64>,
+}
+
+impl Default for Commit {
+    fn default() -> Self {
+        Self {
+            runs: RwLock::default(),
+            metadata_epoch: rand::random(),
+            metadata_revision: Arc::new(AtomicU64::new(0)),
+        }
+    }
 }
 
 impl Commit {
     /// Creates a new, empty commit.
     pub fn new() -> Self {
         Commit::default()
+    }
+
+    /// Opaque revision of tag metadata (excluding step/wall-time statistics).
+    pub fn metadata_revision(&self) -> String {
+        format!(
+            "{:032x}:{}",
+            self.metadata_epoch,
+            self.metadata_revision.load(Ordering::SeqCst)
+        )
+    }
+
+    pub fn new_run_data(&self) -> RunData {
+        RunData {
+            metadata_revision: self.metadata_revision.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// Call while holding the runs write lock when adding or removing runs.
+    pub fn invalidate_metadata(&self) {
+        self.metadata_revision.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -49,6 +83,7 @@ impl Commit {
 /// This contains all data and metadata for a run, including scalars, tensors, and blob sequences.
 #[derive(Debug, Default)]
 pub struct RunData {
+    metadata_revision: Arc<AtomicU64>,
     /// The time of the first event recorded for this run.
     ///
     /// Used to define an ordering on runs that is stable as new runs are added, so that existing
@@ -63,6 +98,15 @@ pub struct RunData {
 
     /// Blob sequence time series for this run.
     pub blob_sequences: TagStore<BlobSequenceValue>,
+}
+
+impl RunData {
+    /// Call before releasing this run's write lock after changing tag metadata,
+    /// valid-data membership, or maximum blob sequence lengths. Future metadata
+    /// replacement/removal paths must invalidate here as well.
+    pub fn invalidate_metadata(&self) {
+        self.metadata_revision.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 pub type TagStore<V> = HashMap<Tag, TimeSeries<V>>;
@@ -183,10 +227,11 @@ pub mod test_data {
             let mut runs = self.0.runs.write().expect("runs.write");
             let mut run_data = runs
                 .entry(run)
-                .or_default()
+                .or_insert_with(|| RwLock::new(self.0.new_run_data()))
                 .write()
                 .expect("runs[run].write");
             update(&mut run_data);
+            run_data.invalidate_metadata();
         }
 
         /// Adds a scalar time series, creating the run if it doesn't exist, and setting its start

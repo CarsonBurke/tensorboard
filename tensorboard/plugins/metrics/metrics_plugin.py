@@ -16,13 +16,16 @@
 
 
 import collections
+import hashlib
 import json
+import threading
 
 from werkzeug import wrappers
 
 from tensorboard import errors
 from tensorboard import plugin_util
 from tensorboard.backend import http_util
+from tensorboard.backend import json_util
 from tensorboard.data import provider
 from tensorboard.plugins import base_plugin
 from tensorboard.plugins.histogram import metadata as histogram_metadata
@@ -259,6 +262,9 @@ class MetricsPlugin(base_plugin.TBPlugin):
                 it contains a valid `data_provider`.
         """
         self._data_provider = context.data_provider
+        self._tag_cache = collections.OrderedDict()
+        self._tag_cache_lock = threading.Lock()
+        self._tag_cache_bytes = 0
 
         # For histograms, use a round number + 1 since sampling includes both start
         # and end steps, so N+1 samples corresponds to dividing the step sequence
@@ -310,8 +316,88 @@ class MetricsPlugin(base_plugin.TBPlugin):
     def _serve_tags(self, request):
         ctx = plugin_util.context(request.environ)
         experiment = plugin_util.experiment_id(request.environ)
-        index = self._tags_impl(ctx, experiment=experiment)
-        return http_util.Respond(request, index, "application/json")
+        revision = self._data_provider.metadata_revision(
+            ctx, experiment_id=experiment
+        )
+        # Reject unsupported/malformed capability responses (including legacy
+        # mock providers). Never infer a cache scope from RequestContext fields.
+        revision = revision if isinstance(revision, str) and revision else None
+        token = (
+            hashlib.sha256(
+                json.dumps([experiment, revision]).encode()
+            ).hexdigest()
+            if revision
+            else None
+        )
+        known_revision = request.headers.get("X-TensorBoard-Metadata-Revision")
+        versioned = known_revision is not None
+        headers = [("Vary", "Accept-Encoding, X-TensorBoard-Metadata-Revision")]
+        if token:
+            headers.append(("ETag", 'W/"%s"' % token))
+        if token and versioned and known_revision == token:
+            response = http_util.Respond(
+                request,
+                {"metadata": None, "revision": token},
+                "application/json",
+                headers=headers,
+            )
+        elif (
+            token
+            and not versioned
+            and request.if_none_match.contains_weak(token)
+        ):
+            response = http_util.Respond(
+                request, b"", "application/json", code=304, headers=headers
+            )
+        else:
+            with self._tag_cache_lock:
+                payload = self._tag_cache.get(token) if token else None
+                if payload is not None:
+                    self._tag_cache.move_to_end(token)
+            if payload is None:
+                index = self._tags_impl(ctx, experiment=experiment)
+                payload = json.dumps(json_util.Cleanse(index)).encode("utf-8")
+                # A reload can commit between the three listings. Such a
+                # response is usable, but must never be cached under a revision.
+                if (
+                    token
+                    and self._data_provider.metadata_revision(
+                        ctx, experiment_id=experiment
+                    )
+                    != revision
+                ):
+                    token = None
+                    headers = [
+                        (
+                            "Vary",
+                            "Accept-Encoding, X-TensorBoard-Metadata-Revision",
+                        )
+                    ]
+                if token and len(payload) <= 16 * 1024 * 1024:
+                    with self._tag_cache_lock:
+                        previous = self._tag_cache.pop(token, b"")
+                        self._tag_cache_bytes -= len(previous)
+                        self._tag_cache[token] = payload
+                        self._tag_cache_bytes += len(payload)
+                        while (
+                            len(self._tag_cache) > 8
+                            or self._tag_cache_bytes > 16 * 1024 * 1024
+                        ):
+                            _, evicted = self._tag_cache.popitem(last=False)
+                            self._tag_cache_bytes -= len(evicted)
+            if versioned:
+                payload = (
+                    b'{"revision":'
+                    + json.dumps(token).encode()
+                    + b',"metadata":'
+                    + payload
+                    + b"}"
+                )
+            response = http_util.Respond(
+                request, payload, "application/json", headers=headers
+            )
+        response.headers["Cache-Control"] = "private, no-cache, must-revalidate"
+        return response
 
     def _tags_impl(self, ctx, experiment=None):
         """Returns tag metadata for a given experiment's logged metrics.
@@ -395,10 +481,18 @@ class MetricsPlugin(base_plugin.TBPlugin):
                 "Unable to parse 'requests' as JSON"
             )
 
-        response = self._time_series_impl(ctx, experiment, series_requests)
-        return http_util.Respond(request, response, "application/json")
+        response = self._time_series_impl(
+            ctx, experiment, series_requests, for_json=True
+        )
+        # Numeric scalar fields are cleansed while constructing their dicts;
+        # passing serialized JSON avoids a second recursive copy of every point.
+        return http_util.Respond(
+            request, json.dumps(response, allow_nan=False), "application/json"
+        )
 
-    def _time_series_impl(self, ctx, experiment, series_requests):
+    def _time_series_impl(
+        self, ctx, experiment, series_requests, for_json=False
+    ):
         """Constructs a list of responses from a list of series requests.
 
         Args:
@@ -410,7 +504,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
             A list of `TimeSeriesResponse` dicts (see http_api.md).
         """
         responses = [
-            self._get_time_series(ctx, experiment, request)
+            self._get_time_series(ctx, experiment, request, for_json=for_json)
             for request in series_requests
         ]
         return responses
@@ -461,7 +555,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
 
         return None
 
-    def _get_time_series(self, ctx, experiment, series_request):
+    def _get_time_series(self, ctx, experiment, series_request, for_json=False):
         """Returns time series data for a given tag, plugin.
 
         Args:
@@ -480,13 +574,13 @@ class MetricsPlugin(base_plugin.TBPlugin):
         request_error = self._get_invalid_request_error(series_request)
         if request_error:
             response["error"] = request_error
-            return response
+            return json_util.Cleanse(response) if for_json else response
 
         runs = _requested_runs(series_request)
         run_to_series = None
         if plugin == scalar_metadata.PLUGIN_NAME:
             run_to_series = self._get_run_to_scalar_series(
-                ctx, experiment, tag, runs
+                ctx, experiment, tag, runs, for_json=for_json
             )
 
         if plugin == histogram_metadata.PLUGIN_NAME:
@@ -499,10 +593,16 @@ class MetricsPlugin(base_plugin.TBPlugin):
                 ctx, experiment, tag, sample, runs
             )
 
+        if for_json:
+            response = json_util.Cleanse(response)
+            if plugin != scalar_metadata.PLUGIN_NAME:
+                run_to_series = json_util.Cleanse(run_to_series)
         response["runToSeries"] = run_to_series
         return response
 
-    def _get_run_to_scalar_series(self, ctx, experiment, tag, runs):
+    def _get_run_to_scalar_series(
+        self, ctx, experiment, tag, runs, for_json=False
+    ):
         """Builds a run-to-scalar-series dict for client consumption.
 
         Args:
@@ -514,26 +614,50 @@ class MetricsPlugin(base_plugin.TBPlugin):
         Returns:
             A map from string run names to `ScalarStepDatum` (see http_api.md).
         """
-        mapping = self._data_provider.read_scalars(
-            ctx,
+        kwargs = dict(
             experiment_id=experiment,
             plugin_name=scalar_metadata.PLUGIN_NAME,
             downsample=self._plugin_downsampling["scalars"],
             run_tag_filter=provider.RunTagFilter(runs=runs, tags=[tag]),
         )
 
+        columns = self._data_provider.read_scalar_columns(ctx, **kwargs)
+        if columns is None:
+            mapping = self._data_provider.read_scalars(ctx, **kwargs)
+            series = (
+                (run, ((d.step, d.wall_time, d.value) for d in tags[tag]))
+                for run, tags in mapping.items()
+                if tag in tags
+            )
+        else:
+            series = (
+                (
+                    run,
+                    zip(
+                        tags[tag].steps, tags[tag].wall_times, tags[tag].values
+                    ),
+                )
+                for run, tags in columns.items()
+                if tag in tags
+            )
+
         run_to_series = {}
-        for result_run, tag_data in mapping.items():
-            if tag not in tag_data:
-                continue
-            values = [
-                {
-                    "wallTime": datum.wall_time,
-                    "step": datum.step,
-                    "value": datum.value,
-                }
-                for datum in tag_data[tag]
-            ]
+        for result_run, points in series:
+            if for_json:
+                values = [
+                    {
+                        "wallTime": json_util.Cleanse(wt),
+                        "step": json_util.Cleanse(step),
+                        "value": json_util.Cleanse(value),
+                    }
+                    for step, wt, value in points
+                ]
+                result_run = json_util.Cleanse(result_run)
+            else:
+                values = [
+                    {"wallTime": wt, "step": step, "value": value}
+                    for step, wt, value in points
+                ]
             run_to_series[result_run] = values
 
         return run_to_series

@@ -130,6 +130,40 @@ class DataProvider(metaclass=abc.ABCMeta):
     If not implemented, optional methods may return `None`.
     """
 
+    def read_scalar_columns(
+        self,
+        ctx=None,
+        *,
+        experiment_id,
+        plugin_name,
+        downsample=None,
+        run_tag_filter=None,
+    ):
+        """Optional columnar equivalent of read_scalars.
+
+        Returns the same run/tag mapping, with each series represented by a
+        ScalarColumnData whose equally sized columns retain sampled point order.
+        None means unsupported; callers should fall back to read_scalars.
+        """
+        return None
+
+    def metadata_revision(self, ctx=None, *, experiment_id):
+        """Optional opaque token for caching time-series tag metadata.
+
+        A nonempty string identifies the authorized view of scalar/tensor tag
+        metadata and blob-sequence metadata including maximum sequence length,
+        but excluding maximum step and wall time. The token must change on run
+        or tag additions/deletions, summary metadata changes, valid-data
+        presence changes, and server restarts. Ordinary scalar appends need not
+        change it. Equal tokens must imply equivalent metadata.
+
+        This method is called on EVERY request, including cache hits. Providers
+        opting in must authorize the request and include any context-dependent
+        visibility in the token. Returning None disables caching; this is the
+        compatible default for providers without a trustworthy revision.
+        """
+        return None
+
     def experiment_metadata(self, ctx=None, *, experiment_id):
         """Retrieve metadata of a given experiment.
 
@@ -965,6 +999,18 @@ class ScalarTimeSeries(_TimeSeries):
                 "last_value=%r" % (self._last_value,),
             )
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class ScalarColumnData:
+    """Equally sized sampled scalar columns, in increasing step order.
+
+    Columns are read-only by convention and may be backed by protobuf arrays.
+    """
+
+    steps: Sequence[int]
+    wall_times: Sequence[float]
+    values: Sequence[float]
 
 
 class ScalarDatum:

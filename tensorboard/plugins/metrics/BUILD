@@ -18,6 +18,7 @@ py_library(
         "//tensorboard:errors",
         "//tensorboard:plugin_util",
         "//tensorboard/backend:http_util",
+        "//tensorboard/backend:json_util",
         "//tensorboard/data:provider",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/plugins/histogram:metadata",
@@ -50,6 +51,20 @@ py_test(
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/plugins/image:metadata",
         "//tensorboard/util:test_util",
+        "@tensorboard_pip_deps//werkzeug",
+    ],
+)
+
+py_test(
+    name = "metrics_plugin_performance_test",
+    srcs = ["metrics_plugin_performance_test.py"],
+    deps = [
+        ":metrics_plugin",
+        "//tensorboard:context",
+        "//tensorboard:test",
+        "//tensorboard/backend:json_util",
+        "//tensorboard/data:provider",
+        "//tensorboard/plugins:base_plugin",
         "@tensorboard_pip_deps//werkzeug",
     ],
 )

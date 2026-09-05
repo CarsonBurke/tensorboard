@@ -220,6 +220,21 @@ Args:
 Returns:
   - TagMetadata
 
+Clients may opt into conditional metadata retrieval by sending the
+`X-TensorBoard-Metadata-Revision` header. An empty value requests the initial
+snapshot. The response is then `{ "revision": string | null, "metadata":
+TagMetadata | null }`. On subsequent requests, send the returned revision in
+the same header. A matching revision returns `metadata: null`; reuse the
+previous snapshot. A null revision means that the provider cannot safely
+cache this response, so the next request must fetch metadata again. Older
+servers may return the original `TagMetadata` body and should remain supported.
+
+Revisions cover the authorized view of tag metadata, including image sample
+counts, but exclude step and wall-time statistics. Requests are authorized
+before checking revisions. Responses use private revalidation and vary on the
+revision header and accepted encoding. Clients using the original response
+format may also revalidate a returned weak ETag with `If-None-Match`.
+
 Example:
 
     Response:

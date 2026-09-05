@@ -228,6 +228,12 @@ impl<T, C: ReservoirControl> StageReservoir<T, C> {
         self.committed_steps.len() + self.staged_items.len()
     }
 
+    /// Whether committing would change the paired basin. Like `commit_map`,
+    /// this requires that the basin is modified only through this reservoir.
+    pub fn has_pending_changes<S>(&self, basin: &Basin<S>) -> bool {
+        !self.staged_items.is_empty() || self.committed_steps.len() != basin.0.len()
+    }
+
     /// Pops the last item in this reservoir, which will be a staged item if there is one or a
     /// committed step otherwise.
     ///
