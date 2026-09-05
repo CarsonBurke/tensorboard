@@ -78,8 +78,17 @@ export const getScalarTagsForRunSelection = createSelector(
   }
 );
 
-const getRenderableCardIdsWithMetadata = createSelector(
+const getSortedNonEmptyCardIdsWithMetadata = createSelector(
   getNonEmptyCardIdsWithMetadata,
+  (cardList) => {
+    return [...cardList].sort((cardA, cardB) => {
+      return compareTagNames(cardA.tag, cardB.tag);
+    });
+  }
+);
+
+const getRenderableCardIdsWithMetadata = createSelector(
+  getSortedNonEmptyCardIdsWithMetadata,
   getCurrentRouteRunSelection,
   getMetricsHideEmptyCards,
   getScalarTagsForRunSelection,
@@ -89,9 +98,13 @@ const getRenderableCardIdsWithMetadata = createSelector(
     hideEmptyScalarCards,
     scalarTagsForRunSelection
   ) => {
-    const areAnyRunsSelected = Array.from(runSelectionMap?.values() || []).some(
-      Boolean
-    );
+    let areAnyRunsSelected = false;
+    for (const selected of runSelectionMap?.values() || []) {
+      if (selected) {
+        areAnyRunsSelected = true;
+        break;
+      }
+    }
     return cardList.filter((card) => {
       if (!isSingleRunPlugin(card.plugin)) {
         if (
@@ -108,15 +121,8 @@ const getRenderableCardIdsWithMetadata = createSelector(
   }
 );
 
-export const getSortedRenderableCardIdsWithMetadata = createSelector<
-  State,
-  DeepReadonly<CardIdWithMetadata>[],
-  DeepReadonly<CardIdWithMetadata>[]
->(getRenderableCardIdsWithMetadata, (cardList) => {
-  return cardList.sort((cardA, cardB) => {
-    return compareTagNames(cardA.tag, cardB.tag);
-  });
-});
+export const getSortedRenderableCardIdsWithMetadata =
+  getRenderableCardIdsWithMetadata;
 
 const utils = {
   filterRunItemsByRegex(
@@ -149,7 +155,7 @@ const utils = {
     }
     if (filter.type === DomainType.DISCRETE) {
       // (upcast to work around bad TypeScript libdefs)
-      const values: Readonly<Array<typeof filter.filterValues[number]>> =
+      const values: Readonly<Array<(typeof filter.filterValues)[number]>> =
         filter.filterValues;
       return values.includes(value);
     } else if (filter.type === DomainType.INTERVAL) {

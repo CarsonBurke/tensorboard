@@ -220,6 +220,61 @@ describe('TBMetricsDataSource test', () => {
       expect(resultSpy).not.toHaveBeenCalled();
     });
 
+    it('batches multiple card requests for the same experiment', () => {
+      const resultSpy = jasmine.createSpy();
+      dataSource
+        .fetchTimeSeries([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tag1',
+            experimentIds: ['exp1'],
+          },
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tag2',
+            experimentIds: ['exp1'],
+          },
+        ])
+        .subscribe(resultSpy);
+
+      const request = httpMock.expectOne(
+        '/experiment/exp1/data/plugin/timeseries/timeSeries'
+      );
+      const body = request.request.body as FormData;
+      const parsedRequests = JSON.parse(
+        body.get('requests') as string
+      ) as BackendTimeSeriesRequest[];
+      expect(parsedRequests).toEqual([
+        {plugin: PluginType.SCALARS, tag: 'tag1'},
+        {plugin: PluginType.SCALARS, tag: 'tag2'},
+      ]);
+      request.flush([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {run1: []},
+        },
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag2',
+          runToSeries: {run2: []},
+        },
+      ] as BackendTimeSeriesResponse[]);
+
+      expect(resultSpy).toHaveBeenCalledWith([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {'exp1/run1': []},
+        },
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag2',
+          runToSeries: {'exp1/run2': []},
+        },
+      ]);
+    });
+
     it('makes requests per experiment id', () => {
       const resultSpy = jasmine.createSpy();
       dataSource

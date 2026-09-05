@@ -385,23 +385,16 @@ describe('metrics effects', () => {
           actions$.next(reloadAction());
 
           expect(fetchTagMetadataSpy).toHaveBeenCalled();
-          expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(2);
+          expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
           expect(actualActions).toEqual([
             actions.metricsTagMetadataRequested(),
             actions.metricsTagMetadataLoaded({
               tagMetadata: buildDataSourceTagMetadata(),
             }),
 
-            // Currently we expect 2x the same requests if the cards are the same.
-            // Ideally we should dedupe requests for the same info.
+            // Identical card requests share one backend fetch.
             actions.multipleTimeSeriesRequested({
               requests: [
-                {
-                  plugin: PluginType.SCALARS as MultiRunPluginType,
-                  tag: 'tagA',
-                  experimentIds: ['exp1'],
-                  runIds: ['run1'],
-                },
                 {
                   plugin: PluginType.SCALARS as MultiRunPluginType,
                   tag: 'tagA',
@@ -411,22 +404,17 @@ describe('metrics effects', () => {
               ],
             }),
             actions.fetchTimeSeriesLoaded({
-              request: {
-                plugin: PluginType.SCALARS as MultiRunPluginType,
-                tag: 'tagA',
-                experimentIds: ['exp1'],
-                runIds: ['run1'],
-              },
-              response: buildTimeSeriesResponse(),
-            }),
-            actions.fetchTimeSeriesLoaded({
-              request: {
-                plugin: PluginType.SCALARS as MultiRunPluginType,
-                tag: 'tagA',
-                experimentIds: ['exp1'],
-                runIds: ['run1'],
-              },
-              response: buildTimeSeriesResponse(),
+              requestResponses: [
+                {
+                  request: {
+                    plugin: PluginType.SCALARS as MultiRunPluginType,
+                    tag: 'tagA',
+                    experimentIds: ['exp1'],
+                    runIds: ['run1'],
+                  },
+                  response: buildTimeSeriesResponse(),
+                },
+              ],
             }),
           ]);
         });
@@ -465,13 +453,17 @@ describe('metrics effects', () => {
               ],
             }),
             actions.fetchTimeSeriesLoaded({
-              request: {
-                plugin: PluginType.SCALARS as MultiRunPluginType,
-                tag: 'tagA',
-                experimentIds: ['exp1'],
-                runIds: ['run1'],
-              },
-              response: buildTimeSeriesResponse(),
+              requestResponses: [
+                {
+                  request: {
+                    plugin: PluginType.SCALARS as MultiRunPluginType,
+                    tag: 'tagA',
+                    experimentIds: ['exp1'],
+                    runIds: ['run1'],
+                  },
+                  response: buildTimeSeriesResponse(),
+                },
+              ],
             }),
           ]);
         });
@@ -655,8 +647,9 @@ describe('metrics effects', () => {
         expect(actualActions).toEqual([
           actions.multipleTimeSeriesRequested({requests: [expectedRequest]}),
           actions.fetchTimeSeriesLoaded({
-            request: expectedRequest,
-            response: sampleBackendResponses[0],
+            requestResponses: [
+              {request: expectedRequest, response: sampleBackendResponses[0]},
+            ],
           }),
         ]);
       });
@@ -706,8 +699,9 @@ describe('metrics effects', () => {
         expect(actualActions).toEqual([
           actions.multipleTimeSeriesRequested({requests: [expectedRequest]}),
           actions.fetchTimeSeriesLoaded({
-            request: expectedRequest,
-            response: sampleBackendResponses[0],
+            requestResponses: [
+              {request: expectedRequest, response: sampleBackendResponses[0]},
+            ],
           }),
         ]);
       });
@@ -1041,13 +1035,10 @@ describe('metrics effects', () => {
             sample: 5,
           },
         ];
-        fetchTimeSeriesSpy = spyOn(metricsDataSource, 'fetchTimeSeries');
-        fetchTimeSeriesSpy
-          .withArgs([expectedRequests[0]])
-          .and.returnValue(of([sampleBackendResponses[0]]));
-        fetchTimeSeriesSpy
-          .withArgs([expectedRequests[1]])
-          .and.returnValue(of([sampleBackendResponses[1]]));
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.returnValue(of(sampleBackendResponses));
 
         store.overrideSelector(
           selectors.getVisibleCardIdSet,
@@ -1065,18 +1056,21 @@ describe('metrics effects', () => {
         );
 
         expect(fetchTimeSeriesSpy.calls.allArgs()).toEqual([
-          [[expectedRequests[0]]],
-          [[expectedRequests[1]]],
+          [expectedRequests],
         ]);
         expect(actualActions).toEqual([
           actions.multipleTimeSeriesRequested({requests: expectedRequests}),
           actions.fetchTimeSeriesLoaded({
-            request: expectedRequests[0],
-            response: sampleBackendResponses[0],
-          }),
-          actions.fetchTimeSeriesLoaded({
-            request: expectedRequests[1],
-            response: sampleBackendResponses[1],
+            requestResponses: [
+              {
+                request: expectedRequests[0],
+                response: sampleBackendResponses[0],
+              },
+              {
+                request: expectedRequests[1],
+                response: sampleBackendResponses[1],
+              },
+            ],
           }),
         ]);
       });

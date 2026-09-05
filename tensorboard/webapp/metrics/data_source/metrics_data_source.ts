@@ -30,6 +30,7 @@ import {
 import {
   ImageId,
   isSampledPlugin,
+  isFailedTimeSeriesResponse,
   isSingleRunPlugin,
   MetricsDataSource,
   MultiRunTimeSeriesRequest,
@@ -212,103 +213,165 @@ export class TBMetricsDataSource implements MetricsDataSource {
   }
 
   /**
-   * TODO(psybuzz): we only request 1 at a time, consider updating the backend to
-   * take a BackendTimeSeriesRequest instead of an array.
+   * Fetches all requested cards in one HTTP request per experiment.
+   *
+   * The backend accepts an array of requests, so batching here avoids paying
+   * connection, parsing, and scheduling overhead once per visible card.
    */
   fetchTimeSeries(requests: TimeSeriesRequest[]) {
-    const fetches = requests.map((request) => {
-      // One single-run request.
+    if (!requests.length) {
+      return forkJoin([]);
+    }
+
+    type BackendRequestEntry = {
+      requestIndex: number;
+      experimentId: string;
+      backendRequest: BackendTimeSeriesRequest;
+    };
+    type BackendResponseEntry = BackendRequestEntry & {
+      backendResponse: BackendTimeSeriesResponse;
+    };
+
+    const backendEntries: BackendRequestEntry[] = [];
+    for (const [requestIndex, request] of requests.entries()) {
       if (isSingleRunPlugin(request.plugin)) {
         const {runId, ...requestRest} = request as SingleRunTimeSeriesRequest;
         const {run, experimentId} = parseRunId(runId);
-        const backendRequest = {...requestRest, run};
-        return this.fetchTimeSeriesBackendRequest(
-          backendRequest,
+        backendEntries.push({
+          requestIndex,
+          experimentId,
+          backendRequest: {...requestRest, run},
+        });
+        continue;
+      }
+
+      const {experimentIds, runIds, ...requestRest} =
+        request as MultiRunTimeSeriesRequest;
+      if (!experimentIds.length) {
+        return forkJoin([]);
+      }
+
+      const experimentIdSet = new Set(experimentIds);
+      const runsByExperiment = new Map<string, string[]>();
+      if (runIds) {
+        for (const runId of runIds) {
+          const {run, experimentId} = parseRunId(runId);
+          if (!experimentIdSet.has(experimentId)) {
+            continue;
+          }
+          const runs = runsByExperiment.get(experimentId) || [];
+          runs.push(run);
+          runsByExperiment.set(experimentId, runs);
+        }
+      }
+
+      for (const experimentId of experimentIds) {
+        const backendRequest: BackendTimeSeriesRequest = {...requestRest};
+        if (runIds) {
+          const runs = runsByExperiment.get(experimentId);
+          if (!runs?.length) {
+            continue;
+          }
+          backendRequest.runs = runs;
+        }
+        backendEntries.push({requestIndex, experimentId, backendRequest});
+      }
+    }
+
+    const entriesByExperiment = new Map<string, BackendRequestEntry[]>();
+    for (const entry of backendEntries) {
+      const entries = entriesByExperiment.get(entry.experimentId) || [];
+      entries.push(entry);
+      entriesByExperiment.set(entry.experimentId, entries);
+    }
+
+    const fetches = Array.from(entriesByExperiment.entries()).map(
+      ([experimentId, entries]) => {
+        return this.fetchTimeSeriesBackendRequests(
+          entries.map((entry) => entry.backendRequest),
           experimentId
         ).pipe(
-          map(({response, experimentId}) => {
-            return buildFrontendTimeSeriesResponse(response, experimentId);
+          map((backendResponses) => {
+            if (backendResponses.length !== entries.length) {
+              throw new Error(
+                `Expected ${entries.length} time series responses, got ${backendResponses.length}`
+              );
+            }
+            return entries.map((entry, index) => ({
+              ...entry,
+              backendResponse: backendResponses[index],
+            }));
           })
         );
       }
+    );
 
-      // One multi-run request generates many responses with different
-      // 'runToSeries', 'error' fields. Combine them into one.
-      const {experimentIds, runIds, ...requestRest} =
-        request as MultiRunTimeSeriesRequest;
-      // `runIds`, when set, limits the request to those runs. Runs are
-      // grouped by experiment; experiments without a requested run are not
-      // queried at all.
-      const perExperimentRequests = experimentIds.flatMap((experimentId) => {
-        const backendRequest: BackendTimeSeriesRequest = {...requestRest};
-        if (runIds) {
-          backendRequest.runs = [];
-          for (const runId of runIds) {
-            const parsed = parseRunId(runId);
-            if (parsed.experimentId === experimentId) {
-              backendRequest.runs.push(parsed.run);
-            }
+    const buildResponses = (
+      responseBatches: BackendResponseEntry[][]
+    ): TimeSeriesResponse[] => {
+      const entriesByRequest = requests.map(() => [] as BackendResponseEntry[]);
+      for (const batch of responseBatches) {
+        for (const entry of batch) {
+          entriesByRequest[entry.requestIndex].push(entry);
+        }
+      }
+
+      return requests.map((request, requestIndex) => {
+        const entries = entriesByRequest[requestIndex];
+        if (isSingleRunPlugin(request.plugin)) {
+          return buildFrontendTimeSeriesResponse(
+            entries[0].backendResponse,
+            entries[0].experimentId
+          );
+        }
+
+        const combinedResponse = {
+          plugin: request.plugin,
+          tag: request.tag,
+          ...(request.sample === undefined ? {} : {sample: request.sample}),
+        } as TimeSeriesResponse;
+        for (const entry of entries) {
+          if (combinedResponse.error) {
+            continue;
           }
-          if (!backendRequest.runs.length) {
-            return [];
+          const frontendResponse = buildFrontendTimeSeriesResponse(
+            entry.backendResponse,
+            entry.experimentId
+          );
+          if (isFailedTimeSeriesResponse(frontendResponse)) {
+            combinedResponse.error = frontendResponse.error;
+            combinedResponse.runToSeries = undefined;
+          } else {
+            combinedResponse.runToSeries = combinedResponse.runToSeries || {};
+            for (const run of Object.keys(frontendResponse.runToSeries)) {
+              combinedResponse.runToSeries[run] =
+                frontendResponse.runToSeries[run];
+            }
           }
         }
-        return [
-          this.fetchTimeSeriesBackendRequest(backendRequest, experimentId),
-        ];
+        if (!combinedResponse.error) {
+          combinedResponse.runToSeries = combinedResponse.runToSeries || {};
+        }
+        return combinedResponse;
       });
-      if (experimentIds.length && !perExperimentRequests.length) {
-        // No requested run belongs to any of the request's experiments. The
-        // request must still answer once, or its runs would load forever.
-        return of({...requestRest, runToSeries: {}} as TimeSeriesResponse);
-      }
-      return forkJoin(perExperimentRequests).pipe(
-        map((perExperimentResults) => {
-          const {runToSeries, error, ...responseRest} =
-            perExperimentResults[0].response;
-          const combinedResponse = responseRest as TimeSeriesResponse;
-          for (const {response, experimentId} of perExperimentResults) {
-            const frontendResponse = buildFrontendTimeSeriesResponse(
-              response,
-              experimentId
-            );
-            if (combinedResponse.error) {
-              continue;
-            }
-            const {runToSeries, error} = frontendResponse;
-            if (error) {
-              combinedResponse.error = error;
-              combinedResponse.runToSeries = undefined;
-            } else {
-              combinedResponse.runToSeries = combinedResponse.runToSeries || {};
-              for (const run of Object.keys(runToSeries!)) {
-                combinedResponse.runToSeries[run] = runToSeries![run];
-              }
-            }
-          }
-          return combinedResponse;
-        })
-      );
-    });
-    return forkJoin(fetches);
+    };
+
+    if (!fetches.length) {
+      return of(buildResponses([]));
+    }
+    return forkJoin(fetches).pipe(map(buildResponses));
   }
 
-  private fetchTimeSeriesBackendRequest(
-    backendRequest: BackendTimeSeriesRequest,
+  private fetchTimeSeriesBackendRequests(
+    backendRequests: BackendTimeSeriesRequest[],
     experimentId: string
-  ): Observable<{response: BackendTimeSeriesResponse; experimentId: string}> {
+  ) {
     const body = new FormData();
-    body.append('requests', JSON.stringify([backendRequest]));
-    return this.http
-      .post<BackendTimeSeriesResponse[]>(
-        `/experiment/${experimentId}/${HTTP_PATH_PREFIX}/timeSeries`,
-        body
-      )
-      .pipe(
-        map((responses: BackendTimeSeriesResponse[]) => {
-          return {response: responses[0], experimentId};
-        })
-      );
+    body.append('requests', JSON.stringify(backendRequests));
+    return this.http.post<BackendTimeSeriesResponse[]>(
+      `/experiment/${experimentId}/${HTTP_PATH_PREFIX}/timeSeries`,
+      body
+    );
   }
 
   imageUrl(imageId: ImageId): string {

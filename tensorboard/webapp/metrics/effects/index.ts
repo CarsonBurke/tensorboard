@@ -143,19 +143,36 @@ export class MetricsEffects implements OnInitEffects {
     );
   }
 
-  private fetchTimeSeries(request: TimeSeriesRequest) {
-    return this.metricsDataSource.fetchTimeSeries([request]).pipe(
+  private fetchTimeSeries(requests: TimeSeriesRequest[]) {
+    return this.metricsDataSource.fetchTimeSeries(requests).pipe(
       tap((responses: TimeSeriesResponse[]) => {
         const errors = responses.filter(isFailedTimeSeriesResponse);
         if (errors.length) {
           console.error('Time series response contained errors:', errors);
         }
-        this.store.dispatch(
-          actions.fetchTimeSeriesLoaded({request, response: responses[0]})
-        );
+
+        const requestResponses: Array<{
+          request: TimeSeriesRequest;
+          response: TimeSeriesResponse;
+        }> = [];
+        requests.forEach((request, index) => {
+          const response = responses[index];
+          if (response) {
+            requestResponses.push({request, response});
+          } else {
+            this.store.dispatch(actions.fetchTimeSeriesFailed({request}));
+          }
+        });
+        if (requestResponses.length) {
+          this.store.dispatch(
+            actions.fetchTimeSeriesLoaded({requestResponses})
+          );
+        }
       }),
       catchError(() => {
-        this.store.dispatch(actions.fetchTimeSeriesFailed({request}));
+        for (const request of requests) {
+          this.store.dispatch(actions.fetchTimeSeriesFailed({request}));
+        }
         return of(null);
       })
     );
@@ -175,11 +192,8 @@ export class MetricsEffects implements OnInitEffects {
     runSelection: Map<string, boolean>,
     refetchLoaded: boolean
   ) {
-    /**
-     * TODO(psybuzz): if 2 cards require the same data, we should dedupe instead of
-     * making 2 identical requests.
-     */
     const requests: TimeSeriesRequest[] = [];
+    const requestKeys = new Set<string>();
     for (const fetchInfo of fetchInfos) {
       const {plugin, tag, runId, sample, tagRunIds, runToLoadState} = fetchInfo;
       let partialRequest: TimeSeriesRequest;
@@ -203,23 +217,24 @@ export class MetricsEffects implements OnInitEffects {
       if (sample !== undefined) {
         partialRequest.sample = sample;
       }
-      requests.push(partialRequest);
+      const requestKey = JSON.stringify(partialRequest);
+      if (!requestKeys.has(requestKey)) {
+        requestKeys.add(requestKey);
+        requests.push(partialRequest);
+      }
     }
     if (!requests.length) {
       return EMPTY;
     }
 
-    // Fetch and handle responses.
+    // Fetch and handle all visible cards as one batch.
     return of(requests).pipe(
       tap((requests) => {
         this.store.dispatch(actions.multipleTimeSeriesRequested({requests}));
       }),
-      mergeMap((requests: TimeSeriesRequest[]) => {
-        const observables = requests.map((request) =>
-          this.fetchTimeSeries(request)
-        );
-        return merge(...observables);
-      })
+      mergeMap((requests: TimeSeriesRequest[]) =>
+        this.fetchTimeSeries(requests)
+      )
     );
   }
 

@@ -40,6 +40,7 @@ import {
   CardId,
   CardMetadata,
   CardUniqueInfo,
+  MinMaxStep,
   SCALARS_SMOOTHING_MAX,
   SCALARS_SMOOTHING_MIN,
   TOOLTIP_ROWS_LIMIT_MIN,
@@ -197,10 +198,13 @@ function buildNormalizedCardStepIndexMap(
   cardMetadataMap: CardMetadataMap,
   cardStepIndex: CardStepIndexMap,
   timeSeriesData: TimeSeriesData,
-  prevTimeSeriesData: TimeSeriesData
+  prevTimeSeriesData: TimeSeriesData,
+  cardIds?: ReadonlySet<CardId>
 ): CardStepIndexMap {
   const result = {...cardStepIndex};
-  for (const cardId in cardMetadataMap) {
+  const cardIdsToNormalize: Iterable<CardId> =
+    cardIds || (Object.keys(cardMetadataMap) as CardId[]);
+  for (const cardId of cardIdsToNormalize) {
     if (!cardMetadataMap.hasOwnProperty(cardId)) {
       continue;
     }
@@ -1139,39 +1143,53 @@ const reducer = createReducer(
     (
       state: MetricsState,
       {
-        request,
-        response,
-      }: {request: TimeSeriesRequest; response: TimeSeriesResponse}
+        requestResponses,
+      }: {
+        requestResponses: Array<{
+          request: TimeSeriesRequest;
+          response: TimeSeriesResponse;
+        }>;
+      }
     ): MetricsState => {
+      if (!requestResponses.length) {
+        return state;
+      }
+
       const nextStepMinMax = {...state.stepMinMax};
       const nextCardStateMap = {...state.cardStateMap};
-      // Update time series.
       const nextTimeSeriesData = {...state.timeSeriesData};
-      const {plugin, tag, runId, sample} = response;
-      nextTimeSeriesData[plugin] = createPluginDataWithLoadable(
-        nextTimeSeriesData,
-        plugin,
-        tag,
-        sample
-      ) as {};
+      const affectedDataIds = new Set<CardId>();
+      const scalarMinMaxByDataId = new Map<CardId, MinMaxStep>();
+      const affectedCardIds = new Set<CardId>();
 
-      const loadable = getTimeSeriesLoadable(
-        nextTimeSeriesData,
-        plugin,
-        tag,
-        sample
-      )!;
-      // The response only names the runs that had data. Every run that was
-      // requested must leave the LOADING state, or its card would show a
-      // spinner forever.
-      const requestedRunIds = getRequestedRunIds(request, state.tagMetadata);
-      if (isFailedTimeSeriesResponse(response)) {
-        loadable.runToLoadState = createRunToLoadState(
-          DataLoadState.FAILED,
-          requestedRunIds,
-          loadable.runToLoadState
-        );
-      } else {
+      for (const {request, response} of requestResponses) {
+        const {plugin, tag, runId, sample} = response;
+        nextTimeSeriesData[plugin] = createPluginDataWithLoadable(
+          nextTimeSeriesData,
+          plugin,
+          tag,
+          sample
+        ) as {};
+
+        const loadable = getTimeSeriesLoadable(
+          nextTimeSeriesData,
+          plugin,
+          tag,
+          sample
+        )!;
+        // The response only names the runs that had data. Every run that was
+        // requested must leave the LOADING state, or its card would show a
+        // spinner forever.
+        const requestedRunIds = getRequestedRunIds(request, state.tagMetadata);
+        if (isFailedTimeSeriesResponse(response)) {
+          loadable.runToLoadState = createRunToLoadState(
+            DataLoadState.FAILED,
+            requestedRunIds,
+            loadable.runToLoadState
+          );
+          continue;
+        }
+
         const runToSeries = response.runToSeries;
         loadable.runToSeries = {...loadable.runToSeries};
         loadable.runToLoadState = createRunToLoadState(
@@ -1190,39 +1208,72 @@ const reducer = createReducer(
             }
           }
         }
+
+        let cardMetadata: CardMetadata;
+        if (isSampledPlugin(plugin)) {
+          cardMetadata = {plugin, tag, runId: runId!, sample: sample!};
+        } else if (isSingleRunPlugin(plugin)) {
+          cardMetadata = {plugin, tag, runId: runId!};
+        } else {
+          cardMetadata = {plugin, tag, runId: null};
+        }
+        const dataId = getCardId(cardMetadata);
+        affectedDataIds.add(dataId);
+        affectedCardIds.add(dataId);
+        const pinnedId = state.cardToPinnedCopy.get(dataId);
+        if (pinnedId) {
+          affectedCardIds.add(pinnedId);
+        }
+        if (plugin === PluginType.SCALARS) {
+          const nextMinMax = generateScalarCardMinMaxStep(
+            loadable.runToSeries as RunToSeries<PluginType.SCALARS>
+          );
+          scalarMinMaxByDataId.set(dataId, nextMinMax);
+          nextCardStateMap[dataId] = {
+            ...nextCardStateMap[dataId],
+            dataMinMax: nextMinMax,
+          };
+          if (pinnedId) {
+            nextCardStateMap[pinnedId] = {
+              ...nextCardStateMap[pinnedId],
+              dataMinMax: nextMinMax,
+            };
+          }
+        }
       }
 
-      if (response.runToSeries && response.plugin === PluginType.SCALARS) {
-        const cardId = getCardId({plugin, tag, runId: null});
-        const nextMinMax = generateScalarCardMinMaxStep(
-          loadable.runToSeries as RunToSeries<PluginType.SCALARS>
-        );
-        nextCardStateMap[cardId] = {
-          ...nextCardStateMap[cardId],
-          dataMinMax: nextMinMax,
-        };
-        const pinnedId = state.cardToPinnedCopy.get(cardId);
-        if (pinnedId) {
-          nextCardStateMap[pinnedId] = {
-            ...nextCardStateMap[pinnedId],
+      for (const cardId in state.cardMetadataMap) {
+        if (!state.cardMetadataMap.hasOwnProperty(cardId)) {
+          continue;
+        }
+        const typedCardId = cardId as CardId;
+        const dataId = getCardId(state.cardMetadataMap[typedCardId]);
+        if (!affectedDataIds.has(dataId)) {
+          continue;
+        }
+        affectedCardIds.add(typedCardId);
+        const nextMinMax = scalarMinMaxByDataId.get(dataId);
+        if (nextMinMax) {
+          nextCardStateMap[typedCardId] = {
+            ...nextCardStateMap[typedCardId],
             dataMinMax: nextMinMax,
           };
         }
       }
 
-      const nextState: MetricsState = {
+      return {
         ...state,
         timeSeriesData: nextTimeSeriesData,
         cardStepIndex: buildNormalizedCardStepIndexMap(
           state.cardMetadataMap,
           state.cardStepIndex,
           nextTimeSeriesData,
-          state.timeSeriesData
+          state.timeSeriesData,
+          affectedCardIds
         ),
         stepMinMax: nextStepMinMax,
         cardStateMap: nextCardStateMap,
       };
-      return nextState;
     }
   ),
   on(actions.cardStepSliderChanged, (state, {cardId, stepIndex}) => {

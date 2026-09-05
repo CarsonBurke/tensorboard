@@ -179,8 +179,13 @@ export const fetchTimeSeriesFailed = createAction(
  * state of every run that was asked for.
  */
 export const fetchTimeSeriesLoaded = createAction(
-  '[Metrics] Fetch Time Series Response Loaded',
-  props<{request: TimeSeriesRequest; response: TimeSeriesResponse}>()
+  '[Metrics] Fetch Time Series Responses Loaded',
+  props<{
+    requestResponses: Array<{
+      request: TimeSeriesRequest;
+      response: TimeSeriesResponse;
+    }>;
+  }>()
 );
 
 export const unusedTimeSeriesPurged = createAction(

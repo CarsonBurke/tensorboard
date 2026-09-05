@@ -1583,51 +1583,63 @@ describe('metrics reducers', () => {
       let nextState = reducers(
         beforeState,
         actions.fetchTimeSeriesLoaded({
-          request: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            experimentIds: ['exp1'],
-            runIds: ['run1'],
-          },
-          response: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            runToSeries: {run1: createScalarStepData()},
-          },
+          requestResponses: [
+            {
+              request: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
+              response: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                runToSeries: {run1: createScalarStepData()},
+              },
+            },
+          ],
         })
       );
       nextState = reducers(
         nextState,
         actions.fetchTimeSeriesLoaded({
-          request: {
-            plugin: PluginType.HISTOGRAMS,
-            tag: 'tagB',
-            runId: 'run1',
-          },
-          response: {
-            plugin: PluginType.HISTOGRAMS,
-            tag: 'tagB',
-            runId: 'run1',
-            runToSeries: {run1: createHistogramStepData()},
-          },
+          requestResponses: [
+            {
+              request: {
+                plugin: PluginType.HISTOGRAMS,
+                tag: 'tagB',
+                runId: 'run1',
+              },
+              response: {
+                plugin: PluginType.HISTOGRAMS,
+                tag: 'tagB',
+                runId: 'run1',
+                runToSeries: {run1: createHistogramStepData()},
+              },
+            },
+          ],
         })
       );
       nextState = reducers(
         nextState,
         actions.fetchTimeSeriesLoaded({
-          request: {
-            plugin: PluginType.IMAGES,
-            tag: 'tagC',
-            runId: 'run1',
-            sample,
-          },
-          response: {
-            plugin: PluginType.IMAGES,
-            tag: 'tagC',
-            runId: 'run1',
-            sample,
-            runToSeries: {run1: createImageStepData()},
-          },
+          requestResponses: [
+            {
+              request: {
+                plugin: PluginType.IMAGES,
+                tag: 'tagC',
+                runId: 'run1',
+                sample,
+              },
+              response: {
+                plugin: PluginType.IMAGES,
+                tag: 'tagC',
+                runId: 'run1',
+                sample,
+                runToSeries: {run1: createImageStepData()},
+              },
+            },
+          ],
         })
       );
       expect(nextState.timeSeriesData).toEqual({
@@ -1733,13 +1745,12 @@ describe('metrics reducers', () => {
           },
         },
       ];
-      let nextState = beforeState;
-      for (const {request, response} of [...goodResponses, ...badResponses]) {
-        nextState = reducers(
-          nextState,
-          actions.fetchTimeSeriesLoaded({request, response})
-        );
-      }
+      const nextState = reducers(
+        beforeState,
+        actions.fetchTimeSeriesLoaded({
+          requestResponses: [...goodResponses, ...badResponses],
+        })
+      );
       expect(nextState.timeSeriesData).toEqual({
         scalars: {
           tagA: {
@@ -1793,12 +1804,16 @@ describe('metrics reducers', () => {
       nextState = reducers(
         nextState,
         actions.fetchTimeSeriesLoaded({
-          request,
-          response: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            runToSeries: {run1: createScalarStepData()},
-          },
+          requestResponses: [
+            {
+              request,
+              response: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                runToSeries: {run1: createScalarStepData()},
+              },
+            },
+          ],
         })
       );
 
@@ -2600,17 +2615,21 @@ describe('metrics reducers', () => {
         };
 
         const action = actions.fetchTimeSeriesLoaded({
-          request: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            experimentIds: ['exp1'],
-            runIds: ['run1'],
-          },
-          response: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            runToSeries: {run1: createScalarStepSeries(5)},
-          },
+          requestResponses: [
+            {
+              request: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
+              response: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                runToSeries: {run1: createScalarStepSeries(5)},
+              },
+            },
+          ],
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
@@ -2637,17 +2656,21 @@ describe('metrics reducers', () => {
 
         const newStepCount = 10;
         const action = actions.fetchTimeSeriesLoaded({
-          request: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            experimentIds: ['exp1'],
-            runIds: ['run1'],
-          },
-          response: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            runToSeries: {run1: createScalarStepSeries(newStepCount)},
-          },
+          requestResponses: [
+            {
+              request: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
+              response: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                runToSeries: {run1: createScalarStepSeries(newStepCount)},
+              },
+            },
+          ],
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
@@ -2675,20 +2698,24 @@ describe('metrics reducers', () => {
         };
 
         const action = actions.fetchTimeSeriesLoaded({
-          request: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            experimentIds: ['exp1'],
-            runIds: ['run1', 'run2'],
-          },
-          response: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            runToSeries: {
-              run1: createScalarStepSeries(1),
-              run2: createScalarStepSeries(3),
+          requestResponses: [
+            {
+              request: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1', 'run2'],
+              },
+              response: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                runToSeries: {
+                  run1: createScalarStepSeries(1),
+                  run2: createScalarStepSeries(3),
+                },
+              },
             },
-          },
+          ],
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
@@ -2710,20 +2737,24 @@ describe('metrics reducers', () => {
         };
 
         const action = actions.fetchTimeSeriesLoaded({
-          request: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            experimentIds: ['exp1'],
-            runIds: ['run1', 'run2'],
-          },
-          response: {
-            plugin: PluginType.SCALARS,
-            tag: 'tagA',
-            runToSeries: {
-              run1: createScalarStepSeries(1),
-              run2: createScalarStepSeries(3),
+          requestResponses: [
+            {
+              request: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1', 'run2'],
+              },
+              response: {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                runToSeries: {
+                  run1: createScalarStepSeries(1),
+                  run2: createScalarStepSeries(3),
+                },
+              },
             },
-          },
+          ],
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
