@@ -329,14 +329,19 @@ impl<T, C: ReservoirControl> StageReservoir<T, C> {
     /// records that are actually committed. The basin should initially be empty and should be
     /// modified only by calls to `commit`/`commit_map` on this reservoir.
     pub fn commit_map<S, F: FnMut(T) -> S>(&mut self, basin: &mut Basin<S>, mut f: F) {
-        let mut keep_steps = self.committed_steps.iter().peekable();
-        basin.0.retain(|(s, _)| match keep_steps.peek() {
-            Some(t) if *s == **t => {
-                keep_steps.next();
-                true
-            }
-            _ => false,
-        });
+        // Between commits, committed_steps can only lose entries. Equal lengths
+        // therefore mean that no committed values were evicted. In particular,
+        // idle reloads and append-only commits need not scan the existing basin.
+        if basin.0.len() != self.committed_steps.len() {
+            let mut keep_steps = self.committed_steps.iter().peekable();
+            basin.0.retain(|(s, _)| match keep_steps.peek() {
+                Some(t) if *s == **t => {
+                    keep_steps.next();
+                    true
+                }
+                _ => false,
+            });
+        }
         self.committed_steps
             .extend(self.staged_items.iter().map(|(step, _)| *step));
         basin
@@ -377,6 +382,31 @@ mod tests {
     /// Extracts the steps from a basin. Convenient for tests.
     fn steps<T>(basin: &Basin<T>) -> Vec<Step> {
         basin.as_slice().iter().map(|(s, _)| *s).collect()
+    }
+
+    #[test]
+    fn test_idle_append_and_replacement_commits() {
+        let mut rsv = StageReservoir::new(Capacity::Unbounded);
+        let mut basin = Basin::new();
+        rsv.commit_map(&mut basin, |_: &str| panic!("empty commit mapped a value"));
+        rsv.offer(Step(1), "first");
+        rsv.commit(&mut basin);
+        for _ in 0..3 {
+            rsv.commit_map(&mut basin, |_| panic!("idle commit mapped a value"));
+            assert_eq!(basin.as_slice(), &[(Step(1), "first")]);
+        }
+        rsv.offer(Step(2), "second");
+        rsv.commit(&mut basin);
+        assert_eq!(basin.as_slice(), &[(Step(1), "first"), (Step(2), "second")]);
+        rsv.offer(Step(2), "replacement");
+        rsv.commit(&mut basin);
+        assert_eq!(
+            basin.as_slice(),
+            &[(Step(1), "first"), (Step(2), "replacement")]
+        );
+        rsv.offer(Step(0), "restart");
+        rsv.commit(&mut basin);
+        assert_eq!(basin.as_slice(), &[(Step(0), "restart")]);
     }
 
     #[test]

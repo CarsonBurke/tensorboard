@@ -89,7 +89,7 @@ impl<V> TimeSeries<V> {
     }
 
     /// Gets an iterator over `self.values` that omits `DataLoss` points.
-    pub fn valid_values(&self) -> impl Iterator<Item = (Step, WallTime, &V)> {
+    pub fn valid_values(&self) -> impl DoubleEndedIterator<Item = (Step, WallTime, &V)> {
         self.basin
             .as_slice()
             .iter()
@@ -146,6 +146,13 @@ mod tests {
                 // missing: Step(3)
                 (Step(5), wall_time, &"five")
             ]
+        );
+        // Latest-only reads must skip trailing corrupt records, too.
+        rsv.offer(Step(6), "three");
+        rsv.commit_map(&mut ts.basin, |_| (wall_time, Err(DataLoss)));
+        assert_eq!(
+            ts.valid_values().next_back(),
+            Some((Step(5), wall_time, &"five"))
         );
     }
 }

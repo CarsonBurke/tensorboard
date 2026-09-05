@@ -18,6 +18,20 @@ limitations under the License.
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
+/// Downsamples valid time-series values without traversing the entire series for
+/// empty or latest-only requests. Uses the same samples as [`downsample`].
+pub fn downsample_valid<T>(mut values: impl DoubleEndedIterator<Item = T>, k: usize) -> Vec<T> {
+    match k {
+        0 => Vec::new(),
+        1 => values.next_back().into_iter().collect(),
+        _ => {
+            let mut points = values.collect();
+            downsample(&mut points, k);
+            points
+        }
+    }
+}
+
 /// Downsamples `xs` in place to contain at most `k` elements, always including the last element.
 ///
 /// If `k == 0`, then `xs` is cleared. If `k >= xs.len()`, then `xs` is returned unchanged.
@@ -57,6 +71,28 @@ pub fn downsample<T>(xs: &mut Vec<T>, k: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_downsample_valid_matches_collected_samples() {
+        for n in 0..40 {
+            for k in 0..45 {
+                let valid = (0..n).filter(|x| x % 3 != 1);
+                let mut expected = valid.clone().collect();
+                downsample(&mut expected, k);
+                assert_eq!(downsample_valid(valid, k), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_latest_and_empty_reads_do_not_scan_history() {
+        let mut visited = 0;
+        let values = (0..10000).inspect(|_| visited += 1);
+        assert_eq!(downsample_valid(values, 1), vec![9999]);
+        assert_eq!(visited, 1);
+        let values = (0..10000).inspect(|_| panic!("empty read traversed history"));
+        assert!(downsample_valid(values, 0).is_empty());
+    }
 
     /// Clones `xs` and [`downsample`]s the result to `k` elements.
     fn downsample_cloned<T: Clone>(xs: &[T], k: usize) -> Vec<T> {
