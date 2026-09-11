@@ -398,6 +398,14 @@ class TensorBoardInfoIoTest(tb_test.TestCase):
         remove_info(2)
         self.assertCountEqual(manager.get_all(), [])
 
+    def test_get_all_ignores_non_files(self):
+        with mock.patch("os.getpid", lambda: 76540):
+            manager.write_info_file(_make_info())
+        os.mkdir(os.path.join(self.info_dir, "subdir"))
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(os.path.join(self.info_dir, "fifo"))
+        self.assertCountEqual(manager.get_all(), [_make_info()])
+
     def test_get_all_ignores_bad_files(self):
         with open(os.path.join(self.info_dir, "pid-1234.info"), "w") as outfile:
             outfile.write("good luck parsing this\n")

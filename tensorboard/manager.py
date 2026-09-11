@@ -301,13 +301,18 @@ def get_all():
     results = []
     for filename in os.listdir(info_dir):
         filepath = os.path.join(info_dir, filename)
+        if not os.path.isfile(filepath):
+            # Silently ignore subdirectories, FIFOs, sockets, and other
+            # non-regular files; opening a FIFO would block indefinitely.
+            continue
         try:
             with open(filepath) as infile:
                 contents = infile.read()
         except IOError as e:
-            if e.errno == errno.EACCES:
+            if e.errno in (errno.EACCES, errno.ENOENT, errno.EISDIR):
                 # May have been written by this module in a process whose
-                # `umask` includes some bits of 0o444.
+                # `umask` includes some bits of 0o444; or removed by an
+                # exiting peer between `listdir` and `open`.
                 continue
             else:
                 raise
