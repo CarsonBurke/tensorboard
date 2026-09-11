@@ -173,7 +173,7 @@ class AudioPlugin(base_plugin.TBPlugin):
         content_type = self._get_mime_type(ctx, experiment, run, tag)
         response = []
         for datum in audio:
-            if len(datum.values) < sample:
+            if len(datum.values) <= sample:
                 continue
             query = urllib.parse.urlencode(
                 {

@@ -202,6 +202,30 @@ class AudioPluginTest(tf.test.TestCase):
         self.assertEqual(1, entry["step"])
         urllib.parse.parse_qs(entry["query"])  # should parse
 
+    def testAudioResponseOmitsStepsWithExactlySampleClips(self):
+        """Steps with exactly `sample` clips are omitted, not an error."""
+        from tensorboard.data import provider as data_provider_lib
+
+        blob = data_provider_lib.BlobReference("key")
+        datum = data_provider_lib.BlobSequenceDatum(
+            step=0, wall_time=0.0, values=(blob,)
+        )
+
+        class StubProvider:
+            def read_blob_sequences(self, *args, **kwargs):
+                return {"run": {"tag": [datum]}}
+
+        context = base_plugin.TBContext(data_provider=StubProvider())
+        plugin = audio_plugin.AudioPlugin(context)
+        plugin._get_mime_type = lambda *args: "audio/wav"
+        # The single step holds exactly 1 clip; sample=1 indexes one past
+        # the end unless such steps are omitted.
+        response = plugin._audio_response_for_run(None, "", "run", "tag", 1)
+        self.assertEqual([], response)
+        # Sanity check: sample=0 still returns the step.
+        response = plugin._audio_response_for_run(None, "", "run", "tag", 0)
+        self.assertLen(response, 1)
+
     def testOldStyleIndividualAudioRoute(self):
         """Tests fetching an individual audio clip from an old-style
         summary."""
