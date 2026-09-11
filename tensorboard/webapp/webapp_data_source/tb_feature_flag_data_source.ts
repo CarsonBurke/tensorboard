@@ -96,7 +96,11 @@ export class FeatureFlagOverrideDataSource implements TBFeatureFlagDataSource {
       return {};
     }
 
-    return JSON.parse(currentState) as Partial<FeatureFlags>;
+    try {
+      return JSON.parse(currentState) as Partial<FeatureFlags>;
+    } catch {
+      return {};
+    }
   }
 
   protected getPartialFeaturesFromMediaQuery(): {

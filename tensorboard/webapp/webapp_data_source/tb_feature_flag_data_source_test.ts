@@ -229,6 +229,12 @@ describe('tb_feature_flag_data_source', () => {
           'tb_feature_flag_storage_key'
         );
       });
+
+      it('returns an empty object when localStorage holds malformed JSON', () => {
+        spyOn(localStorage, 'getItem').and.returnValue('{bad json');
+
+        expect(dataSource.getPersistentFeatureFlags()).toEqual({});
+      });
     });
 
     describe('resetPersistedFeatureFlag', () => {
