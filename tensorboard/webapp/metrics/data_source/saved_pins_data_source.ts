@@ -51,7 +51,17 @@ export class SavedPinsDataSource {
   getSavedScalarPins(): Tag[] {
     const savedPins = window.localStorage.getItem(SAVED_SCALAR_PINS_KEY);
     if (savedPins) {
-      return JSON.parse(savedPins) as Tag[];
+      try {
+        const parsed = JSON.parse(savedPins) as unknown;
+        if (
+          Array.isArray(parsed) &&
+          parsed.every((pin) => typeof pin === 'string')
+        ) {
+          return parsed;
+        }
+      } catch {
+        // Corrupt value: fall through to return [].
+      }
     }
     return [];
   }

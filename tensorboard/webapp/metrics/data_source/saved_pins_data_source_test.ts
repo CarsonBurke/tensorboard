@@ -65,6 +65,18 @@ describe('SavedPinsDataSource Test', () => {
 
       expect(result).toEqual([]);
     });
+
+    it('returns empty list if the stored value is malformed JSON', () => {
+      mockStorage[SAVED_SCALAR_PINS_KEY] = '{bad json';
+
+      expect(dataSource.getSavedScalarPins()).toEqual([]);
+    });
+
+    it('returns empty list if the stored value is not a string array', () => {
+      mockStorage[SAVED_SCALAR_PINS_KEY] = '123';
+
+      expect(dataSource.getSavedScalarPins()).toEqual([]);
+    });
   });
 
   describe('saveScalarPin', () => {
