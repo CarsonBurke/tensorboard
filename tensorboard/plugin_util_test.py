@@ -206,6 +206,14 @@ class MarkdownsToSafeHTMLTest(tb_test.TestCase):
         expected = "&lt;script&gt;alert('unsafe!')&lt;/script&gt;<p>safe</p>"
         self.assertEqual(actual, expected)
 
+    def test_reference_definitions_do_not_leak_across_calls(self):
+        first = plugin_util.markdown_to_safe_html(
+            "[a]: https://example.com/x"
+        )
+        self.assertNotIn("example.com", first)
+        second = plugin_util.markdown_to_safe_html("[a]")
+        self.assertNotIn("example.com", second)
+
 
 class ContextTest(tb_test.TestCase):
     def test_context(self):

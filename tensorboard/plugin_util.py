@@ -153,6 +153,10 @@ def markdowns_to_safe_html(markdown_strings, combine):
             # we were given a bad encoding.
             source = source_decoded.replace("\x00", "")
             total_null_bytes += len(source_decoded) - len(source)
+        # Reset the cached converter: `Markdown.convert` keeps state
+        # (e.g. reference definitions) that must not leak from one
+        # document into the next.
+        _MARKDOWN_STORE.markdown.reset()
         unsafe_html = _MARKDOWN_STORE.markdown.convert(source)
         unsafe_htmls.append(unsafe_html)
 
