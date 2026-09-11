@@ -553,6 +553,39 @@ describe('data table', () => {
     });
   });
 
+  it('cleans up drag state when drag ends outside any header', () => {
+    const fixture = createComponent({
+      headers: [
+        {
+          type: ColumnHeaderType.VALUE,
+          name: 'value',
+          displayName: 'Value',
+          enabled: true,
+        },
+        {
+          type: ColumnHeaderType.STEP,
+          name: 'step',
+          displayName: 'Step',
+          enabled: true,
+        },
+      ],
+    });
+    fixture.detectChanges();
+    const headerElements = fixture.debugElement.queryAll(
+      By.directive(HeaderCellComponent)
+    );
+
+    headerElements[0].query(By.css('.cell')).triggerEventHandler('dragstart');
+    // Drop outside any header: no dragenter, so nothing is highlighted.
+    headerElements[0].query(By.css('.cell')).triggerEventHandler('dragend');
+    fixture.detectChanges();
+
+    expect(orderColumnsSpy).not.toHaveBeenCalled();
+    expect(
+      fixture.componentInstance.dataTable.draggingHeaderName
+    ).toBeUndefined();
+  });
+
   it('does not emit orderColumns when dragging between column groups', () => {
     const fixture = createComponent({
       headers: [

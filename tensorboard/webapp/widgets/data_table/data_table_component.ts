@@ -184,11 +184,14 @@ export class DataTableComponent implements OnDestroy, AfterContentInit {
   }
 
   dragEnd() {
-    if (!this.draggingHeaderName || !this.highlightedColumnName) {
-      return;
-    }
-    const source = this.getHeaderByName(this.draggingHeaderName);
-    const destination = this.getHeaderByName(this.highlightedColumnName);
+    const source =
+      this.draggingHeaderName !== undefined
+        ? this.getHeaderByName(this.draggingHeaderName)
+        : undefined;
+    const destination =
+      this.highlightedColumnName !== undefined
+        ? this.getHeaderByName(this.highlightedColumnName)
+        : undefined;
     if (source && destination && source !== destination) {
       this.orderColumns.emit({
         source,
