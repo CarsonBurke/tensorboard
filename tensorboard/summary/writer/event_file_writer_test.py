@@ -122,6 +122,24 @@ class AsyncWriterTest(tb_test.TestCase):
         with open(filename, "rb") as f:
             self.assertEqual(f.read(), bytes_to_write)
 
+    def test_async_writer_flush_after_empty_write(self):
+        filename = os.path.join(
+            self.get_temp_dir(), "async_writer_flush_after_empty_write"
+        )
+        w = _AsyncWriter(open(filename, "wb"))
+        w.write(b"hello")
+        w.write(b"")
+        thread = threading.Thread(target=w.flush, daemon=True)
+        thread.start()
+        # 10 seconds is more than enough for flush() to return; on the
+        # buggy code it hangs forever because the empty payload is
+        # written but never marked done.
+        thread.join(timeout=10)
+        self.assertFalse(thread.is_alive())
+        w.close()
+        with open(filename, "rb") as f:
+            self.assertEqual(f.read(), b"hello")
+
     def test_write_after_async_writer_closed(self):
         filename = os.path.join(
             self.get_temp_dir(), "write_after_async_writer_closed"
