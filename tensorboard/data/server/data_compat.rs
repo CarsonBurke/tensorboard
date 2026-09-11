@@ -108,28 +108,27 @@ impl EventValue {
         match *value_box {
             pb::summary::value::Value::Tensor(tp) => Ok(tp),
             pb::summary::value::Value::Histo(hp) => {
-                // Migrate legacy TF 1.x HistogramProto to TensorProto. The "spec" in summary.proto
-                // says `bucket` and `bucket_limit` are parallel arrays encoding bucket counts and
-                // bucket right edges; the first bucket's left edge is assumed to be -DBL_MAX and
-                // subsequent left edges are defined as the right edge of the preceeding bucket.
-                //
-                // Our conversion logic in data_compat.py however disobeys this and instead sets the
-                // leftmost and rightmost edges to the `min` and `max` values, respectively. This
-                // will result in the outermost buckets having left edge > right edge if they were
-                // originally empty. Apparently the histogram visualization can't handle buckets
-                // extending to -/+ DBL_MAX, but can handle buckets of negative width?
-                //
-                // For consistency with the status quo, we replicate this questionable logic here.
+                // Migrate legacy TF 1.x HistogramProto to TensorProto, mirroring
+                // `_migrate_histogram_value` in data_compat.py: drop empty buckets on both
+                // ends and use `min`/`max` as the outer edges, so that no bucket is
+                // backwards (left edge > right edge). All-empty input yields zero buckets.
                 if hp.bucket.len() != hp.bucket_limit.len() {
                     return Err(DataLoss);
                 }
-                let num_buckets = hp.bucket.len();
-                // Skip the last `bucket_limit`; it gets replaced by `hp.max`. It's okay to ignore
-                // the edge case at 0 since `.zip()` will stop immediately in that case anyway.
-                let bucket_edges = &hp.bucket_limit[..usize::saturating_sub(num_buckets, 1)];
+                let counts = &hp.bucket;
+                let start = counts.iter().position(|&c| c > 0.0).unwrap_or(counts.len());
+                let end = counts.iter().rposition(|&c| c > 0.0).map_or(0, |i| i + 1);
+                let (bucket_counts, bucket_edges): (&[f64], &[f64]) = if start < end {
+                    // Keep only the "inner" edges of the remaining buckets:
+                    // `bucket_limit[i]` is the right-hand edge of `bucket[i]`.
+                    (&counts[start..end], &hp.bucket_limit[start..end - 1])
+                } else {
+                    (&[], &[])
+                };
+                let num_buckets = bucket_counts.len();
                 let bucket_lefts = iter::once(hp.min).chain(bucket_edges.iter().copied());
                 let bucket_rights = bucket_edges.iter().copied().chain(iter::once(hp.max));
-                let bucket_counts = hp.bucket.iter().copied();
+                let bucket_counts = bucket_counts.iter().copied();
                 let tensor_content = bucket_lefts
                     .zip(bucket_rights)
                     .zip(bucket_counts)
@@ -789,17 +788,18 @@ mod tests {
             assert_eq!(
                 v.into_tensor(&blank("histogram", pb::DataClass::Tensor)),
                 Ok(pb::TensorProto {
+                    // Empty buckets on both ends are dropped and the outer
+                    // edges are replaced with `min`/`max`, matching
+                    // `_migrate_histogram_value` in data_compat.py.
                     dtype: pb::DataType::DtDouble.into(),
-                    tensor_shape: Some(tensor_shape(&[6, 3])),
+                    tensor_shape: Some(tensor_shape(&[4, 3])),
                     tensor_content: {
                         #[rustfmt::skip]
                         let b = to_le_bytes![
-                            -1.999, -2.0, 0.0,
-                            -2.0, -1.0, 10.0,
+                            -1.999, -1.0, 10.0,
                             -1.0, 0.0, 20.0,
                             0.0, 1.0, 20.0,
-                            1.0, 2.0, 10.0,
-                            2.0, 1.999, 0.0f64
+                            1.0, 1.999, 10.0f64
                         ];
                         b
                     },
