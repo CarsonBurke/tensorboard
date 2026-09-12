@@ -95,10 +95,8 @@ limitations under the License.
       <mat-spinner diameter="36"></mat-spinner>
     </div>
     <ng-container *ngIf="cardObserver">
-      <!-- Always render the metrics-card-groups as a performance optimization--it makes view transition
-      from filtered view to card view quicker. -->
       <metrics-card-groups
-        [style.display]="showFilteredView ? 'none' : ''"
+        *ngIf="!showFilteredView"
         [cardObserver]="cardObserver"
       ></metrics-card-groups>
     </ng-container>

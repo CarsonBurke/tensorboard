@@ -69,50 +69,27 @@ describe('metrics_local_storage_data_source', () => {
     });
   });
 
-  it('prunes stale groups and inactive namespaces on sync', () => {
-    window.localStorage.setItem(
-      TEST_ONLY.METRICS_LOCAL_STORAGE_KEY,
-      JSON.stringify({
-        version: 1,
-        namespaces: {
-          namespace1: {
-            updatedAtMs: 1,
-            tagGroups: ['foo', 'old'],
-            tagGroupExpanded: {foo: true, old: true},
-            tagGroupPageIndex: {foo: 3, old: 9},
-          },
-          namespace2: {
-            updatedAtMs: 1,
-            tagGroups: ['other'],
-            tagGroupExpanded: {other: true},
-            tagGroupPageIndex: {other: 4},
-          },
-        },
-      })
-    );
-
-    const state = dataSource.getState('namespace1', ['foo']);
-    expect(state).toEqual({
-      tagGroupExpanded: new Map([['foo', true]]),
-      tagGroupPageIndex: new Map([['foo', 3]]),
-    });
-
-    dataSource.setState('namespace1', ['foo'], state);
-
-    const stored = JSON.parse(
-      window.localStorage.getItem(TEST_ONLY.METRICS_LOCAL_STORAGE_KEY)!
-    ) as {
-      namespaces: Record<
-        string,
-        {
-          tagGroupExpanded: Record<string, boolean>;
-          tagGroupPageIndex: Record<string, number>;
-        }
-      >;
+  it('preserves configured categories outside the current catalog window', () => {
+    const configured = {
+      tagGroupExpanded: new Map([
+        ['foo', false],
+        ['offscreen', true],
+      ]),
+      tagGroupPageIndex: new Map([
+        ['foo', 3],
+        ['offscreen', 9],
+      ]),
     };
-    expect(Object.keys(stored.namespaces)).toEqual(['namespace1']);
-    expect(stored.namespaces.namespace1.tagGroupExpanded).toEqual({foo: true});
-    expect(stored.namespaces.namespace1.tagGroupPageIndex).toEqual({foo: 3});
+    dataSource.setState('namespace1', ['foo', 'offscreen'], configured);
+    const offscreenState = new MetricsLocalStorageDataSource().getState(
+      'namespace1',
+      ['foo']
+    );
+    expect(offscreenState).toEqual(configured);
+    dataSource.setState('namespace1', [], offscreenState);
+    expect(
+      new MetricsLocalStorageDataSource().getState('namespace1', [])
+    ).toEqual(configured);
   });
 
   it('does not rewrite when active namespace state is unchanged', () => {

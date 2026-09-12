@@ -161,57 +161,117 @@ function updateThickPolylineGeometry(
   }
 
   const values = positionAttributes.array as Float32Array;
+  const halfThickness = thickness / 2;
+  // Extent of the vertices written below, tracked as they are written.
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
   for (let i = 0; i < numSegments; i++) {
-    const [x1, y1, x2, y2] = [
-      flatVec2[2 * i],
-      flatVec2[2 * i + 1],
-      flatVec2[2 * i + 2],
-      flatVec2[2 * i + 3],
-    ];
-    const startPointVec = new THREE.Vector2(x1, y1);
-    const endPointVec = new THREE.Vector2(x2, y2);
-    const segmentVec = new THREE.Vector2(x2 - x1, y2 - y1);
-    // Take the normal that is 90 degrees counterclockwise of the segment.
-    const normalVec = new THREE.Vector2(-segmentVec.y, segmentVec.x).setLength(
-      thickness / 2
-    );
-    const A = startPointVec.clone().add(normalVec);
-    const B = startPointVec.clone().sub(normalVec);
-    const C = endPointVec.clone().add(normalVec);
-    const D = endPointVec.clone().sub(normalVec);
+    const x1 = flatVec2[2 * i];
+    const y1 = flatVec2[2 * i + 1];
+    const x2 = flatVec2[2 * i + 2];
+    const y2 = flatVec2[2 * i + 3];
+    // The normal 90 degrees counterclockwise of the segment, with half the
+    // thickness as its length. Written out rather than built from vectors:
+    // every visible series rebuilds its geometry on each frame, and vector
+    // objects per segment dominated that work.
+    const segmentX = x2 - x1;
+    const segmentY = y2 - y1;
+    const segmentLength =
+      Math.sqrt(segmentX * segmentX + segmentY * segmentY) || 1;
+    const normalX = (-segmentY / segmentLength) * halfThickness;
+    const normalY = (segmentX / segmentLength) * halfThickness;
+
+    const ax = x1 + normalX;
+    const ay = y1 + normalY;
+    const bx = x1 - normalX;
+    const by = y1 - normalY;
+    const cx = x2 + normalX;
+    const cy = y2 + normalY;
+    const dx = x2 - normalX;
+    const dy = y2 - normalY;
 
     // Keep each face's vertices in counterclockwise order, to ensure normals
-    // point outwards from the screen.
-    const components = [
-      // A->B->C triangle.
-      A.x,
-      A.y,
-      0,
-      B.x,
-      B.y,
-      0,
-      C.x,
-      C.y,
-      0,
-      // C->B->D triangle.
-      C.x,
-      C.y,
-      0,
-      B.x,
-      B.y,
-      0,
-      D.x,
-      D.y,
-      0,
-    ];
-    values.set(components, i * components.length);
+    // point outwards from the screen. Coordinate z is left at zero.
+    const offset = i * 18;
+    // A->B->C triangle.
+    values[offset] = ax;
+    values[offset + 1] = ay;
+    values[offset + 3] = bx;
+    values[offset + 4] = by;
+    values[offset + 6] = cx;
+    values[offset + 7] = cy;
+    // C->B->D triangle.
+    values[offset + 9] = cx;
+    values[offset + 10] = cy;
+    values[offset + 12] = bx;
+    values[offset + 13] = by;
+    values[offset + 15] = dx;
+    values[offset + 16] = dy;
+
+    // A segment with a non-finite endpoint always degenerates its normal to
+    // NaN, so all six of its vertices carry a NaN component and rasterize to
+    // nothing. Leaving such a segment out of the extent keeps the sphere
+    // finite while still bounding every vertex that can draw.
+    if (
+      Number.isFinite(x1) &&
+      Number.isFinite(y1) &&
+      Number.isFinite(x2) &&
+      Number.isFinite(y2)
+    ) {
+      if (ax < minX) minX = ax;
+      if (bx < minX) minX = bx;
+      if (cx < minX) minX = cx;
+      if (dx < minX) minX = dx;
+      if (ax > maxX) maxX = ax;
+      if (bx > maxX) maxX = bx;
+      if (cx > maxX) maxX = cx;
+      if (dx > maxX) maxX = dx;
+      if (ay < minY) minY = ay;
+      if (by < minY) minY = by;
+      if (cy < minY) minY = cy;
+      if (dy < minY) minY = dy;
+      if (ay > maxY) maxY = ay;
+      if (by > maxY) maxY = by;
+      if (cy > maxY) maxY = cy;
+      if (dy > maxY) maxY = dy;
+    }
   }
 
   positionAttributes.needsUpdate = true;
   geometry.setDrawRange(0, numCoordinates);
   // Need to update the bounding sphere so renderer does not skip rendering
-  // this object because it is outside of the camera viewpoint (frustum).
-  geometry.computeBoundingSphere();
+  // this object because it is outside of the camera viewpoint (frustum). The
+  // extent is accumulated in the loop above instead of by
+  // `computeBoundingSphere`, which walks every expanded vertex twice more; at
+  // hundreds of series redrawn per frame those passes are the dominant cost.
+  // The extent covers exactly the vertices written above, which is exactly the
+  // draw range set here, and is rebuilt from scratch on every update, so an
+  // over-allocated buffer contributes no stale vertices.
+  // The sentinels survive only when no segment contributed a finite extent:
+  // an empty polyline, a single point, or nothing but non-finite coordinates.
+  // Those collapse to a zero-radius sphere at the origin, as
+  // `computeBoundingSphere` does for the first two; for the third it reports a
+  // NaN radius to the console, and such a line draws nothing either way.
+  const isBounded = minX <= maxX;
+  const centerX = isBounded ? (minX + maxX) / 2 : 0;
+  const centerY = isBounded ? (minY + maxY) / 2 : 0;
+  const spanX = isBounded ? maxX - minX : 0;
+  const spanY = isBounded ? maxY - minY : 0;
+  // Half the box diagonal: the smallest radius about the box center that is
+  // guaranteed to contain every corner.
+  const radius = Math.sqrt(spanX * spanX + spanY * spanY) / 2;
+  // Coordinate z is always zero, so the sphere is centered on the xy plane.
+  if (geometry.boundingSphere) {
+    geometry.boundingSphere.center.set(centerX, centerY, 0);
+    geometry.boundingSphere.radius = radius;
+  } else {
+    geometry.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(centerX, centerY, 0),
+      radius
+    );
+  }
 }
 
 /**
@@ -272,17 +332,18 @@ export class ThreeRenderer implements ObjectRenderer<CacheValue> {
   private backgroundColor: string = '#fff';
 
   constructor(
-    canvas: HTMLCanvasElement | OffscreenCanvas,
+    private readonly canvas: HTMLCanvasElement | OffscreenCanvas,
     private readonly coordinator: ThreeCoordinator,
     devicePixelRatio: number,
-    onContextLost?: EventListener
+    private readonly onContextLost?: EventListener
   ) {
     if (
       ChartUtils.isWebGl2OffscreenCanvasSupported() &&
       canvas instanceof OffscreenCanvas
     ) {
-      // THREE.js require the style object which Offscreen canvas lacks.
-      (canvas as any).style = (canvas as any).style || {};
+      // THREE.js requires a style object which OffscreenCanvas lacks.
+      const styleless = canvas as unknown as {style?: object};
+      styleless.style = styleless.style ?? {};
     }
     // WebGL contexts may be abandoned by the browser if too many contexts are
     // created on the same page.
@@ -303,7 +364,10 @@ export class ThreeRenderer implements ObjectRenderer<CacheValue> {
   }
 
   destroyObject(cacheValue: CacheValue): void {
-    const obj3d = cacheValue.obj3d;
+    this.releaseObject(cacheValue.obj3d);
+  }
+
+  private releaseObject(obj3d: THREE.Object3D): void {
     this.scene.remove(obj3d);
 
     if (obj3d instanceof THREE.Mesh) {
@@ -503,7 +567,23 @@ export class ThreeRenderer implements ObjectRenderer<CacheValue> {
   }
 
   dispose() {
+    // Objects normally leave the scene one frame at a time via
+    // `destroyObject`. Anything still in it holds GPU buffers, so release
+    // those before the renderer itself.
+    for (const obj3d of [...this.scene.children]) {
+      this.releaseObject(obj3d);
+    }
     this.renderer.dispose();
+    // `dispose` frees the GL objects but keeps the context, and a page may
+    // only hold a small number of them (16 in Chrome) before the browser
+    // starts abandoning the oldest. Charts are created and destroyed as
+    // cards mount, and this canvas is never reused, so drop the context too.
+    // The loss is deliberate, so stop reporting it as a renderer failure
+    // first; otherwise the owner would try to recover a discarded chart.
+    if (this.onContextLost) {
+      this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
+    }
+    this.renderer.forceContextLoss();
   }
 }
 

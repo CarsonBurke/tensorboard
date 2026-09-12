@@ -14,15 +14,17 @@
 # ==============================================================================
 """TensorBoard core plugin package."""
 
-
 import argparse
 import functools
 import gzip
 import io
+import json
 import mimetypes
 import posixpath
+import re
 import zipfile
 
+from werkzeug import exceptions
 from werkzeug import utils
 from werkzeug import wrappers
 
@@ -282,6 +284,95 @@ class CorePlugin(base_plugin.TBPlugin):
         """
         ctx = plugin_util.context(request.environ)
         experiment = plugin_util.experiment_id(request.environ)
+        if (
+            request.method == "POST"
+            or "limit" in request.args
+            or "offset" in request.args
+        ):
+            try:
+                if request.method == "POST":
+                    params = json.loads(request.get_data())
+                    if not isinstance(params, dict):
+                        raise ValueError("Expected a JSON object")
+                    offset = params.get("offset", 0)
+                    limit = params.get("limit", 0)
+                    descending = params.get("descending", False)
+                    session_ranks = params.get("session_ranks", [])
+                    default_rank = params.get("default_rank", 0)
+                    names = params.get("name") if "name" in params else None
+                    if "name" in params and (
+                        not isinstance(names, list)
+                        or any(not isinstance(name, str) for name in names)
+                    ):
+                        raise ValueError("Expected a name array of strings")
+                else:
+                    params = request.args
+                    offset = int(params.get("offset", "0"))
+                    limit = int(params.get("limit", "0"))
+                    descending = params.get("descending", "false")
+                    if descending not in ("true", "false"):
+                        raise ValueError("Invalid descending flag")
+                    descending = descending == "true"
+                    session_ranks = json.loads(
+                        params.get("session_ranks", "[]")
+                    )
+                    default_rank = int(params.get("default_rank", "0"))
+                    names = params.getlist("name") if "name" in params else None
+                query = params.get("query", "")
+                query_prefix = params.get("query_prefix", "")
+                sort_by = params.get("sort_by", "start_time")
+                if (
+                    type(offset) is not int
+                    or type(limit) is not int
+                    or not 0 <= offset < 2**64
+                    or not 0 <= limit < 2**64
+                    or not isinstance(query, str)
+                    or not isinstance(query_prefix, str)
+                    or sort_by not in ("name", "start_time", "session_rank")
+                    or type(descending) is not bool
+                ):
+                    raise ValueError("Invalid catalog page or ordering")
+                if (
+                    not isinstance(session_ranks, list)
+                    or any(
+                        not isinstance(entry, dict)
+                        or set(entry) != {"prefix", "rank"}
+                        or not isinstance(entry["prefix"], str)
+                        or type(entry["rank"]) is not int
+                        or not -(2**63) <= entry["rank"] < 2**63
+                        for entry in session_ranks
+                    )
+                    or type(default_rank) is not int
+                    or not -(2**63) <= default_rank < 2**63
+                ):
+                    raise ValueError("Invalid session ranks")
+                re.compile(query)
+            except (ValueError, re.error) as error:
+                raise exceptions.BadRequest(str(error)) from error
+            page = self._data_provider.list_runs_page(
+                ctx,
+                experiment_id=experiment,
+                query=query,
+                offset=offset,
+                limit=limit,
+                sort_by=sort_by,
+                descending=descending,
+                query_prefix=query_prefix,
+                session_ranks=session_ranks,
+                default_rank=default_rank,
+                names=names,
+            )
+            return http_util.Respond(
+                request,
+                {
+                    "runs": [
+                        {"name": run.run_name, "start_time": run.start_time}
+                        for run in page.runs
+                    ],
+                    "total": page.total,
+                },
+                "application/json",
+            )
         runs = sorted(
             self._data_provider.list_runs(ctx, experiment_id=experiment),
             key=lambda run: (

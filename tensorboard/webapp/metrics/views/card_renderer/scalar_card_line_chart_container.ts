@@ -22,7 +22,7 @@ import {
 } from '@angular/core';
 import {Store} from '@ngrx/store';
 import {Observable, of, Subject} from 'rxjs';
-import {map} from 'rxjs/operators';
+import {map, takeUntil} from 'rxjs/operators';
 import {State} from '../../../app_state';
 import {getForceSvgFeatureFlag} from '../../../feature_flag/store/feature_flag_selectors';
 import {
@@ -59,7 +59,7 @@ import {
   ScalarCardDataSeries,
   ScalarCardSeriesMetadataMap,
 } from './scalar_card_types';
-import {TimeSelectionView} from './utils';
+import {TimeSelectionView, ViewBoxCoalescer} from './utils';
 
 @Component({
   standalone: false,
@@ -128,6 +128,11 @@ export class ScalarCardLineChartContainer
           })
         );
     this.ngUnsubscribe = new Subject<void>();
+    this.viewBoxCoalescer = new ViewBoxCoalescer((userViewBox) => {
+      this.store.dispatch(
+        cardViewBoxChanged({userViewBox, cardId: this.cardId})
+      );
+    });
   }
 
   @Input() cardId!: CardId;
@@ -161,14 +166,22 @@ export class ScalarCardLineChartContainer
   readonly xScaleType$;
 
   private readonly ngUnsubscribe;
+  private readonly viewBoxCoalescer;
 
   ngOnInit() {
     this.userViewBox$ = this.store.select(
       getMetricsCardUserViewBox,
       this.cardId
     );
+    // The store stays the single source of truth for the rendered view box;
+    // the coalescer only needs it to recognize a pan that changed nothing.
+    this.userViewBox$
+      .pipe(takeUntil(this.ngUnsubscribe))
+      .subscribe((userViewBox) => {
+        this.viewBoxCoalescer.setStoreViewBox(userViewBox);
+      });
 
-    this.loadState$ = this.store.select(getMultiRunCardLoadState, this.cardId);
+    this.loadState$ = this.store.select(getMultiRunCardLoadState(this.cardId));
 
     this.rangeEnabled$ = this.store.select(
       getMetricsCardRangeSelectionEnabled(this.cardId)
@@ -176,6 +189,9 @@ export class ScalarCardLineChartContainer
   }
 
   ngOnDestroy() {
+    // Flushes an extent still waiting for its frame so a card torn down
+    // mid-gesture still records where the user left it.
+    this.viewBoxCoalescer.dispose();
     this.ngUnsubscribe.next();
     this.ngUnsubscribe.complete();
   }
@@ -196,11 +212,6 @@ export class ScalarCardLineChartContainer
   }
 
   onLineChartZoom(lineChartViewBox: Extent | null) {
-    this.store.dispatch(
-      cardViewBoxChanged({
-        userViewBox: lineChartViewBox,
-        cardId: this.cardId,
-      })
-    );
+    this.viewBoxCoalescer.push(lineChartViewBox);
   }
 }

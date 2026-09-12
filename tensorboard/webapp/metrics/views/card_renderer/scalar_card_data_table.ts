@@ -78,6 +78,16 @@ export class ScalarCardDataTable {
   readonly ColumnHeaderType = ColumnHeaderType;
   readonly AddColumnSize = AddColumnSize;
 
+  private tableData: TableData[] | null = null;
+
+  ngOnChanges() {
+    this.tableData = null;
+  }
+
+  trackByRow(index: number, row: TableData) {
+    return row.id;
+  }
+
   // Columns must be memoized to stop needless re-rendering of the content and headers in these
   // columns. This has been known to cause problems with the controls in these columns,
   // specifically the add button.
@@ -142,8 +152,9 @@ export class ScalarCardDataTable {
   }
 
   getTimeSelectionTableData(): TableData[] {
+    if (this.tableData !== null) return this.tableData;
     if (!this.stepOrLinkedTimeSelection) {
-      return [];
+      return (this.tableData = []);
     }
     const startStep = this.stepOrLinkedTimeSelection.start.step;
     const endStep = this.stepOrLinkedTimeSelection.end?.step;
@@ -152,7 +163,8 @@ export class ScalarCardDataTable {
         // A series without points has no row to show, and every column below
         // reads the point closest to the selection.
         return (
-          datum.points.length > 0 && isDatumVisible(datum, this.chartMetadataMap)
+          datum.points.length > 0 &&
+          isDatumVisible(datum, this.chartMetadataMap)
         );
       })
       .map((datum) => {
@@ -316,7 +328,7 @@ export class ScalarCardDataTable {
         return 0;
       });
     }
-    return dataTableData;
+    return (this.tableData = dataTableData);
   }
 
   private getSortableValue(point: TableData, header: ColumnHeader) {

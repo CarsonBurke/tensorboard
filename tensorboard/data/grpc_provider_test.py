@@ -61,6 +61,149 @@ class GrpcDataProviderTest(tb_test.TestCase):
             "epoch:1",
         )
 
+    def test_catalog_preserves_card_identity_and_qualified_metadata(self):
+        res = data_provider_pb2.MetricsCatalogResponse(
+            total_groups=1, group_offset=2, total_cards=4
+        )
+        res.groups.add(name="group", total_cards=4)
+        res.cards.add(plugin="scalars", tag="group/tag")
+        res.cards.add(
+            plugin="histograms", tag="group/tag", run_id="e/run/nested"
+        )
+        res.cards.add(
+            plugin="images",
+            tag="group/tag",
+            run_id="e/run/nested",
+            sample=0,
+            num_sample=2,
+        )
+        res.series.add(plugin="scalars", tag="group/tag", run_id="e/run/nested")
+        res.series.add(plugin="scalars", tag="group/tag", run_id="other/run")
+        res.series.add(
+            plugin="images",
+            tag="group/tag",
+            run_id="e/run/nested",
+            max_samples=2,
+        )
+        self.stub.ListMetricsCatalog.return_value = res
+        result = self.provider.list_metrics_catalog(
+            self.ctx,
+            request=dict(
+                runIds=["e/run/nested", "other/run"],
+                query="",
+                plugins=[],
+                groupOffset=2,
+                groupLimit=1,
+                groups=[dict(name="group", offset=0, limit=3)],
+                filteredOffset=0,
+                filteredLimit=0,
+                pinnedTags=[],
+                pinnedRunIds=[],
+            ),
+        )
+        self.assertEqual(
+            result["cards"],
+            [
+                dict(plugin="scalars", tag="group/tag"),
+                dict(
+                    plugin="histograms", tag="group/tag", runId="e/run/nested"
+                ),
+                dict(
+                    plugin="images",
+                    tag="group/tag",
+                    runId="e/run/nested",
+                    sample=0,
+                    numSample=2,
+                ),
+            ],
+        )
+        self.assertEqual(
+            result["metadata"]["scalars"]["tagToRuns"],
+            {"group/tag": ["e/run/nested", "other/run"]},
+        )
+        self.assertEqual(
+            result["metadata"]["images"]["tagRunSampledInfo"],
+            {"group/tag": {"e/run/nested": {"maxSamplesPerStep": 2}}},
+        )
+        self.assertEqual(result["totalCards"], 4)
+        self.assertEqual(result["groupOffset"], 2)
+
+    def test_catalog_older_server_keeps_exact_scope_and_card_windows(self):
+        self.stub.ListMetricsCatalog.side_effect = _grpc_error(
+            grpc.StatusCode.UNIMPLEMENTED, "unknown method"
+        )
+        scalars = data_provider_pb2.ListScalarsResponse()
+        for run, tags in (
+            ("run", ["train/2", "train/10", "train/future", "pinned/tag"]),
+            ("pin", ["pinned/tag", "unselected/tag"]),
+            ("unselected", ["train/1"]),
+        ):
+            entry = scalars.runs.add(run_name=run)
+            for tag in tags:
+                item = entry.tags.add(tag_name=tag)
+                if tag == "train/future":
+                    item.metadata.summary_metadata.plugin_data.content = (
+                        b"\x08\x01"
+                    )
+        self.stub.ListScalars.return_value = scalars
+        self.stub.ListTensors.return_value = (
+            data_provider_pb2.ListTensorsResponse()
+        )
+        self.stub.ListBlobSequences.return_value = (
+            data_provider_pb2.ListBlobSequencesResponse()
+        )
+        result = self.provider.list_metrics_catalog(
+            self.ctx,
+            request=dict(
+                runIds=["e/run"],
+                query="",
+                plugins=["scalars"],
+                groupOffset=0,
+                groupLimit=40,
+                groups=[dict(name="train", offset=1, limit=1)],
+                filteredOffset=0,
+                filteredLimit=0,
+                pinnedTags=["pinned/tag"],
+                pinnedRunIds=["e/pin"],
+            ),
+        )
+        self.assertEqual(
+            result["groups"],
+            [
+                dict(name="pinned", totalCards=1),
+                dict(name="train", totalCards=2),
+            ],
+        )
+        self.assertEqual(result["totalCards"], 3)
+        self.assertEqual(
+            result["cards"], [dict(plugin="scalars", tag="train/10")]
+        )
+        self.assertEqual(
+            result["metadata"]["scalars"]["tagToRuns"],
+            {"pinned/tag": ["e/pin", "e/run"], "train/10": ["e/run"]},
+        )
+
+    def test_catalog_does_not_fall_back_on_server_failures(self):
+        failure = _grpc_error(grpc.StatusCode.UNAVAILABLE, "server stopped")
+        self.stub.ListMetricsCatalog.side_effect = failure
+        with self.assertRaises(grpc.RpcError) as caught:
+            self.provider.list_metrics_catalog(
+                self.ctx,
+                request=dict(
+                    runIds=["e/run"],
+                    query="",
+                    plugins=[],
+                    groupOffset=0,
+                    groupLimit=40,
+                    groups=[],
+                    filteredOffset=0,
+                    filteredLimit=40,
+                    pinnedTags=[],
+                    pinnedRunIds=[],
+                ),
+            )
+        self.assertIs(caught.exception, failure)
+
     def test_scalar_columns_preserve_values_without_datum_objects(self):
         res = data_provider_pb2.ReadScalarsResponse()
         tag = res.runs.add(run_name="run").tags.add(tag_name="tag")
@@ -172,6 +315,26 @@ class GrpcDataProviderTest(tb_test.TestCase):
         req.experiment_id = "123"
         self.stub.ListRuns.assert_called_once_with(req)
 
+    def test_older_server_run_windows_apply_selection_before_pagination(self):
+        response = data_provider_pb2.ListRunsResponse()
+        for name in ("train/a", "train/b", "train/hidden", "other"):
+            response.runs.add(name=name, start_time=1)
+        self.stub.ListRuns.return_value = response
+        page = self.provider.list_runs_page(
+            self.ctx,
+            experiment_id="123",
+            sort_by="session_rank",
+            offset=1,
+            limit=1,
+            session_ranks=[
+                {"prefix": "train/", "rank": 0},
+                {"prefix": "train/hidden", "rank": -1},
+            ],
+            default_rank=-1,
+        )
+        self.assertEqual(page.total, 2)
+        self.assertEqual([run.run_name for run in page.runs], ["train/b"])
+
     def test_list_scalars(self):
         res = data_provider_pb2.ListScalarsResponse()
         run1 = res.runs.add(run_name="val")
@@ -229,6 +392,7 @@ class GrpcDataProviderTest(tb_test.TestCase):
         req.experiment_id = "123"
         req.plugin_filter.plugin_name = "scalars"
         req.run_tag_filter.tags.names.extend(["accuracy", "xent"])  # sorted
+        req.dedup_names = True
         self.stub.ListScalars.assert_called_once_with(req)
 
     def test_list_scalars_metadata_skips_statistics(self):
@@ -247,8 +411,114 @@ class GrpcDataProviderTest(tb_test.TestCase):
             experiment_id="123",
             plugin_filter=data_provider_pb2.PluginFilter(plugin_name="scalars"),
             skip_statistics=True,
+            dedup_names=True,
         )
         self.stub.ListScalars.assert_called_once_with(req)
+
+    def test_list_scalars_reads_deduped_names(self):
+        res = data_provider_pb2.ListScalarsResponse()
+        res.tag_names.extend(["accuracy", "xent"])
+        shared = res.summary_metadata_table.add()
+        shared.plugin_data.content = b"magic"
+        shared.summary_description = "hey"
+        res.summary_metadata_table.add().display_name = "Cross entropy"
+        run1 = res.runs.add(run_name="val")
+        run1.tags.add(tag_index=0).metadata.max_step = 7
+        entry = run1.tags.add(tag_index=1)
+        entry.metadata.max_step = 8
+        entry.metadata.summary_metadata_index = 1
+        res.runs.add(run_name="test").tags.add(tag_index=0)
+        self.stub.ListScalars.return_value = res
+
+        actual = self.provider.list_scalars(
+            self.ctx, experiment_id="123", plugin_name="scalars"
+        )
+
+        self.assertEqual(
+            actual,
+            {
+                "val": {
+                    "accuracy": provider.ScalarTimeSeries(
+                        max_step=7,
+                        max_wall_time=0.0,
+                        plugin_content=b"magic",
+                        description="hey",
+                        display_name="",
+                    ),
+                    "xent": provider.ScalarTimeSeries(
+                        max_step=8,
+                        max_wall_time=0.0,
+                        plugin_content=b"",
+                        description="",
+                        display_name="Cross entropy",
+                    ),
+                },
+                "test": {
+                    "accuracy": provider.ScalarTimeSeries(
+                        max_step=0,
+                        max_wall_time=0.0,
+                        plugin_content=b"magic",
+                        description="hey",
+                        display_name="",
+                    ),
+                },
+            },
+        )
+
+    def test_list_scalars_tag_index_deduped_and_inline_agree(self):
+        deduped = data_provider_pb2.ListScalarsResponse()
+        deduped.tag_names.extend(["accuracy", "xent"])
+        deduped.summary_metadata_table.add().plugin_data.content = b"v0"
+        described = deduped.summary_metadata_table.add()
+        described.plugin_data.content = b"v0"
+        described.summary_description = "Cross entropy"
+        run1 = deduped.runs.add(run_name="val")
+        run1.tags.add(tag_index=0)
+        run1.tags.add(tag_index=1).metadata.summary_metadata_index = 1
+        deduped.runs.add(run_name="test").tags.add(
+            tag_index=1
+        ).metadata.summary_metadata_index = 1
+
+        inline = data_provider_pb2.ListScalarsResponse()
+        run1 = inline.runs.add(run_name="val")
+        run1.tags.add(
+            tag_name="accuracy"
+        ).metadata.summary_metadata.plugin_data.content = b"v0"
+        xent = run1.tags.add(tag_name="xent").metadata.summary_metadata
+        xent.plugin_data.content = b"v0"
+        xent.summary_description = "Cross entropy"
+        xent2 = (
+            inline.runs.add(run_name="test")
+            .tags.add(tag_name="xent")
+            .metadata.summary_metadata
+        )
+        xent2.plugin_data.content = b"v0"
+        xent2.summary_description = "Cross entropy"
+
+        indices = []
+        for res in (deduped, inline):
+            self.stub.ListScalars.return_value = res
+            indices.append(
+                self.provider.list_scalars_tag_index(
+                    self.ctx, experiment_id="123", plugin_name="scalars"
+                )
+            )
+
+        for index in indices:
+            self.assertEqual(index.runs, ["val", "test"])
+            self.assertEqual(index.tags, ["accuracy", "xent"])
+            self.assertEqual(index.run_tags, [[0, 1], [1]])
+            self.assertEqual(
+                [
+                    [index.contents[c] for c in run_contents]
+                    for run_contents in index.run_contents
+                ],
+                [[b"v0", b"v0"], [b"v0"]],
+            )
+            self.assertEqual(
+                index.descriptions,
+                {(0, 1): "Cross entropy", (1, 1): "Cross entropy"},
+            )
 
     def test_read_scalars(self):
         res = data_provider_pb2.ReadScalarsResponse()

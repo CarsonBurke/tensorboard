@@ -15,9 +15,11 @@ limitations under the License.
 import {
   ChangeDetectionStrategy,
   Component,
+  EventEmitter,
   Input,
   OnDestroy,
   OnInit,
+  Output,
 } from '@angular/core';
 import {createSelector, Store} from '@ngrx/store';
 import {combineLatest, Observable, of, Subject} from 'rxjs';
@@ -25,6 +27,7 @@ import {
   distinctUntilChanged,
   filter,
   map,
+  pairwise,
   switchMap,
   take,
   takeUntil,
@@ -38,6 +41,7 @@ import {
 } from '../../../hparams';
 import {
   getCurrentColumnFilters,
+  getRenderableRuns,
   getFilteredRenderableRuns,
   getSelectableColumns,
 } from '../../../metrics/views/main_view/common_selectors';
@@ -68,8 +72,11 @@ import {
   runSelectionToggled,
   runSelectorRegexFilterChanged,
   runsTableSortingInfoChanged,
+  selectAllRuns,
   singleRunSelected,
+  runCatalogWindowChanged,
 } from '../../actions';
+import {getRunCatalog, getRunCatalogWindow} from '../../store/runs_selectors';
 import {MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT} from '../../store/runs_types';
 import {
   addRunStartTimeSortingMetadata,
@@ -105,6 +112,8 @@ const getRunsLoading = createSelector<
       [experimentIds]="experimentIds"
       [scrollTop]="scrollTop"
       [viewportHeight]="viewportHeight"
+      [catalog]="catalog$ | async"
+      (windowChanged)="onWindowChanged($event)"
       [regexFilter]="regexFilter$ | async"
       [loading]="loading$ | async"
       (sortDataBy)="sortDataBy($event)"
@@ -125,6 +134,7 @@ const getRunsLoading = createSelector<
       :host {
         display: flex;
         position: relative;
+        flex-direction: column;
       }
 
       tb-data-table {
@@ -138,6 +148,7 @@ const getRunsLoading = createSelector<
 export class RunsTableContainer implements OnInit, OnDestroy {
   sortedRunsTableData$: Observable<TableData[]> = of([]);
   loading$: Observable<boolean> | null = null;
+  catalog$ = this.store.select(getRunCatalog);
   sortingInfo$;
 
   // Column to disable in the table. The columns are rendered in the order as
@@ -148,6 +159,7 @@ export class RunsTableContainer implements OnInit, OnDestroy {
   @Input() experimentIds!: string[];
   @Input() scrollTop = 0;
   @Input() viewportHeight = 0;
+  @Output() scrollReset = new EventEmitter<void>();
 
   regexFilter$;
   runsColumns$;
@@ -174,26 +186,45 @@ export class RunsTableContainer implements OnInit, OnDestroy {
       hparamsSelectors.getNumDashboardHparamsToLoad
     );
     this.columnFilters$ = this.store.select(getCurrentColumnFilters);
-    this.allRunsTableData$ = this.store.select(getFilteredRenderableRuns).pipe(
-      map((filteredRenderableRuns) => {
-        return filteredRenderableRuns.map((runTableItem) => {
-          const tableData: TableData = {
-            ...Object.fromEntries(runTableItem.hparams.entries()),
-            id: runTableItem.run.id,
-            run: runTableItem.run.name,
-            experimentName: runTableItem.experimentName,
-            experimentAlias: runTableItem.experimentAlias,
-            selected: runTableItem.selected,
-            color: runTableItem.runColor,
-          };
-          return addRunStartTimeSortingMetadata(
-            tableData,
-            runTableItem.run.startTime
-          );
-        });
-      })
-    );
+    this.allRunsTableData$ = this.store
+      .select(
+        createSelector(
+          getFilteredRenderableRuns,
+          getRenderableRuns,
+          getRunCatalog,
+          (filtered, runs, catalog) => (catalog ? runs : filtered)
+        )
+      )
+      .pipe(
+        map((filteredRenderableRuns) => {
+          return filteredRenderableRuns.map((runTableItem) => {
+            const tableData: TableData = {
+              ...Object.fromEntries(runTableItem.hparams.entries()),
+              id: runTableItem.run.id,
+              run: runTableItem.run.name,
+              experimentName: runTableItem.experimentName,
+              experimentAlias: runTableItem.experimentAlias,
+              selected: runTableItem.selected,
+              color: runTableItem.runColor,
+            };
+            return addRunStartTimeSortingMetadata(
+              tableData,
+              runTableItem.run.startTime
+            );
+          });
+        })
+      );
     this.ngUnsubscribe = new Subject<void>();
+    this.store
+      .select(getRunCatalogWindow)
+      .pipe(
+        pairwise(),
+        filter(
+          ([previous, current]) => previous.offset > 0 && current.offset === 0
+        ),
+        takeUntil(this.ngUnsubscribe)
+      )
+      .subscribe(() => this.scrollReset.emit());
   }
 
   ngOnInit() {
@@ -204,9 +235,15 @@ export class RunsTableContainer implements OnInit, OnDestroy {
     this.sortedRunsTableData$ = combineLatest([
       this.allRunsTableData$,
       this.sortingInfo$,
+      this.catalog$,
     ]).pipe(
-      map(([items, sortingInfo]) => {
-        return sortTableDataItems(items, sortingInfo);
+      map(([items, sortingInfo, catalog]) => {
+        if (!catalog) return sortTableDataItems(items, sortingInfo);
+        const byId = new Map(items.map((item) => [item.id, item]));
+        return catalog.runIds.flatMap((id) => {
+          const item = byId.get(id);
+          return item ? [item] : [];
+        });
       })
     );
 
@@ -275,7 +312,12 @@ export class RunsTableContainer implements OnInit, OnDestroy {
     this.ngUnsubscribe.complete();
   }
 
+  onWindowChanged(window: {offset: number; limit: number}) {
+    this.store.dispatch(runCatalogWindowChanged(window));
+  }
+
   sortDataBy(sortingInfo: SortingInfo) {
+    this.scrollReset.emit();
     this.store.dispatch(runsTableSortingInfoChanged({sortingInfo}));
   }
 
@@ -330,14 +372,21 @@ export class RunsTableContainer implements OnInit, OnDestroy {
   }
 
   onAllSelectionToggle(runIds: string[]) {
-    this.store.dispatch(
-      runPageSelectionToggled({
-        runIds,
-      })
-    );
+    // In paged mode the table only holds one window of runs, so toggling
+    // exactly the emitted ids would leave every other page untouched. Resolve
+    // the full table scope first; without a catalog the emitted ids already
+    // cover every run.
+    this.catalog$.pipe(take(1)).subscribe((catalog) => {
+      if (!catalog) {
+        this.store.dispatch(runPageSelectionToggled({runIds}));
+        return;
+      }
+      this.store.dispatch(selectAllRuns());
+    });
   }
 
   onRegexFilterChange(regexString: string) {
+    this.scrollReset.emit();
     this.store.dispatch(runSelectorRegexFilterChanged({regexString}));
   }
 

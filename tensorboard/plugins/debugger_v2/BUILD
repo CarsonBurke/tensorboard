@@ -14,7 +14,7 @@ py_library(
     srcs = ["debug_data_multiplexer.py"],
     deps = [
         "//tensorboard:errors",
-        "//tensorboard:expect_tensorflow_installed",
+        # TensorFlow is optional; the multiplexer loads it only for debug events.
     ],
 )
 

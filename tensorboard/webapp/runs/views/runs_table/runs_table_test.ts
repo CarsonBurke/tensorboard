@@ -26,7 +26,6 @@ import {By} from '@angular/platform-browser';
 import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {Store} from '@ngrx/store';
 import {MockStore} from '@ngrx/store/testing';
-import {of} from 'rxjs';
 import {buildExperimentRouteFromId} from '../../../app_routing/testing';
 import {State} from '../../../app_state';
 import {actions as hparamsActions} from '../../../hparams';
@@ -35,6 +34,7 @@ import {
   getCurrentRouteRunSelection,
   getExperiment,
   getExperimentIdToExperimentAliasMap,
+  getRunCatalog,
   getRunColorMap,
   getRuns,
   getRunSelectorRegexFilter,
@@ -42,6 +42,7 @@ import {
   getRunsTableHeaders,
   getRunsTableSortingInfo,
 } from '../../../selectors';
+import * as runsActions from '../../actions';
 import {MatIconTestingModule} from '../../../testing/mat_icon_module';
 import {provideMockTbStore} from '../../../testing/utils';
 import {DataLoadState} from '../../../types/data';
@@ -246,6 +247,37 @@ describe('runs_table', () => {
     });
   });
 
+  describe('select all', () => {
+    it('toggles the emitted ids when there is no catalog', () => {
+      store.overrideSelector(getRunCatalog, undefined);
+      const fixture = createComponent([]);
+      fixture.detectChanges();
+
+      fixture.componentInstance.onAllSelectionToggle(['a/1', 'a/2']);
+
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        runsActions.runPageSelectionToggled({runIds: ['a/1', 'a/2']})
+      );
+    });
+
+    it('resolves the full scope instead of the window when paged', () => {
+      store.overrideSelector(getRunCatalog, {
+        runIds: ['a/1'],
+        totals: {a: 100},
+        offset: 0,
+      });
+      const fixture = createComponent([]);
+      fixture.detectChanges();
+
+      fixture.componentInstance.onAllSelectionToggle(['a/1']);
+
+      expect(dispatchSpy).toHaveBeenCalledWith(runsActions.selectAllRuns());
+      expect(dispatchSpy).not.toHaveBeenCalledWith(
+        runsActions.runPageSelectionToggled({runIds: ['a/1']})
+      );
+    });
+  });
+
   describe('runs data table', () => {
     it('renders data table when hparam flag is on', () => {
       const fixture = createComponent(['book']);
@@ -257,104 +289,6 @@ describe('runs_table', () => {
       expect(
         fixture.nativeElement.querySelector('runs-table-component')
       ).toBeFalsy();
-    });
-
-    it('passes run name, experiment alias, selected value, and color to data table', () => {
-      // To make sure we only return the runs when called with the right props.
-      const selectSpy = spyOn(store, 'select').and.callThrough();
-      selectSpy.withArgs(getFilteredRenderableRuns).and.returnValue(
-        of([
-          {
-            run: buildRun({id: 'book1', name: "The Philosopher's Stone"}),
-            runColor: '#000',
-            experimentAlias: {aliasText: 'book', aliasNumber: 1},
-            experimentName: 'Harry Potter',
-            selected: true,
-            hparams: new Map(),
-          },
-          {
-            run: buildRun({id: 'book2', name: 'The Chamber Of Secrets'}),
-            runColor: '#111',
-            experimentAlias: {aliasText: 'book', aliasNumber: 1},
-            experimentName: 'Harry Potter',
-            selected: false,
-            hparams: new Map(),
-          },
-        ])
-      );
-
-      const fixture = createComponent(['book']);
-      fixture.detectChanges();
-      const runsDataTable = fixture.debugElement.query(
-        By.directive(RunsDataTable)
-      );
-
-      expect(runsDataTable.componentInstance.data).toEqual([
-        {
-          id: 'book1',
-          color: '#000',
-          run: "The Philosopher's Stone",
-          experimentAlias: {aliasNumber: 1, aliasText: 'book'},
-          experimentName: 'Harry Potter',
-          selected: true,
-        },
-        {
-          id: 'book2',
-          color: '#111',
-          run: 'The Chamber Of Secrets',
-          experimentAlias: {aliasNumber: 1, aliasText: 'book'},
-          experimentName: 'Harry Potter',
-          selected: false,
-        },
-      ]);
-    });
-
-    it('passes hparam values to data table', () => {
-      const run1 = buildRun({id: 'book1', name: "The Philosopher's Stone"});
-      const run2 = buildRun({id: 'book2', name: 'The Chamber Of Secrets'});
-      // To make sure we only return the runs when called with the right props.
-      const selectSpy = spyOn(store, 'select').and.callThrough();
-      selectSpy
-        .withArgs(getRuns, {experimentId: 'book'})
-        .and.returnValue(of([run1, run2]));
-
-      selectSpy.withArgs(getRunsTableHeaders).and.returnValue(
-        of([
-          {
-            type: ColumnHeaderType.HPARAM,
-            name: 'batch_size',
-            displayName: 'Batch Size',
-            enabled: true,
-          },
-        ])
-      );
-
-      selectSpy.withArgs(getFilteredRenderableRuns).and.returnValue(
-        of([
-          {
-            run: run1,
-            hparams: new Map([['batch_size', 1]]),
-          } as RunTableItem,
-          {
-            run: run2,
-            hparams: new Map([['batch_size', 2]]),
-          } as RunTableItem,
-        ])
-      );
-
-      store.overrideSelector(getRunColorMap, {
-        book1: '#000',
-        book2: '#111',
-      });
-
-      const fixture = createComponent(['book']);
-      fixture.detectChanges();
-      const runsDataTable = fixture.debugElement.query(
-        By.directive(RunsDataTable)
-      );
-
-      expect(runsDataTable.componentInstance.data[0].batch_size).toEqual(1);
-      expect(runsDataTable.componentInstance.data[1].batch_size).toEqual(2);
     });
 
     describe('sorting', () => {

@@ -29,7 +29,6 @@ tf_ts_library(
         "//tensorboard/webapp/types",
         "//tensorboard/webapp/util:dom",
         "//tensorboard/webapp/util:lang",
-        "//tensorboard/webapp/util:memoize",
         "//tensorboard/webapp/util:ngrx",
         "//tensorboard/webapp/util:types",
         "//tensorboard/webapp/widgets/card_fob:types",
@@ -64,6 +63,7 @@ tf_ts_library(
         "//tensorboard/webapp/metrics:types",
         "//tensorboard/webapp/metrics/data_source",
         "//tensorboard/webapp/types",
+        "//tensorboard/webapp/util:lang",
     ],
 )
 
@@ -107,6 +107,7 @@ tf_ts_library(
         "//tensorboard/webapp/metrics/data_source",
         "//tensorboard/webapp/persistent_settings",
         "//tensorboard/webapp/routes:testing",
+        "//tensorboard/webapp/runs/actions",
         "//tensorboard/webapp/testing:utils",
         "//tensorboard/webapp/types",
         "//tensorboard/webapp/util:dom",

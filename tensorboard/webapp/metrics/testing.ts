@@ -108,6 +108,7 @@ function buildBlankState(): MetricsState {
         tagRunSampledInfo: {},
       },
     },
+    inactiveTimeSeries: new Map<string, number>(),
     timeSeriesData: {
       scalars: {},
       histograms: {},
@@ -185,11 +186,11 @@ export function buildDataSourceTagMetadata(): DataSourceTagMetadata {
   return {
     scalars: {
       tagDescriptions: {},
-      runTagInfo: {},
+      tagToRuns: {},
     },
     histograms: {
       tagDescriptions: {},
-      runTagInfo: {},
+      tagToRuns: {},
     },
     images: {
       tagDescriptions: {},

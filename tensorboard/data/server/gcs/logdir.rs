@@ -15,7 +15,6 @@ limitations under the License.
 
 //! Adapter from GCS to TensorBoard logdirs.
 
-use log::warn;
 use reqwest::StatusCode;
 use std::collections::HashMap;
 use std::env;
@@ -23,7 +22,7 @@ use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use super::Client;
-use crate::logdir::{EventFileBuf, EVENT_FILE_BASENAME_INFIX};
+use crate::logdir::{EventFileBuf, FileFingerprint, EVENT_FILE_BASENAME_INFIX};
 use crate::types::Run;
 
 /// A reference to a GCS object with a read offset.
@@ -35,12 +34,12 @@ pub struct File {
 }
 
 impl File {
-    fn new(gcs: Client, bucket: String, object: String) -> Self {
+    fn new(gcs: Client, bucket: String, object: String, pos: u64) -> Self {
         Self {
             gcs,
             bucket,
             object,
-            pos: 0,
+            pos,
         }
     }
 }
@@ -58,12 +57,20 @@ fn reqwest_to_io_error(e: reqwest::Error) -> io::Error {
     io::Error::new(kind, e)
 }
 
+#[derive(Debug, thiserror::Error)]
+enum VisitError {
+    #[error(transparent)]
+    Request(#[from] reqwest::Error),
+    #[error(transparent)]
+    Visitor(#[from] io::Error),
+}
+
 impl Read for File {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
-        let range = self.pos..=self.pos + (buf.len() as u64 - 1);
+        let range = self.pos..=self.pos.saturating_add(buf.len() as u64 - 1);
         let result = self
             .gcs
             .read(&self.bucket, &self.object, range)
@@ -123,45 +130,68 @@ impl crate::logdir::Logdir for Logdir {
     type File = BufReader<File>;
 
     fn discover(&self) -> io::Result<HashMap<Run, Vec<EventFileBuf>>> {
-        let res = self.gcs.list(&self.bucket, &self.prefix);
-        let objects = res.map_err(reqwest_to_io_error)?;
         let mut run_map: HashMap<Run, Vec<EventFileBuf>> = HashMap::new();
-        for name in objects {
-            let name = match name.strip_prefix(&self.prefix) {
-                Some(x) => x,
-                None => {
-                    warn!(
-                        "Unexpected object name {:?} with putative prefix {:?}",
-                        &name, &self.prefix
-                    );
-                    continue;
-                }
-            };
-            let path = PathBuf::from(name);
-            let is_event_file = path.file_name().map_or(false, |n| {
-                n.to_string_lossy().contains(EVENT_FILE_BASENAME_INFIX)
-            });
-            if !is_event_file {
-                continue;
-            }
-            let mut run_relpath = path
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(PathBuf::new);
-            if run_relpath == Path::new("") {
-                run_relpath.push(".");
-            }
-            let run = Run(run_relpath.display().to_string());
-            run_map.entry(run).or_default().push(EventFileBuf(path));
-        }
+        self.visit(&mut |run, file, _| {
+            run_map.entry(run).or_default().push(file);
+            Ok(())
+        })?;
         Ok(run_map)
     }
 
+    fn visit(
+        &self,
+        visitor: &mut dyn FnMut(Run, EventFileBuf, Option<FileFingerprint>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        self.gcs
+            .visit(&self.bucket, &self.prefix, &mut |object| {
+                let name = object.name.strip_prefix(&self.prefix).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "GCS object outside logdir prefix",
+                    )
+                })?;
+                let path = PathBuf::from(name);
+                let is_event_file = path.file_name().map_or(false, |n| {
+                    n.to_string_lossy().contains(EVENT_FILE_BASENAME_INFIX)
+                });
+                if !is_event_file {
+                    return Ok::<(), VisitError>(());
+                }
+                let run_relpath = path.parent().unwrap_or_else(|| Path::new(""));
+                let run = if run_relpath == Path::new("") {
+                    Run(".".to_owned())
+                } else {
+                    Run(run_relpath.display().to_string())
+                };
+                let len = object
+                    .size
+                    .parse::<u64>()
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                let fingerprint = FileFingerprint {
+                    len,
+                    // GCS objects are immutable: even composing an append creates a new
+                    // generation. Replay it rather than mistake a rewrite for an append.
+                    identity: object.generation.clone(),
+                    modified: format!("{}:{}", object.generation, object.updated),
+                };
+                visitor(run, EventFileBuf(path), Some(fingerprint))?;
+                Ok(())
+            })
+            .map_err(|e| match e {
+                VisitError::Request(e) => reqwest_to_io_error(e),
+                VisitError::Visitor(e) => e,
+            })
+    }
+
     fn open(&self, path: &EventFileBuf) -> io::Result<Self::File> {
-        // Paths as returned by `discover` are always valid Unicode.
+        self.open_at(path, 0)
+    }
+
+    fn open_at(&self, path: &EventFileBuf, offset: u64) -> io::Result<Self::File> {
+        // Paths as returned by discovery are always valid Unicode.
         let mut object = self.prefix.clone();
         object.push_str(path.0.to_string_lossy().as_ref());
-        let file = File::new(self.gcs.clone(), self.bucket.clone(), object);
+        let file = File::new(self.gcs.clone(), self.bucket.clone(), object, offset);
         Ok(BufReader::with_capacity(self.buffer_capacity, file))
     }
 }

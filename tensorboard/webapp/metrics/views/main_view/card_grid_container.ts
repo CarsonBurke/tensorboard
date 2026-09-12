@@ -22,7 +22,14 @@ import {
 } from '@angular/core';
 import {Store} from '@ngrx/store';
 import {BehaviorSubject, combineLatest, Observable, of, Subject} from 'rxjs';
-import {map, shareReplay, switchMap, takeUntil, tap} from 'rxjs/operators';
+import {
+  distinctUntilChanged,
+  map,
+  shareReplay,
+  switchMap,
+  takeUntil,
+  tap,
+} from 'rxjs/operators';
 import {State} from '../../../app_state';
 import * as selectors from '../../../selectors';
 import {
@@ -34,6 +41,20 @@ import {selectors as settingsSelectors} from '../../../settings';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
 import {CardIdWithMetadata} from '../metrics_view_types';
 import {metricsTagGroupPageIndexChanged} from '../../actions';
+import {CardId} from '../../types';
+import {CardGridSizing} from './card_grid_component';
+
+function areSetsEqual(a: ReadonlySet<CardId>, b: ReadonlySet<CardId>): boolean {
+  if (a.size !== b.size) {
+    return false;
+  }
+  for (const cardId of a) {
+    if (!b.has(cardId)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 @Component({
   standalone: false,
@@ -47,7 +68,7 @@ import {metricsTagGroupPageIndexChanged} from '../../actions';
       [cardIdsWithMetadata]="pagedItems$ | async"
       [cardMinWidth]="cardMinWidth$ | async"
       [cardObserver]="cardObserver"
-      [cardStateMap]="cardStateMap$ | async"
+      [cardSizing]="cardSizing$ | async"
       [groupName]="groupName"
       (pageIndexChanged)="onPageIndexChanged($event)"
     >
@@ -60,12 +81,17 @@ export class CardGridContainer implements OnChanges, OnDestroy {
   @Input() groupName: string | null = null;
   @Input() cardIdsWithMetadata!: CardIdWithMetadata[];
   @Input() cardObserver!: CardObserver;
+  /** Exact server page: never slice this list a second time. */
+  @Input() serverTotalCards: number | null = null;
+  @Input() virtualWindow = false;
 
   private readonly groupName$ = new BehaviorSubject<string | null>(null);
   private readonly localPageIndex$ = new BehaviorSubject<number>(0);
   private readonly items$ = new BehaviorSubject<CardIdWithMetadata[]>([]);
+  private readonly serverTotalCards$ = new BehaviorSubject<number | null>(null);
+  private readonly virtualWindow$ = new BehaviorSubject(false);
   private readonly ngUnsubscribe = new Subject<void>();
-  readonly cardStateMap$;
+  readonly cardSizing$: Observable<CardGridSizing>;
 
   readonly numPages$;
 
@@ -82,13 +108,13 @@ export class CardGridContainer implements OnChanges, OnDestroy {
   readonly cardMinWidth$;
 
   constructor(private readonly store: Store<State>) {
-    this.cardStateMap$ = this.store.select(selectors.getCardStateMap);
     this.numPages$ = combineLatest([
       this.items$,
       this.store.select(settingsSelectors.getPageSize),
+      this.serverTotalCards$,
     ]).pipe(
-      map(([items, pageSize]) => {
-        return Math.ceil(items.length / pageSize);
+      map(([items, pageSize, total]) => {
+        return Math.ceil((total ?? items.length) / pageSize);
       })
     );
     this.isGroupExpanded$ = this.groupName$.pipe(
@@ -98,9 +124,10 @@ export class CardGridContainer implements OnChanges, OnDestroy {
           : of(true);
       })
     );
-    this.showPaginationControls$ = this.numPages$.pipe(
-      map((numPages) => numPages > 1)
-    );
+    this.showPaginationControls$ = combineLatest([
+      this.numPages$,
+      this.virtualWindow$,
+    ]).pipe(map(([numPages, virtualWindow]) => !virtualWindow && numPages > 1));
     this.pageIndex$ = this.groupName$.pipe(
       switchMap((groupName) => {
         return groupName !== null
@@ -136,17 +163,57 @@ export class CardGridContainer implements OnChanges, OnDestroy {
       this.store.select(settingsSelectors.getPageSize),
       this.normalizedPageIndex$,
       this.isGroupExpanded$,
+      this.serverTotalCards$,
+      this.virtualWindow$,
     ]).pipe(
-      map(([items, pageSize, pageIndex, expanded]) => {
+      map(([items, pageSize, pageIndex, expanded, total, virtualWindow]) => {
+        if (!expanded) return [];
+        if (total !== null || virtualWindow) return items;
         const startIndex = pageSize * pageIndex;
         const endIndex = pageSize * pageIndex + (expanded ? pageSize : 0);
         return items.slice(startIndex, endIndex);
       })
     );
+    // Scoped to the cards on this page: the whole card state map changes
+    // identity on every card state change, e.g. once per mousemove while any
+    // chart is panned, and would mark every group's grid dirty.
+    this.cardSizing$ = combineLatest([
+      this.pagedItems$,
+      this.store.select(selectors.getCardStateMap),
+    ]).pipe(
+      map(([items, cardStateMap]) => {
+        const fullWidth = new Set<CardId>();
+        const tableExpanded = new Set<CardId>();
+        for (const {cardId} of items) {
+          const cardState = cardStateMap[cardId];
+          if (!cardState) {
+            continue;
+          }
+          if (cardState.fullWidth) {
+            fullWidth.add(cardId);
+          }
+          if (cardState.tableExpanded) {
+            tableExpanded.add(cardId);
+          }
+        }
+        return {fullWidth, tableExpanded};
+      }),
+      distinctUntilChanged(
+        (before, after) =>
+          areSetsEqual(before.fullWidth, after.fullWidth) &&
+          areSetsEqual(before.tableExpanded, after.tableExpanded)
+      )
+    );
     this.cardMinWidth$ = this.store.select(getMetricsCardMinWidth);
   }
 
   ngOnChanges(changes: SimpleChanges) {
+    if (changes['serverTotalCards']) {
+      this.serverTotalCards$.next(this.serverTotalCards);
+    }
+    if (changes['virtualWindow']) {
+      this.virtualWindow$.next(this.virtualWindow);
+    }
     if (changes['cardIdsWithMetadata']) {
       this.items$.next(this.cardIdsWithMetadata);
     }

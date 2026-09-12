@@ -22,19 +22,21 @@ import {
   Output,
 } from '@angular/core';
 import {Store} from '@ngrx/store';
-import {BehaviorSubject, combineLatest, Observable, Subject} from 'rxjs';
+import {combineLatest, Observable, Subject} from 'rxjs';
 import {
   combineLatestWith,
   distinctUntilChanged,
   filter,
   map,
   shareReplay,
+  take,
   takeUntil,
   tap,
 } from 'rxjs/operators';
 import {State} from '../../../app_state';
 import {DataLoadState} from '../../../types/data';
 import {RunColorScale} from '../../../types/ui';
+import {hasOwn} from '../../../util/lang';
 import * as actions from '../../actions';
 import {
   ImageStepDatum,
@@ -45,6 +47,7 @@ import {
   getCardLoadState,
   getCardMetadata,
   getCardPinnedState,
+  getCardStateMap,
   getCardStepIndexMetaData,
   getCardTimeSeries,
   getMetricsImageBrightnessInMilli,
@@ -153,11 +156,7 @@ export class ImageCardContainer implements CardRenderer, OnInit, OnDestroy {
   actualSizeGlobalSetting$;
   showActualSize = false;
 
-  // The UI toggle is overridden by the global setting.
-  private actualSizeUiToggled = false;
-  private readonly actualSizeUiToggleSubject = new BehaviorSubject(
-    this.actualSizeUiToggled
-  );
+  private actualSizeUiToggled$?: Observable<boolean>;
   private readonly ngUnsubscribe = new Subject<void>();
 
   private isImageCardMetadata(
@@ -168,18 +167,25 @@ export class ImageCardContainer implements CardRenderer, OnInit, OnDestroy {
   }
 
   onActualSizeToggle() {
-    this.actualSizeUiToggled = !this.actualSizeUiToggled;
-    this.actualSizeUiToggleSubject.next(this.actualSizeUiToggled);
+    this.actualSizeUiToggled$!.pipe(take(1)).subscribe((enabled) => {
+      this.store.dispatch(
+        actions.metricsCardStateUpdated({
+          cardId: this.cardId,
+          settings: {imageActualSize: !enabled},
+        })
+      );
+    });
   }
 
   /**
    * Build observables once cardId is defined (after onInit).
    */
   ngOnInit() {
-    combineLatest([
-      this.actualSizeGlobalSetting$,
-      this.actualSizeUiToggleSubject,
-    ])
+    this.actualSizeUiToggled$ = this.store.select(getCardStateMap).pipe(
+      map((state) => state[this.cardId]?.imageActualSize ?? false),
+      distinctUntilChanged()
+    );
+    combineLatest([this.actualSizeGlobalSetting$, this.actualSizeUiToggled$])
       .pipe(
         takeUntil(this.ngUnsubscribe),
         tap(([settingEnabled, uiToggleEnabled]) => {
@@ -210,7 +216,7 @@ export class ImageCardContainer implements CardRenderer, OnInit, OnDestroy {
       takeUntil(this.ngUnsubscribe),
       map(([cardMetadata, runToSeries]) => {
         const runId = cardMetadata.runId;
-        if (!runToSeries || !runToSeries.hasOwnProperty(runId)) {
+        if (!runToSeries || !hasOwn(runToSeries, runId)) {
           return [];
         }
         return runToSeries[runId] as ImageStepDatum[];

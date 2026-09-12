@@ -36,7 +36,7 @@ import {
 import {RouteKind} from '../../app_routing/types';
 import {State} from '../../app_state';
 import {getEnabledExperimentalPlugins} from '../../feature_flag/store/feature_flag_selectors';
-import {PluginsListing} from '../../types/api';
+import {LoadingMechanismType, PluginsListing} from '../../types/api';
 import {DataLoadState} from '../../types/data';
 import {
   HttpTestingController,
@@ -48,10 +48,12 @@ import {coreLoaded, polymerRunsFetchRequested} from '../actions';
 import {
   getActivePlugin,
   getPluginsListLoaded,
+  getPlugins,
   getPolymerRunsLoadState,
 } from '../store';
 import {
   createCoreState,
+  buildPluginMetadata,
   createEnvironment,
   createPluginMetadata,
   createState,
@@ -125,6 +127,14 @@ describe('core_effects', () => {
     store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('foo'));
     store.overrideSelector(getActivePlugin, null);
     store.overrideSelector(getExperimentIdToExperimentAliasMap, {});
+    store.overrideSelector(getPlugins, {
+      legacy: buildPluginMetadata({
+        loading_mechanism: {
+          type: LoadingMechanismType.CUSTOM_ELEMENT,
+          element_name: 'tf-test-dashboard',
+        },
+      }),
+    });
     store.overrideSelector(getRouteKind, RouteKind.EXPERIMENT);
     store.overrideSelector(getPolymerRunsLoadState, {
       state: DataLoadState.NOT_LOADED,
@@ -150,6 +160,7 @@ describe('core_effects', () => {
   ].forEach(({specSetName, onAction}) => {
     describe(specSetName, () => {
       beforeEach(() => {
+        store.overrideSelector(getActivePlugin, 'legacy');
         coreEffects.fetchWebAppData$.subscribe(() => {});
       });
 
@@ -326,6 +337,7 @@ describe('core_effects', () => {
 
   describe('#navigated', () => {
     beforeEach(() => {
+      store.overrideSelector(getActivePlugin, 'legacy');
       coreEffects.fetchWebAppData$.subscribe(() => {});
     });
 
@@ -645,6 +657,29 @@ describe('core_effects', () => {
     );
   });
 
+  it('loads the legacy run catalog only after switching away from native charts', () => {
+    store.overrideSelector(getPlugins, {
+      native: buildPluginMetadata({
+        loading_mechanism: {type: LoadingMechanismType.NG_COMPONENT},
+      }),
+      legacy: buildPluginMetadata({
+        loading_mechanism: {
+          type: LoadingMechanismType.CUSTOM_ELEMENT,
+          element_name: 'tf-test-dashboard',
+        },
+      }),
+    });
+    store.overrideSelector(getActivePlugin, 'native');
+    coreEffects.fetchWebAppData$.subscribe();
+    action.next(coreActions.changePlugin({plugin: 'native'}));
+    expect(fetchPolymerRunsSubjects).toEqual([]);
+
+    store.overrideSelector(getActivePlugin, 'legacy');
+    store.refreshState();
+    action.next(coreActions.changePlugin({plugin: 'legacy'}));
+    expect(fetchPolymerRunsSubjects.length).toBe(1);
+  });
+
   describe('#dispatchChangePlugin', () => {
     function createPluginsListing(): PluginsListing {
       return {foo: createPluginMetadata('Foo')};
@@ -759,6 +794,7 @@ describe('core_effects', () => {
 
   describe('legacy mode (no routes, coreLoaded)', () => {
     beforeEach(() => {
+      store.overrideSelector(getActivePlugin, 'legacy');
       coreEffects.fetchWebAppData$.subscribe(() => {});
     });
 

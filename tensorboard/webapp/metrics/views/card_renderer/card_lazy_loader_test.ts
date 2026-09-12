@@ -25,6 +25,7 @@ import {Action, Store} from '@ngrx/store';
 import {MockStore, provideMockStore} from '@ngrx/store/testing';
 import {State} from '../../../app_state';
 import * as actions from '../../actions';
+import {reducers} from '../../store/metrics_reducers';
 import {appStateFromMetricsState, buildMetricsState} from '../../testing';
 import {CardId} from '../../types';
 import {CardLazyLoader, CardObserver} from '../card_renderer/card_lazy_loader';
@@ -76,7 +77,9 @@ describe('card view test', () => {
       isIntersecting: false,
       boundingClientRect: new DOMRectReadOnly(),
       intersectionRatio: 0,
-      intersectionRect: new DOMRectReadOnly(),
+      intersectionRect: override.isIntersecting
+        ? new DOMRectReadOnly(0, 0, 1, 1)
+        : new DOMRectReadOnly(),
       rootBounds: new DOMRectReadOnly(),
       ...override,
     };
@@ -187,5 +190,163 @@ describe('card view test', () => {
         exitedCards: [{elementId: jasmine.any(Symbol) as any, cardId: 'card1'}],
       }),
     ]);
+  });
+
+  it('prepares nearby cards and updates the buffer when the scroll root resizes', (done) => {
+    observeSpy.and.callThrough();
+    unobserveSpy.and.callThrough();
+    const root = document.createElement('div');
+    root.style.cssText =
+      'position:fixed;top:0;left:0;width:100px;height:200px;overflow:auto';
+    const content = document.createElement('div');
+    content.style.cssText = 'position:relative;height:1000px';
+    const card = document.createElement('div');
+    card.style.cssText = 'position:absolute;top:300px;width:50px;height:40px';
+    content.appendChild(card);
+    root.appendChild(content);
+    document.body.appendChild(root);
+    const observer = new CardObserver(root, 1);
+    let entered = false;
+    observer.initialize((entries, exits) => {
+      try {
+        if (entries.has(card)) {
+          expect(card.getBoundingClientRect().top).toBeGreaterThan(
+            root.getBoundingClientRect().bottom
+          );
+          entered = true;
+          root.style.height = '100px';
+        } else if (exits.has(card)) {
+          expect(entered).toBeTrue();
+          expect(card.getBoundingClientRect().height).toBe(40);
+          observer.destroy();
+          root.remove();
+          done();
+        }
+      } catch (error) {
+        observer.destroy();
+        root.remove();
+        done.fail(error as Error);
+      }
+    });
+    observer.add(card);
+  });
+
+  it('ignores duplicate ownership notifications after observer recreation', () => {
+    const observer = new CardObserver();
+    const notify = jasmine.createSpy('ownership changed');
+    const card = document.createElement('div');
+    observer.initialize(notify);
+    observer.add(card);
+    simulateIntersection(observer, [{target: card, isIntersecting: false}]);
+    expect(notify).not.toHaveBeenCalled();
+    simulateIntersection(observer, [{target: card, isIntersecting: true}]);
+    simulateIntersection(observer, [{target: card, isIntersecting: true}]);
+    expect(notify).toHaveBeenCalledTimes(1);
+    simulateIntersection(observer, [{target: card, isIntersecting: false}]);
+    simulateIntersection(observer, [{target: card, isIntersecting: false}]);
+    expect(notify).toHaveBeenCalledTimes(2);
+    observer.destroy();
+  });
+
+  it('uses the newest intersection when queued transitions arrive out of order', () => {
+    const observer = new CardObserver();
+    const owned = new Set<Element>();
+    const card = document.createElement('div');
+    observer.initialize((entered, exited) => {
+      entered.forEach((target) => owned.add(target));
+      exited.forEach((target) => owned.delete(target));
+    });
+    observer.add(card);
+    simulateIntersection(observer, [
+      {target: card, time: 20, isIntersecting: true},
+      {target: card, time: 10, isIntersecting: false},
+    ]);
+    expect([...owned]).toEqual([card]);
+    simulateIntersection(observer, [
+      {target: card, time: 40, isIntersecting: false},
+      {target: card, time: 30, isIntersecting: true},
+    ]);
+    expect([...owned]).toEqual([]);
+    observer.destroy();
+  });
+
+  it('retains prepared cards across boundary reversals without applying stale exits', () => {
+    const observer = new CardObserver();
+    const owned = new Set<Element>();
+    const target = document.createElement('div');
+    observer.initialize((entered, exited) => {
+      entered.forEach((element) => owned.add(element));
+      exited.forEach((element) => owned.delete(element));
+    });
+    observer.add(target);
+    const notify = (
+      mode: 'enter' | 'exit',
+      time: number,
+      isIntersecting: boolean
+    ) =>
+      observer.onCardIntersectionForTest(
+        [buildIntersectionObserverEntry({target, time, isIntersecting})],
+        mode
+      );
+    notify('enter', 20, true);
+    notify('enter', 30, false);
+    expect([...owned]).toEqual([target]);
+    observer.onCardIntersectionForTest(
+      [
+        buildIntersectionObserverEntry({
+          target,
+          time: 40,
+          isIntersecting: false,
+        }),
+        buildIntersectionObserverEntry({
+          target,
+          time: 50,
+          isIntersecting: true,
+        }),
+      ],
+      'exit'
+    );
+    expect([...owned]).toEqual([target]);
+    notify('enter', 70, true);
+    notify('exit', 60, false);
+    expect([...owned]).toEqual([target]);
+    notify('exit', 80, false);
+    expect([...owned]).toEqual([]);
+    observer.destroy();
+  });
+
+  it('owns history only when the intersection contains visible pixels', () => {
+    let metricsState = buildMetricsState();
+    (store.dispatch as jasmine.Spy).and.callFake((action: Action) => {
+      metricsState = reducers(metricsState, action);
+    });
+    const fixture = TestBed.createComponent(TestableCards);
+    fixture.componentInstance.configs = [{cardId: 'card1', visible: true}];
+    fixture.detectChanges();
+    const directive = getCardLazyLoaders(fixture)[0];
+    const observer = directive.cardObserver!;
+    const target = directive.hostForTest().nativeElement;
+
+    simulateIntersection(observer, [
+      {
+        target,
+        time: 1,
+        isIntersecting: true,
+        intersectionRect: new DOMRectReadOnly(0, 0, 10, 0),
+      },
+    ]);
+    expect([...metricsState.visibleCardMap.values()]).toEqual([]);
+    simulateIntersection(observer, [{target, time: 2, isIntersecting: true}]);
+    expect([...metricsState.visibleCardMap.values()]).toEqual(['card1']);
+    simulateIntersection(observer, [
+      {
+        target,
+        time: 3,
+        isIntersecting: true,
+        intersectionRect: new DOMRectReadOnly(0, 0, 0, 10),
+      },
+    ]);
+    expect([...metricsState.visibleCardMap.values()]).toEqual([]);
+    fixture.destroy();
   });
 });

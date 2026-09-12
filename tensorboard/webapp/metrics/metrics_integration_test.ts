@@ -28,6 +28,13 @@ describe('metrics integration test', () => {
   };
 
   beforeEach(() => {
+    const createElementSpy = spyOn(document, 'createElement');
+    createElementSpy.withArgs('tf-feature-flags').and.returnValue({
+      tf_feature_flags: {
+        setFeatureFlags: jasmine.createSpy('setFeatureFlags'),
+      },
+    } as unknown as HTMLElement);
+    createElementSpy.and.callThrough();
     TestBed.configureTestingModule({
       imports: [
         IntegrationTestSetupModule,

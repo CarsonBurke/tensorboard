@@ -51,6 +51,15 @@ tf_ts_library(
     ],
 )
 
+tf_ts_library(
+    name = "sorting_utils",
+    srcs = ["sorting_utils.ts"],
+    deps = [
+        "//tensorboard/webapp/experiments:types",
+        "//tensorboard/webapp/widgets/data_table:types",
+    ],
+)
+
 tf_ng_module(
     name = "runs_table",
     srcs = [
@@ -63,7 +72,6 @@ tf_ng_module(
         "runs_group_menu_button_container.ts",
         "runs_table_container.ts",
         "runs_table_module.ts",
-        "sorting_utils.ts",
     ],
     assets = [
         ":regex_edit_dialog_styles",
@@ -76,6 +84,7 @@ tf_ng_module(
         "runs_group_menu_button_component.ng.html",
     ],
     deps = [
+        ":sorting_utils",
         ":types",
         "//tensorboard/webapp:app_state",
         "//tensorboard/webapp:selectors",
@@ -144,6 +153,7 @@ tf_ts_library(
     ],
     deps = [
         ":runs_table",
+        ":sorting_utils",
         ":types",
         "//tensorboard/webapp:app_state",
         "//tensorboard/webapp:selectors",

@@ -17,12 +17,15 @@ limitations under the License.
 
 use clap::Clap;
 use log::info;
+use prost::Message;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rustboard_core::commit::Commit;
 use rustboard_core::logdir::LogdirLoader;
+use rustboard_core::proto::tensorboard::data;
+use rustboard_core::server::DataProviderHandler;
 use rustboard_core::{cli::dynamic_logdir::DynLogdir, types::PluginSamplingHint};
 
 #[derive(Clap)]
@@ -45,7 +48,7 @@ fn main() {
     let opts: Opts = Opts::parse();
     init_logging(&opts);
 
-    let commit = Commit::new();
+    let commit = Arc::new(Commit::new());
     let logdir = DynLogdir::new(opts.logdir).expect("DynLogdir::new");
     let mut loader = LogdirLoader::new(
         &commit,
@@ -60,6 +63,60 @@ fn main() {
     loader.reload();
     let end = Instant::now();
     info!("Finished load cycle ({:?})", end - start);
+
+    bench_scalar_listing(commit);
+}
+
+/// Enough repetitions to average out allocator noise without making a full
+/// logdir load feel slower than it already is.
+const LISTING_REPETITIONS: u32 = 5;
+
+/// Times the metadata-only scalar listing that the metrics dashboard requests
+/// before it can render anything, separating response construction from
+/// protobuf encoding, in both the inline and the name-deduplicating form.
+fn bench_scalar_listing(commit: Arc<Commit>) {
+    let handler = DataProviderHandler {
+        data_location: String::new(),
+        commit,
+    };
+    for dedup_names in [false, true] {
+        let request = || data::ListScalarsRequest {
+            plugin_filter: Some(data::PluginFilter {
+                plugin_name: "scalars".to_string(),
+            }),
+            skip_statistics: true,
+            dedup_names,
+            ..Default::default()
+        };
+        let mut build = Duration::ZERO;
+        let mut encode = Duration::ZERO;
+        let mut runs = 0;
+        let mut tags = 0;
+        let mut bytes = 0;
+        for _ in 0..LISTING_REPETITIONS {
+            let start = Instant::now();
+            let res = handler
+                .list_scalars_response(request())
+                .expect("list_scalars_response");
+            build += start.elapsed();
+            runs = res.runs.len();
+            tags = res.runs.iter().map(|r| r.tags.len()).sum();
+            let start = Instant::now();
+            bytes = res.encoded_len();
+            let mut buf = Vec::with_capacity(bytes);
+            res.encode(&mut buf).expect("encode");
+            encode += start.elapsed();
+        }
+        info!(
+            "Scalar metadata listing (dedup_names={}): {} runs, {} tags, {} wire bytes, build {:?}/call, encode {:?}/call",
+            dedup_names,
+            runs,
+            tags,
+            bytes,
+            build / LISTING_REPETITIONS,
+            encode / LISTING_REPETITIONS,
+        );
+    }
 }
 
 fn init_logging(opts: &Opts) {

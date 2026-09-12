@@ -16,18 +16,22 @@ import {DOCUMENT} from '@angular/common';
 import {fakeAsync, TestBed, tick} from '@angular/core/testing';
 import {Store} from '@ngrx/store';
 import {MockStore, provideMockStore} from '@ngrx/store/testing';
+import {Observable, of, Subject} from 'rxjs';
 import {reload} from '../core/actions';
 import {
   createSettings,
   createSettingsState,
   createState,
 } from '../settings/testing';
+import {TBServerDataSource} from '../webapp_data_source/tb_server_data_source';
 import {ReloaderComponent} from './reloader_component';
 
 describe('reloader_component', () => {
   let store: MockStore;
   let dispatchSpy: jasmine.Spy;
   let fakeDocument: Document;
+  let backendReload: jasmine.Spy;
+  let backendReload$: Observable<void>;
 
   function createFakeDocument() {
     return {
@@ -50,11 +54,19 @@ describe('reloader_component', () => {
   }
 
   beforeEach(async () => {
+    backendReload$ = of(undefined as void);
+    backendReload = jasmine
+      .createSpy('requestBackendReload')
+      .and.callFake(() => backendReload$);
     await TestBed.configureTestingModule({
       providers: [
         {
           provide: DOCUMENT,
           useFactory: createFakeDocument,
+        },
+        {
+          provide: TBServerDataSource,
+          useValue: {requestBackendReload: backendReload},
         },
         provideMockStore({
           initialState: createState(
@@ -399,6 +411,61 @@ describe('reloader_component', () => {
 
     simulateVisibilityChange(true);
     expect(dispatchSpy).toHaveBeenCalledTimes(0);
+
+    fixture.destroy();
+  }));
+
+  it('rescans the logdir before refetching', fakeAsync(() => {
+    const rescan = new Subject<void>();
+    backendReload$ = rescan;
+    const fixture = TestBed.createComponent(ReloaderComponent);
+    fixture.detectChanges();
+
+    tick(5);
+    // Refetching before the rescan finishes would only re-read the stale
+    // snapshot, so no runs created since the last scan would show up.
+    expect(backendReload).toHaveBeenCalledTimes(1);
+    expect(dispatchSpy).not.toHaveBeenCalled();
+
+    rescan.next();
+    rescan.complete();
+    expect(dispatchSpy).toHaveBeenCalledOnceWith(reload());
+
+    fixture.destroy();
+  }));
+
+  it('does not start a rescan while one is in flight', fakeAsync(() => {
+    const rescan = new Subject<void>();
+    backendReload$ = rescan;
+    const fixture = TestBed.createComponent(ReloaderComponent);
+    fixture.detectChanges();
+
+    tick(15);
+    expect(backendReload).toHaveBeenCalledTimes(1);
+
+    rescan.next();
+    rescan.complete();
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+
+    tick(5);
+    expect(backendReload).toHaveBeenCalledTimes(2);
+
+    fixture.destroy();
+  }));
+
+  it('refetches even when the rescan fails', fakeAsync(() => {
+    backendReload$ = new Observable<void>((subscriber) => {
+      subscriber.error(new Error('rescan failed'));
+    });
+    const fixture = TestBed.createComponent(ReloaderComponent);
+    fixture.detectChanges();
+
+    tick(5);
+    expect(dispatchSpy).toHaveBeenCalledOnceWith(reload());
+
+    // A failing endpoint must not wedge the timer.
+    tick(5);
+    expect(dispatchSpy).toHaveBeenCalledTimes(2);
 
     fixture.destroy();
   }));

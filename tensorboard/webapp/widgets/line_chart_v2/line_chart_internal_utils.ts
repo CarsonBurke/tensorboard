@@ -12,13 +12,69 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-import * as d3 from '../../third_party/d3';
 import {
   DataSeries,
   DataSeriesMetadataMap,
   RendererType,
 } from './lib/public_types';
 import {ChartUtils} from './lib/utils';
+
+/**
+ * Scratch space for the outlier percentiles, reused across calls: this runs
+ * for every chart whenever a series is toggled, and a growable boxed array
+ * cost more than the selection itself.
+ */
+let yValues = new Float64Array(0);
+
+/**
+ * Capacity above which the scratch space is released instead of retained, so
+ * one enormous card does not hold the buffer for the rest of the session.
+ */
+const MAX_RETAINED_Y_VALUES = 1 << 20;
+
+/**
+ * Reorders `values[from..to]` so that index `nth` holds the value a full
+ * ascending sort would put there, and returns it.
+ *
+ * Hoare partitioning around the middle element. Only two order statistics
+ * are needed, so sorting would pay O(n log n) for two values; this is O(n)
+ * expected. On return the range is partitioned about `nth`, which lets the
+ * caller narrow the range for a subsequent, larger `nth`.
+ */
+function selectNth(
+  values: Float64Array,
+  nth: number,
+  from: number,
+  to: number
+): number {
+  let left = from;
+  let right = to;
+  while (left < right) {
+    const pivot = values[(left + right) >> 1];
+    let low = left;
+    let high = right;
+    while (low <= high) {
+      while (values[low] < pivot) low++;
+      while (values[high] > pivot) high--;
+      if (low <= high) {
+        const value = values[low];
+        values[low] = values[high];
+        values[high] = value;
+        low++;
+        high--;
+      }
+    }
+    if (nth <= high) {
+      right = high;
+    } else if (nth >= low) {
+      left = low;
+    } else {
+      // `nth` sits in the run of values equal to the pivot.
+      break;
+    }
+  }
+  return values[nth];
+}
 
 /**
  * Returns extent, min and max values of each dimensions, of all data series points.
@@ -39,7 +95,7 @@ export function computeDataSeriesExtent(
   let xMax: number | null = null;
   let yMin: number | undefined;
   let yMax: number | undefined;
-  const yPoints: number[] = [];
+  let yCount = 0;
 
   for (const {id, points} of data) {
     const meta = metadataMap[id];
@@ -53,7 +109,12 @@ export function computeDataSeriesExtent(
       }
       if (isYSafeNumber(y)) {
         if (ignoreYOutliers) {
-          yPoints.push(y);
+          if (yCount === yValues.length) {
+            const grown = new Float64Array(Math.max(1024, yCount * 2));
+            grown.set(yValues);
+            yValues = grown;
+          }
+          yValues[yCount++] = y;
         }
         yMin = yMin === undefined || y < yMin ? y : yMin;
         // Keep the last equal maximum, as the stable sort does (including -0).
@@ -62,10 +123,16 @@ export function computeDataSeriesExtent(
     }
   }
 
-  if (ignoreYOutliers && yPoints.length > 2) {
-    yPoints.sort(d3.ascending);
-    yMin = yPoints[Math.ceil((yPoints.length - 1) * 0.05)];
-    yMax = yPoints[Math.floor((yPoints.length - 1) * 0.95)];
+  if (ignoreYOutliers && yCount > 2) {
+    const lowNth = Math.ceil((yCount - 1) * 0.05);
+    const highNth = Math.floor((yCount - 1) * 0.95);
+    yMin = selectNth(yValues, lowNth, 0, yCount - 1);
+    // Selecting `lowNth` partitioned the array about it, so the larger
+    // percentile cannot lie below it.
+    yMax = selectNth(yValues, highNth, lowNth, yCount - 1);
+  }
+  if (yValues.length > MAX_RETAINED_Y_VALUES) {
+    yValues = new Float64Array(0);
   }
 
   return {

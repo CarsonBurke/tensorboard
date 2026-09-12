@@ -43,3 +43,26 @@ py_binary(
         "@tensorboard_pip_deps//werkzeug",
     ],
 )
+
+py_binary(
+    name = "benchmark_tags",
+    srcs = ["benchmark_tags.py"],
+    deps = [
+        "//tensorboard:context",
+        "//tensorboard:expect_grpc_installed",
+        "//tensorboard/data:grpc_provider",
+        "//tensorboard/data/proto:protos_all_py_pb2",
+        "//tensorboard/plugins:base_plugin",
+        "//tensorboard/plugins/metrics:metrics_plugin",
+        "//tensorboard/plugins/scalar:metadata",
+    ],
+)
+
+py_binary(
+    name = "benchmark_catalog",
+    srcs = ["benchmark_catalog.py"],
+    deps = [
+        "//tensorboard/compat/proto:protos_all_py_pb2",
+        "//tensorboard/summary/writer",
+    ],
+)

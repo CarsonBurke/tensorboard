@@ -12,7 +12,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-import {Directive, ElementRef, Input, OnDestroy, OnInit} from '@angular/core';
+import {
+  Directive,
+  ElementRef,
+  Input,
+  NgZone,
+  OnDestroy,
+  OnInit,
+} from '@angular/core';
 import {Store} from '@ngrx/store';
 import {State} from '../../../app_state';
 import {ElementId, nextElementId} from '../../../util/dom';
@@ -29,10 +36,19 @@ type CardObserverCallback = (
   exitedCards: Set<Element>
 ) => void;
 
+export const CARD_RETENTION_VIEWPORTS = 4;
+
 export class CardObserver {
   private intersectionObserver?: IntersectionObserver;
+  private retentionObserver?: IntersectionObserver;
   private intersectionCallback?: CardObserverCallback;
   private readonly removedTargets = new WeakSet<Element>();
+  private readonly targets = new Set<Element>();
+  private readonly enteredTargets = new Set<Element>();
+  private readonly transitionTimes = new WeakMap<Element, number>();
+  private resizeObserver?: ResizeObserver;
+  private rootMargin = '';
+  private destroyed = false;
 
   /**
    * Buffer determines how far a card can be, beyond the root's bounding rect,
@@ -41,6 +57,7 @@ export class CardObserver {
    * as 'intersecting' when they come within 50px of the root top or within
    * 100px of the root's bottom. Adding buffer allows nearby, offscreen cards
    * to load, preventing blank cards from being seen too often.
+   * A numeric buffer is measured in root viewport heights and follows resizes.
    *
    * If positive 'rootMargin' is provided, a scrollable 'root' is required.
    *
@@ -49,7 +66,9 @@ export class CardObserver {
    */
   constructor(
     private readonly root?: Element,
-    private readonly buffer?: string
+    private readonly buffer?: string | number,
+    private readonly zone?: NgZone,
+    private readonly retentionBuffer?: number
   ) {}
 
   initialize(intersectionCallback: CardObserverCallback) {
@@ -58,30 +77,84 @@ export class CardObserver {
     }
     this.intersectionCallback = intersectionCallback;
 
-    const init: IntersectionObserverInit = {
-      threshold: 0,
-      root: this.root ?? null,
+    const initialize = () => {
+      this.updateObserver();
+      if (typeof this.buffer === 'number' && this.root) {
+        this.resizeObserver = new ResizeObserver(() => this.updateObserver());
+        this.resizeObserver.observe(this.root);
+      }
     };
-    if (this.buffer) {
-      init.rootMargin = this.buffer;
-    }
+    if (this.zone) this.zone.runOutsideAngular(initialize);
+    else initialize();
+  }
+
+  private updateObserver() {
+    const rootMargin =
+      typeof this.buffer === 'number'
+        ? `${(this.root?.clientHeight ?? 0) * this.buffer}px 0px`
+        : this.buffer ?? '0px';
+    if (this.intersectionObserver && rootMargin === this.rootMargin) return;
+    this.rootMargin = rootMargin;
+    this.intersectionObserver?.disconnect();
     this.intersectionObserver = new IntersectionObserver(
-      this.onCardIntersection.bind(this),
-      init
+      (entries) =>
+        this.onCardIntersection(
+          entries,
+          this.retentionBuffer === undefined ? 'both' : 'enter'
+        ),
+      {
+        // Report edge-touch -> positive-area transitions.
+        threshold: Number.EPSILON,
+        root: this.root ?? null,
+        rootMargin,
+      }
     );
+    this.retentionObserver?.disconnect();
+    if (this.retentionBuffer !== undefined) {
+      // Enter near the viewport, leave farther away. Reversing scroll direction
+      // should reuse mounted charts rather than rebuild their tables.
+      this.retentionObserver = new IntersectionObserver(
+        (entries) => this.onCardIntersection(entries, 'exit'),
+        {
+          root: this.root ?? null,
+          threshold: Number.EPSILON,
+          rootMargin: `${
+            (this.root?.clientHeight ?? 0) * this.retentionBuffer
+          }px 0px`,
+        }
+      );
+    }
+    this.targets.forEach((target) => {
+      this.intersectionObserver!.observe(target);
+      this.retentionObserver?.observe(target);
+    });
+  }
+
+  destroy() {
+    this.destroyed = true;
+    this.resizeObserver?.disconnect();
+    this.intersectionObserver?.disconnect();
+    this.retentionObserver?.disconnect();
+    this.targets.clear();
+    this.enteredTargets.clear();
   }
 
   add(target: Element) {
     if (this.ensureInitialized()) {
       this.removedTargets.delete(target);
+      this.targets.add(target);
       this.intersectionObserver!.observe(target);
+      this.retentionObserver?.observe(target);
     }
   }
 
   remove(target: Element) {
     if (this.ensureInitialized()) {
       this.removedTargets.add(target);
+      this.targets.delete(target);
+      this.enteredTargets.delete(target);
       this.intersectionObserver!.unobserve(target);
+      this.retentionObserver?.unobserve(target);
     }
   }
 
@@ -92,38 +165,77 @@ export class CardObserver {
     return true;
   }
 
-  private onCardIntersection(entries: IntersectionObserverEntry[]) {
-    /**
-     * Within a single callback firing, `entries` may include separate entries
-     * representing the same target element entering (isIntersecting) and
-     * leaving (!isIntersecting). To account for this, we sort entries by
-     * increasing timestamp and respect the latest one.
-     */
-    entries.sort((a, b) => a.time - b.time);
+  private onCardIntersection(
+    entries: IntersectionObserverEntry[],
+    mode: 'both' | 'enter' | 'exit' = 'both'
+  ) {
+    if (this.destroyed) return;
+    // Collapse queued transitions before filtering either hysteresis boundary.
+    const latest = new Map<Element, IntersectionObserverEntry>();
+    for (const entry of entries) {
+      const previous = latest.get(entry.target);
+      if (!previous || entry.time >= previous.time)
+        latest.set(entry.target, entry);
+    }
 
     const enteredElements = new Set<Element>();
     const exitedElements = new Set<Element>();
-    for (const {isIntersecting, target} of entries) {
+    const exitHeights = new Map<Element, number>();
+    for (const {
+      isIntersecting,
+      intersectionRect,
+      boundingClientRect,
+      target,
+      time,
+    } of latest.values()) {
       if (this.removedTargets.has(target)) {
         continue;
       }
 
-      if (isIntersecting) {
+      const entered =
+        isIntersecting &&
+        intersectionRect.width > 0 &&
+        intersectionRect.height > 0;
+      if ((mode === 'enter' && !entered) || (mode === 'exit' && entered))
+        continue;
+      if (time < (this.transitionTimes.get(target) ?? -Infinity)) continue;
+      this.transitionTimes.set(target, time);
+      if (entered) {
         enteredElements.add(target);
         exitedElements.delete(target);
       } else {
         enteredElements.delete(target);
         exitedElements.add(target);
+        exitHeights.set(target, boundingClientRect.height);
       }
     }
-    if (!enteredElements.size && !exitedElements.size) {
-      return;
+    for (const target of enteredElements) {
+      if (this.enteredTargets.has(target)) enteredElements.delete(target);
+      else {
+        this.enteredTargets.add(target);
+        if (target instanceof HTMLElement)
+          target.style.removeProperty('min-height');
+      }
     }
-    this.intersectionCallback!(enteredElements, exitedElements);
+    for (const target of exitedElements) {
+      if (!this.enteredTargets.delete(target)) exitedElements.delete(target);
+      else if (target instanceof HTMLElement) {
+        // Unmounting chart contents must not collapse a row during scrolling.
+        target.style.minHeight = `${exitHeights.get(target) ?? 0}px`;
+      }
+    }
+    if (!enteredElements.size && !exitedElements.size) return;
+    const notify = () =>
+      this.intersectionCallback!(enteredElements, exitedElements);
+    if (this.zone) this.zone.run(notify);
+    else notify();
   }
 
-  onCardIntersectionForTest(entries: IntersectionObserverEntry[]) {
-    this.onCardIntersection(entries);
+  onCardIntersectionForTest(
+    entries: IntersectionObserverEntry[],
+    mode: 'both' | 'enter' | 'exit' = 'both'
+  ) {
+    this.onCardIntersection(entries, mode);
   }
 }
 

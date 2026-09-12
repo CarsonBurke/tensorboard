@@ -84,7 +84,15 @@ export class ChartImpl implements Chart {
     this.resize(option.domDimension);
   }
 
-  dispose(): void {}
+  private disposed = false;
+
+  dispose(): void {
+    // Without this, a chart's WebGL context, scene, and geometries outlived
+    // it: pooled workers are reused for new charts, and the browser abandons
+    // old contexts once too many are alive on a page.
+    this.disposed = true;
+    this.renderer.dispose();
+  }
 
   setXScaleType(type: ScaleType) {
     this.coordinator.setXScale(createScale(type));
@@ -152,10 +160,11 @@ export class ChartImpl implements Chart {
   private shouldRepaint = false;
 
   private scheduleRepaint() {
-    if (this.shouldRepaint) return;
+    if (this.shouldRepaint || this.disposed) return;
 
     this.shouldRepaint = true;
     util.requestAnimationFrame(() => {
+      if (this.disposed) return;
       this.repaint();
       this.shouldRepaint = false;
     });

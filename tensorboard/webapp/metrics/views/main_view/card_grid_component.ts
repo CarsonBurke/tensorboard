@@ -26,10 +26,21 @@ import {PluginType} from '../../data_source';
 import {CardId} from '../../types';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
 import {CardIdWithMetadata} from '../metrics_view_types';
-import {CardStateMap} from '../../store/metrics_types';
 
 const MIN_CARD_MIN_WIDTH_IN_PX = 335;
 const MAX_CARD_MIN_WIDTH_IN_PX = 735;
+
+/**
+ * Card state the grid renders, scoped to the cards it is currently showing.
+ *
+ * The grid deliberately does not take the whole card state map: that map gets
+ * a new identity on every card state change, including one per mousemove
+ * while any chart is panned, which would mark every tag group's grid dirty.
+ */
+export interface CardGridSizing {
+  fullWidth: ReadonlySet<CardId>;
+  tableExpanded: ReadonlySet<CardId>;
+}
 
 @Component({
   standalone: false,
@@ -52,7 +63,7 @@ export class CardGridComponent {
   @Input() cardMinWidth!: number | null;
   @Input() cardObserver!: CardObserver;
   @Input() showPaginationControls!: boolean;
-  @Input() cardStateMap!: CardStateMap;
+  @Input() cardSizing!: CardGridSizing;
   @Input() groupName: string | null = null;
 
   @Output() pageIndexChanged = new EventEmitter<number>();

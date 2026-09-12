@@ -3,9 +3,20 @@
 The 2.21 minor series tracks TensorFlow 2.21.
 
 ## Features
+- Keep unselected Time Series histories in a persistent disk index, automatically
+  window run and tag catalogs while scrolling, and prepare charts one viewport
+  ahead. Recently viewed histories use a 64 MiB estimated inactive-data cache,
+  and rendered charts have a wider exit buffer to avoid rebuilds on reversal.
+  Closed categories need only summaries; category-local pagination remains.
+  Existing explicit full-catalog API requests remain available without hard caps.
 - Time Series Dashboard Optimization: Improved usability for time-series tooltips by limiting them to a maximum of 5 items and setting the default sorting to `"Nearest Pixel"` (prioritizing values closest to the cursor) (#7046, #7051).
 
 ## Bug Fixes
+- Use actual rendered category bounds for Time Series viewport loading so height
+  estimates cannot leave visible expanded categories blank.
+- Avoid rebuilding scalar run-table rows during scrolling; reuse rows and derived
+  values until their inputs change.
+- Preserve the Time Series scroll position when adding or removing selected runs.
 - Fix a Projector plugin vulnerability. (#7115)
 - Dependency Compatibility: Fixed runtime crashes caused by the missing `pkg_resources` library in newer environments (migrated to standard `importlib.metadata`) (#7057).
 

@@ -13,35 +13,36 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {Injectable} from '@angular/core';
-import {HttpHeaders} from '@angular/common/http';
 import {Store} from '@ngrx/store';
 import {forkJoin, Observable, of} from 'rxjs';
-import {filter, map, take, withLatestFrom} from 'rxjs/operators';
+import {filter, map, switchMap, take, withLatestFrom} from 'rxjs/operators';
 import {
   getIsFeatureFlagsLoaded,
   getIsMetricsImageSupportEnabled,
 } from '../../feature_flag/store/feature_flag_selectors';
 import {State as FeatureFlagAppState} from '../../feature_flag/store/feature_flag_types';
 import {TBHttpClient} from '../../webapp_data_source/tb_http_client';
+import {hasOwn} from '../../util/lang';
 import {
-  BackendTagMetadata,
+  BackendScalarColumns,
   BackendTimeSeriesRequest,
   BackendTimeSeriesResponse,
 } from './metrics_backend_types';
 import {
+  HistogramStepDatum,
   ImageId,
-  isSampledPlugin,
+  ImageStepDatum,
   isFailedTimeSeriesResponse,
   isSingleRunPlugin,
   MetricsDataSource,
+  MetricsCatalog,
   MultiRunTimeSeriesRequest,
   PluginType,
-  RunSampledInfo,
   RunToSeries,
-  RunToTags,
+  ScalarStepDatum,
   SingleRunTimeSeriesRequest,
   TagMetadata,
-  TagToRunSampledInfo,
+  TagMetadataRequest,
   TimeSeriesRequest,
   TimeSeriesResponse,
 } from './types';
@@ -67,10 +68,19 @@ function buildFrontendTimeSeriesResponse(
   const {runToSeries, run, ...responseRest} = backendResponse;
   const response = {...responseRest} as TimeSeriesResponse;
   if (runToSeries) {
-    response.runToSeries = buildRunIdKeyedObject<RunToSeries>(
-      runToSeries,
-      experimentId
-    );
+    if (backendResponse.plugin === PluginType.SCALARS) {
+      response.runToSeries = expandScalarColumns(
+        runToSeries as {[run: string]: BackendScalarColumns},
+        experimentId
+      );
+    } else {
+      response.runToSeries = buildRunIdKeyedObject(
+        runToSeries as
+          | {[run: string]: HistogramStepDatum[]}
+          | {[run: string]: ImageStepDatum[]},
+        experimentId
+      );
+    }
   }
   if (run) {
     response.runId = runToRunId(run, experimentId);
@@ -78,96 +88,43 @@ function buildFrontendTimeSeriesResponse(
   return response;
 }
 
+/**
+ * Rebuilds per-point scalar data from the columnar wire format, keyed by run
+ * id. See `ScalarColumns` in http_api.md.
+ */
+function expandScalarColumns(
+  runToColumns: {[run: string]: BackendScalarColumns},
+  experimentId: string
+): RunToSeries {
+  // Prototype-free: run names come from the user, so an inherited
+  // `constructor` or `hasOwnProperty` must never be visible as a run.
+  const runToSeries = Object.create(null) as Record<string, ScalarStepDatum[]>;
+  for (const run in runToColumns) {
+    if (!hasOwn(runToColumns, run)) {
+      continue;
+    }
+    const {steps, wallTimes, values} = runToColumns[run];
+    const series = new Array<ScalarStepDatum>(steps.length);
+    for (let i = 0; i < series.length; i++) {
+      series[i] = {wallTime: wallTimes[i], step: steps[i], value: values[i]};
+    }
+    runToSeries[runToRunId(run, experimentId)] = series;
+  }
+  return runToSeries;
+}
+
 function buildRunIdKeyedObject<T extends {}>(
   backendObject: T,
   experimentId: string
 ): T {
-  const frontendObject = {} as Record<string, any>;
+  const frontendObject = Object.create(null) as Record<string, any>;
   for (const run in backendObject) {
-    if (backendObject.hasOwnProperty(run)) {
+    if (hasOwn(backendObject, run)) {
       const runId = runToRunId(run, experimentId);
       frontendObject[runId] = backendObject[run];
     }
   }
   return frontendObject as T;
-}
-
-function buildFrontendTagMetadata(
-  backendTagMetadata: BackendTagMetadata,
-  experimentId: string
-): TagMetadata {
-  const tagMetadata = {} as TagMetadata;
-  for (const pluginType of Object.keys(backendTagMetadata)) {
-    const plugin = pluginType as PluginType;
-    if (isSampledPlugin(plugin)) {
-      const {tagRunSampledInfo, ...rest} = backendTagMetadata[plugin];
-      const frontendTagRunSampledInfo = {} as TagToRunSampledInfo;
-      for (const tag in tagRunSampledInfo) {
-        if (tagRunSampledInfo.hasOwnProperty(tag)) {
-          frontendTagRunSampledInfo[tag] =
-            buildRunIdKeyedObject<RunSampledInfo>(
-              tagRunSampledInfo[tag],
-              experimentId
-            );
-        }
-      }
-      tagMetadata[plugin] = {
-        ...rest,
-        tagRunSampledInfo: frontendTagRunSampledInfo,
-      };
-    } else {
-      const {runTagInfo, ...rest} = backendTagMetadata[plugin];
-      tagMetadata[plugin] = {
-        ...rest,
-        runTagInfo: buildRunIdKeyedObject<RunToTags>(runTagInfo, experimentId),
-      };
-    }
-  }
-  return tagMetadata;
-}
-
-function buildCombinedTagMetadata(results: TagMetadata[]): TagMetadata {
-  // Collate results from different experiments.
-  const tagMetadata = {} as TagMetadata;
-  for (const experimentTagMetadata of results) {
-    for (const plugin of Object.values(PluginType)) {
-      if (isSampledPlugin(plugin)) {
-        tagMetadata[plugin] = tagMetadata[plugin] || {
-          tagDescriptions: {},
-          tagRunSampledInfo: {},
-        };
-        const {tagDescriptions, tagRunSampledInfo} =
-          experimentTagMetadata[plugin];
-        tagMetadata[plugin].tagDescriptions = {
-          ...tagMetadata[plugin].tagDescriptions,
-          ...tagDescriptions,
-        };
-        const combinedTagRunSampledInfo = tagMetadata[plugin].tagRunSampledInfo;
-        for (const tag of Object.keys(tagRunSampledInfo)) {
-          combinedTagRunSampledInfo[tag] = combinedTagRunSampledInfo[tag] || {};
-          for (const runId of Object.keys(tagRunSampledInfo[tag])) {
-            combinedTagRunSampledInfo[tag][runId] =
-              tagRunSampledInfo[tag][runId];
-          }
-        }
-      } else {
-        tagMetadata[plugin] = tagMetadata[plugin] || {
-          tagDescriptions: {},
-          runTagInfo: {},
-        };
-        const {tagDescriptions, runTagInfo} = experimentTagMetadata[plugin];
-        tagMetadata[plugin].tagDescriptions = {
-          ...tagMetadata[plugin].tagDescriptions,
-          ...tagDescriptions,
-        };
-        tagMetadata[plugin].runTagInfo = {
-          ...tagMetadata[plugin].runTagInfo,
-          ...runTagInfo,
-        };
-      }
-    }
-  }
-  return tagMetadata;
 }
 
 /**
@@ -176,98 +133,96 @@ function buildCombinedTagMetadata(results: TagMetadata[]): TagMetadata {
  */
 @Injectable()
 export class TBMetricsDataSource implements MetricsDataSource {
-  private readonly tagCache = new Map<
-    string,
-    {revision: string; metadata: TagMetadata}
-  >();
-  private combinedTags?: {
-    results: TagMetadata[];
-    images: boolean;
-    metadata: TagMetadata;
-  };
   constructor(
     private readonly http: TBHttpClient,
     private readonly store: Store<FeatureFlagAppState>
   ) {}
 
-  fetchTagMetadata(experimentIds: string[]) {
-    const fetches = experimentIds.map((experimentId) => {
-      const url = `/experiment/${experimentId}/${HTTP_PATH_PREFIX}/tags`;
-      const cached = this.tagCache.get(experimentId);
-      return this.http
-        .get<
-          | BackendTagMetadata
-          | {revision: string | null; metadata: BackendTagMetadata | null}
-        >(url, {
-          headers: new HttpHeaders({
-            'X-TensorBoard-Metadata-Revision': cached?.revision ?? '',
-          }),
-        })
-        .pipe(
-          map((response) => {
-            // Older/custom servers can continue returning the original body.
-            if (!('metadata' in response)) {
-              this.tagCache.delete(experimentId);
-              return buildFrontendTagMetadata(response, experimentId);
-            }
-            if (response.metadata === null) {
-              if (!cached || response.revision !== cached.revision) {
-                throw new Error(
-                  'Metadata revision response has no matching cached data'
-                );
-              }
-              return cached.metadata;
-            }
-            const metadata = buildFrontendTagMetadata(
-              response.metadata,
-              experimentId
-            );
-            this.tagCache.delete(experimentId);
-            if (response.revision) {
-              this.tagCache.set(experimentId, {
-                revision: response.revision,
-                metadata,
-              });
-              if (this.tagCache.size > 8)
-                this.tagCache.delete(this.tagCache.keys().next().value!);
-            }
-            return metadata;
-          })
-        );
+  fetchTagMetadata(experimentIds: string[], request?: TagMetadataRequest) {
+    const experiments = new Set(experimentIds);
+    const inRoute = (id: string) =>
+      experiments.has(parseRunId(id).experimentId);
+    const scope: TagMetadataRequest = request
+      ? {
+          ...request,
+          runIds: request.runIds.filter(inRoute),
+          pinnedRunIds: (request.pinnedRunIds ?? []).filter(inRoute),
+        }
+      : {
+          runIds: [],
+          query: '',
+          groupOffset: 0,
+          groupLimit: 40,
+          groups: [],
+          filteredOffset: 0,
+          filteredLimit: 40,
+          pinnedTags: [],
+        };
+    const empty = (): TagMetadata => ({
+      scalars: {tagDescriptions: {}, tagToRuns: {}},
+      histograms: {tagDescriptions: {}, tagToRuns: {}},
+      images: {tagDescriptions: {}, tagRunSampledInfo: {}},
+      catalog: {
+        groups: [],
+        totalGroups: 0,
+        groupOffset: scope.groupOffset,
+        filteredOffset: scope.filteredOffset,
+        cards: [],
+        totalCards: 0,
+      },
     });
-    const isImagesSupported$ = this.store.select(getIsFeatureFlagsLoaded).pipe(
+    if (
+      !scope.runIds.length &&
+      !(scope.pinnedTags.length && scope.pinnedRunIds?.length)
+    ) {
+      return of(empty());
+    }
+    return this.store.select(getIsFeatureFlagsLoaded).pipe(
       filter(Boolean),
       take(1),
       withLatestFrom(this.store.select(getIsMetricsImageSupportEnabled)),
-      map(([, isImagesSupported]) => {
-        return isImagesSupported;
-      })
-    );
-    return forkJoin(fetches).pipe(
-      withLatestFrom(isImagesSupported$),
-      map(([results, isImagesSupported]) => {
-        const previous = this.combinedTags;
-        if (
-          previous &&
-          previous.images === isImagesSupported &&
-          previous.results.length === results.length &&
-          results.every((result, index) => result === previous.results[index])
-        ) {
-          return previous.metadata;
-        }
-        const tagMetadata = buildCombinedTagMetadata(results);
-        if (!isImagesSupported) {
-          tagMetadata[PluginType.IMAGES] = {
-            tagDescriptions: {},
-            tagRunSampledInfo: {},
-          };
-        }
-        this.combinedTags = {
-          results,
-          images: isImagesSupported,
-          metadata: tagMetadata,
-        };
-        return tagMetadata;
+      switchMap(([, imagesSupported]) => {
+        const plugins = (
+          scope.plugins?.length ? scope.plugins : Object.values(PluginType)
+        ).filter((plugin) => imagesSupported || plugin !== PluginType.IMAGES);
+        if (!plugins.length && !scope.pinnedTags.length) return of(empty());
+        // One server-side union preserves category counts and card page order
+        // across experiments. No experiment can force a full tag catalog into
+        // the browser merely to merge its page with another experiment.
+        return this.http
+          .post<
+            Omit<MetricsCatalog, 'filteredOffset'> & {metadata: TagMetadata}
+          >(
+            `/${HTTP_PATH_PREFIX}/catalog`,
+            {
+              ...scope,
+              // A persisted filter may select only a disabled plugin. Pins
+              // still resolve, without expanding that empty catalog scope.
+              runIds: plugins.length ? scope.runIds : [],
+              pinnedRunIds: plugins.length
+                ? scope.pinnedRunIds ?? []
+                : [
+                    ...new Set([
+                      ...scope.runIds,
+                      ...(scope.pinnedRunIds ?? []),
+                    ]),
+                  ],
+              plugins: plugins.length
+                ? plugins
+                : [PluginType.SCALARS, PluginType.HISTOGRAMS],
+            },
+            undefined,
+            'request'
+          )
+          .pipe(
+            map(({metadata, ...catalog}) => ({
+              ...metadata,
+              images: imagesSupported
+                ? metadata.images
+                : {tagDescriptions: {}, tagRunSampledInfo: {}},
+              catalog: {...catalog, filteredOffset: scope.filteredOffset},
+            }))
+          );
       })
     );
   }

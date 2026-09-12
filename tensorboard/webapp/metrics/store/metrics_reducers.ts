@@ -21,7 +21,7 @@ import * as coreActions from '../../core/actions';
 import {persistentSettingsLoaded} from '../../persistent_settings';
 import {DataLoadState} from '../../types/data';
 import {ElementId} from '../../util/dom';
-import {mapObjectValues} from '../../util/lang';
+import {hasOwn, mapObjectValues} from '../../util/lang';
 import {composeReducers} from '../../util/ngrx';
 import {TimeSelectionToggleAffordance} from '../../widgets/card_fob/card_fob_types';
 import * as actions from '../actions';
@@ -31,6 +31,8 @@ import {
   isSingleRunPlugin,
   isSingleRunTimeSeriesRequest,
   NonSampledPluginType,
+  METRICS_PLUGIN_ID,
+  getMetricsCatalogCardMetadata,
   PluginType,
   ScalarStepDatum,
   TagMetadata as DataSourceTagMetadata,
@@ -48,7 +50,7 @@ import {
   TooltipSort,
   URLDeserializedState,
 } from '../types';
-import {groupCardIdWithMetdata} from '../utils';
+import {getTagGroupName, groupCardIdWithMetdata} from '../utils';
 import {ColumnHeaderType, DataTableMode} from '../../widgets/data_table/types';
 import {
   buildOrReturnStateWithPinnedCopy,
@@ -62,6 +64,7 @@ import {
   generateNextPinnedCardMappings,
   generateScalarCardMinMaxStep,
   getCardId,
+  getLoadableKey,
   getRunIds,
   getTimeSeriesLoadable,
   retainTimeSeriesRuns,
@@ -75,6 +78,7 @@ import {
   MetricsNonNamespacedState,
   MetricsSettings,
   MetricsState,
+  DEFAULT_METRICS_CATALOG_VIEWPORT,
   METRICS_SETTINGS_DEFAULT,
   NonSampledPluginTagMetadata,
   RunToSeries,
@@ -175,7 +179,7 @@ function getMaxStepIndex(
   const {plugin, tag, runId, sample} = cardMetadataMap[cardId];
   const loadable = getTimeSeriesLoadable(timeSeriesData, plugin, tag, sample);
   if (loadable) {
-    if (runId !== null && loadable.runToSeries.hasOwnProperty(runId)) {
+    if (runId !== null && hasOwn(loadable.runToSeries, runId)) {
       const seriesLength = loadable.runToSeries[runId].length;
       return seriesLength > 0 ? seriesLength - 1 : null;
     }
@@ -206,7 +210,7 @@ function buildNormalizedCardStepIndexMap(
   const cardIdsToNormalize: Iterable<CardId> =
     cardIds || (Object.keys(cardMetadataMap) as CardId[]);
   for (const cardId of cardIdsToNormalize) {
-    if (!cardMetadataMap.hasOwnProperty(cardId)) {
+    if (!hasOwn(cardMetadataMap, cardId)) {
       continue;
     }
     const maxStepIndex = getMaxStepIndex(
@@ -216,14 +220,14 @@ function buildNormalizedCardStepIndexMap(
     );
     if (maxStepIndex === null) {
       if (
-        cardStepIndex.hasOwnProperty(cardId) &&
+        hasOwn(cardStepIndex, cardId) &&
         cardStepIndex[cardId]!.index !== null
       ) {
         result[cardId] = {index: null, isClosest: false};
       }
       continue;
     }
-    const stepIndex = cardStepIndex.hasOwnProperty(cardId)
+    const stepIndex = hasOwn(cardStepIndex, cardId)
       ? cardStepIndex[cardId]!.index
       : null;
     const prevMaxStepIndex = getMaxStepIndex(
@@ -242,15 +246,41 @@ function buildNormalizedCardStepIndexMap(
   return result;
 }
 
+type StepSeries = ReadonlyArray<{step: number}>;
+
+/**
+ * Step extents of individual series, keyed by the series array itself.
+ *
+ * A series array is never mutated once it is in the store, and a purge keeps
+ * the arrays of the runs it retains, so the extents of everything that is
+ * still loaded survive. Recomputing the global extents after a purge then
+ * only visits the points of series that are new to the store.
+ */
+const seriesStepMinMax = new WeakMap<object, {min: number; max: number}>();
+
+function getSeriesStepMinMax(series: StepSeries): {min: number; max: number} {
+  let extent = seriesStepMinMax.get(series);
+  if (extent === undefined) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const datum of series) {
+      min = Math.min(min, datum.step);
+      max = Math.max(max, datum.step);
+    }
+    extent = {min, max};
+    seriesStepMinMax.set(series, extent);
+  }
+  return extent;
+}
+
 function getTimeSeriesStepMinMax(timeSeriesData: TimeSeriesData) {
   let min = Infinity;
   let max = -Infinity;
   const recordLoadable = (loadable: TimeSeriesLoadable) => {
     for (const series of Object.values(loadable.runToSeries)) {
-      for (const datum of series) {
-        min = Math.min(min, datum.step);
-        max = Math.max(max, datum.step);
-      }
+      const extent = getSeriesStepMinMax(series);
+      min = Math.min(min, extent.min);
+      max = Math.max(max, extent.max);
     }
   };
 
@@ -266,27 +296,6 @@ function getTimeSeriesStepMinMax(timeSeriesData: TimeSeriesData) {
     }
   }
   return {min, max};
-}
-
-function rebuildScalarCardMinMax(
-  state: MetricsState,
-  timeSeriesData: TimeSeriesData
-): CardStateMap {
-  const result = {...state.cardStateMap};
-  for (const [tag, loadable] of Object.entries(timeSeriesData.scalars)) {
-    const cardId = getCardId({
-      plugin: PluginType.SCALARS,
-      tag,
-      runId: null,
-    });
-    const dataMinMax = generateScalarCardMinMaxStep(loadable.runToSeries);
-    result[cardId] = {...result[cardId], dataMinMax};
-    const pinnedId = state.cardToPinnedCopy.get(cardId);
-    if (pinnedId) {
-      result[pinnedId] = {...result[pinnedId], dataMinMax};
-    }
-  }
-  return result;
 }
 
 /**
@@ -538,6 +547,7 @@ const {initialState, reducers: namespaceContextedReducer} =
       isSlideoutMenuOpen: false,
       lastPinnedCardTime: 0,
       tableEditorSelectedTab: DataTableMode.SINGLE,
+      inactiveTimeSeries: new Map<string, number>(),
       timeSeriesData: {
         scalars: {},
         histograms: {},
@@ -589,6 +599,9 @@ const {initialState, reducers: namespaceContextedReducer} =
           },
           cardList: [],
           cardMetadataMap: {},
+          timeSeriesData: {scalars: {}, histograms: {}, images: {}},
+          inactiveTimeSeries: new Map<string, number>(),
+          stepMinMax: {min: Infinity, max: -Infinity},
           // Reset visible cards in case we resume a route that was left dirty.
           // Since visibility tracking is async, the state may not have received
           // 'exited card' updates when it was cached by the router.
@@ -604,6 +617,27 @@ export const INITIAL_STATE = initialState;
 
 const reducer = createReducer(
   initialState,
+  on(coreActions.changePlugin, (state, {plugin}) =>
+    plugin === METRICS_PLUGIN_ID
+      ? state
+      : {
+          ...state,
+          visibleCardMap: new Map<ElementId, CardId>(),
+          timeSeriesData: {scalars: {}, histograms: {}, images: {}},
+          inactiveTimeSeries: new Map<string, number>(),
+          stepMinMax: {min: Infinity, max: -Infinity},
+        }
+  ),
+  on(actions.metricsCatalogViewportChanged, (state, viewport) => ({
+    ...state,
+    catalogViewport: {
+      groupOffset: normalizePageIndex(viewport.groupOffset),
+      groupLimit: normalizePageIndex(viewport.groupLimit),
+      visibleGroups: viewport.visibleGroups,
+      filteredOffset: normalizePageIndex(viewport.filteredOffset),
+      filteredLimit: normalizePageIndex(viewport.filteredLimit),
+    },
+  })),
   on(stateRehydratedFromUrl, (state, {routeKind, partialState}) => {
     if (
       routeKind !== RouteKind.EXPERIMENT &&
@@ -767,6 +801,7 @@ const reducer = createReducer(
         state: nextTagMetadataLoaded,
       },
       timeSeriesData: nextTimeSeriesData,
+      inactiveTimeSeries: new Map<string, number>(),
     };
   }),
   on(
@@ -815,12 +850,59 @@ const reducer = createReducer(
       };
 
       const newCardMetadataMap = {} as CardMetadataMap;
-      const nextCardMetadataList = buildCardMetadataList(nextTagMetadata);
+      const nextCardMetadataList: CardMetadata[] = tagMetadata.catalog
+        ? tagMetadata.catalog.cards.map(getMetricsCatalogCardMetadata)
+        : buildCardMetadataList(nextTagMetadata);
+      if (tagMetadata.catalog) {
+        const pins: CardUniqueInfo[] = [
+          ...state.unresolvedImportedPinnedCards,
+          ...[...state.pinnedCardToOriginal.keys()].flatMap((id) => {
+            const card = state.cardMetadataMap[id];
+            if (!card) return [];
+            const {runId, ...pin} = card;
+            return [runId === null ? pin : {...pin, runId}];
+          }),
+        ];
+        for (const pin of pins) {
+          const {plugin, tag, runId, sample} = pin;
+          if (plugin === PluginType.SCALARS) {
+            if (hasOwn(nextTagMetadata.scalars.tagToRuns, tag)) {
+              nextCardMetadataList.push({plugin, tag, runId: null});
+            }
+          } else if (plugin === PluginType.HISTOGRAMS) {
+            if (
+              runId &&
+              hasOwn(nextTagMetadata.histograms.tagToRuns, tag) &&
+              nextTagMetadata.histograms.tagToRuns[tag].includes(runId)
+            ) {
+              nextCardMetadataList.push({plugin, tag, runId});
+            }
+          } else if (
+            plugin === PluginType.IMAGES &&
+            runId &&
+            sample !== undefined
+          ) {
+            const numSample =
+              nextTagMetadata.images.tagRunSampledInfo[tag]?.[runId]
+                ?.maxSamplesPerStep;
+            if (numSample !== undefined && sample >= 0 && sample < numSample) {
+              nextCardMetadataList.push({
+                plugin,
+                tag,
+                runId,
+                sample,
+                numSample,
+              });
+            }
+          }
+        }
+      }
       const nextCardList: string[] = [];
 
       // Create new cards for unseen metadata.
       for (const cardMetadata of nextCardMetadataList) {
         const cardId = getCardId(cardMetadata);
+        if (hasOwn(newCardMetadataMap, cardId)) continue;
         newCardMetadataMap[cardId] = cardMetadata;
         nextCardList.push(cardId);
       }
@@ -832,7 +914,9 @@ const reducer = createReducer(
             return {...newCardMetadataMap[cardId], cardId};
           })
           .filter(Boolean);
-        const cardGroups = groupCardIdWithMetdata(cardListWithMetadata);
+        const cardGroups = tagMetadata.catalog
+          ? tagMetadata.catalog.groups.map(({name}) => ({groupName: name}))
+          : groupCardIdWithMetdata(cardListWithMetadata);
 
         tagGroupExpanded = new Map(state.tagGroupExpanded);
         for (const group of cardGroups.slice(0, 2)) {
@@ -861,8 +945,20 @@ const reducer = createReducer(
         nextCardMetadataMap
       );
 
+      const unresolvedPins = [...state.unresolvedImportedPinnedCards];
+      if (tagMetadata.catalog) {
+        for (const [pinnedId, originalId] of state.pinnedCardToOriginal) {
+          if (
+            !hasOwn(newCardMetadataMap, originalId) &&
+            state.cardMetadataMap[pinnedId]
+          ) {
+            const {runId, ...pin} = state.cardMetadataMap[pinnedId];
+            unresolvedPins.push(runId === null ? pin : {...pin, runId});
+          }
+        }
+      }
       const resolvedResult = buildOrReturnStateWithUnresolvedImportedPins(
-        state.unresolvedImportedPinnedCards,
+        unresolvedPins,
         nextCardList,
         nextCardMetadataMap,
         nextCardToPinnedCopy,
@@ -872,18 +968,47 @@ const reducer = createReducer(
         state.cardStateMap
       );
 
-      return {
+      const timeSeriesData = state.timeSeriesData;
+      let cardStateMap = resolvedResult.cardStateMap;
+      if (tagMetadata.catalog) {
+        const retainedState: CardStateMap = {};
+        for (const [id, settings] of Object.entries(cardStateMap)) {
+          if (hasOwn(nextCardMetadataMap, id)) {
+            retainedState[id] = settings;
+          } else {
+            // Keep lightweight user choices across catalog windows, not derived
+            // extents for every visited card. Histories have a separate budget.
+            const {dataMinMax, ...preferences} = settings;
+            if (Object.keys(preferences).length)
+              retainedState[id] = preferences;
+          }
+        }
+        cardStateMap = retainedState;
+      }
+      const catalogCardIds = tagMetadata.catalog
+        ? tagMetadata.catalog.cards.map((card) =>
+            getCardId(getMetricsCatalogCardMetadata(card))
+          )
+        : null;
+
+      const nextState: MetricsState = {
         ...state,
         ...resolvedResult,
         tagGroupExpanded,
+        timeSeriesData,
+        cardStateMap,
+        stepMinMax: tagMetadata.catalog
+          ? getTimeSeriesStepMinMax(timeSeriesData)
+          : state.stepMinMax,
         tagMetadataLoadState: {
           state: DataLoadState.LOADED,
           lastLoadedTimeInMs: Date.now(),
         },
         tagMetadata: nextTagMetadata,
         tagMetadataSource: tagMetadata,
-        cardList: nextCardList,
+        cardList: catalogCardIds ?? nextCardList,
       };
+      return nextState;
     }
   ),
   on(actions.metricsCardStateUpdated, (state, {cardId, settings}) => {
@@ -915,6 +1040,7 @@ const reducer = createReducer(
     return {
       ...state,
       tagFilter,
+      catalogViewport: DEFAULT_METRICS_CATALOG_VIEWPORT,
     };
   }),
   on(actions.metricsChangeTooltipSort, (state, {sort}) => {
@@ -1124,6 +1250,46 @@ const reducer = createReducer(
       return {...state, timeSeriesData: nextTimeSeriesData};
     }
   ),
+  on(actions.timeSeriesRequestsCancelled, (state, {requests}) => {
+    let timeSeriesData = state.timeSeriesData;
+    for (const request of requests) {
+      const {plugin, tag, sample} = request;
+      const current = getTimeSeriesLoadable(
+        timeSeriesData,
+        plugin,
+        tag,
+        sample
+      );
+      if (!current) continue;
+      const runIds = getRequestedRunIds(request, state.tagMetadata).filter(
+        (runId) => current.runToLoadState[runId] === DataLoadState.LOADING
+      );
+      if (!runIds.length) continue;
+      timeSeriesData = {
+        ...timeSeriesData,
+        [plugin]: createPluginDataWithLoadable(
+          timeSeriesData,
+          plugin,
+          tag,
+          sample
+        ),
+      };
+      const loadable = getTimeSeriesLoadable(
+        timeSeriesData,
+        plugin,
+        tag,
+        sample
+      )!;
+      loadable.runToLoadState = createRunToLoadState(
+        DataLoadState.NOT_LOADED,
+        runIds,
+        loadable.runToLoadState
+      );
+    }
+    return timeSeriesData === state.timeSeriesData
+      ? state
+      : {...state, timeSeriesData};
+  }),
   on(
     actions.fetchTimeSeriesFailed,
     (
@@ -1171,11 +1337,12 @@ const reducer = createReducer(
         return state;
       }
 
-      const nextStepMinMax = {...state.stepMinMax};
       const nextCardStateMap = {...state.cardStateMap};
       const nextTimeSeriesData = {...state.timeSeriesData};
-      const affectedDataIds = new Set<CardId>();
-      const scalarMinMaxByDataId = new Map<CardId, MinMaxStep>();
+      // Non-pinned cards are keyed by `getCardId(metadata)`, so a response's
+      // own card id is its data id; a pinned copy is resolved through
+      // `cardToPinnedCopy` below. Nothing else can read a response's data,
+      // which is why no card lookup is needed here.
       const affectedCardIds = new Set<CardId>();
 
       for (const {request, response} of requestResponses) {
@@ -1213,8 +1380,16 @@ const reducer = createReducer(
           requestedRunIds,
           loadable.runToLoadState
         );
+        // A requested run that the response omits has no data anymore. Its
+        // cached series would otherwise keep rendering on the card while
+        // marked LOADED.
+        for (const runId of requestedRunIds) {
+          if (!hasOwn(runToSeries, runId)) {
+            delete loadable.runToSeries[runId];
+          }
+        }
         for (const runId in runToSeries) {
-          if (runToSeries.hasOwnProperty(runId)) {
+          if (hasOwn(runToSeries, runId)) {
             const previous = loadable.runToSeries[runId];
             const incoming = runToSeries[runId];
             const unchanged =
@@ -1229,26 +1404,32 @@ const reducer = createReducer(
                   Object.is(point.value, old.value)
                 );
               });
-            loadable.runToSeries[runId] = unchanged ? previous : incoming;
+            const series = unchanged ? previous : incoming;
+            loadable.runToSeries[runId] = series;
             loadable.runToLoadState[runId] = DataLoadState.LOADED;
-
-            for (const step of runToSeries[runId]) {
-              nextStepMinMax.min = Math.min(nextStepMinMax.min, step.step);
-              nextStepMinMax.max = Math.max(nextStepMinMax.max, step.step);
-            }
           }
         }
 
         let cardMetadata: CardMetadata;
         if (isSampledPlugin(plugin)) {
-          cardMetadata = {plugin, tag, runId: runId!, sample: sample!};
+          // A sampled card's id also carries the tag's sample count, which
+          // only tag metadata knows. Without it the id names no card, and the
+          // card would never have its step index normalized on load.
+          const sampledInfo = state.tagMetadata[plugin].tagRunSampledInfo;
+          const numSample =
+            hasOwn(sampledInfo, tag) && hasOwn(sampledInfo[tag], runId!)
+              ? sampledInfo[tag][runId!].maxSamplesPerStep
+              : undefined;
+          cardMetadata =
+            numSample === undefined
+              ? {plugin, tag, runId: runId!, sample: sample!}
+              : {plugin, tag, runId: runId!, sample: sample!, numSample};
         } else if (isSingleRunPlugin(plugin)) {
           cardMetadata = {plugin, tag, runId: runId!};
         } else {
           cardMetadata = {plugin, tag, runId: null};
         }
         const dataId = getCardId(cardMetadata);
-        affectedDataIds.add(dataId);
         affectedCardIds.add(dataId);
         const pinnedId = state.cardToPinnedCopy.get(dataId);
         if (pinnedId) {
@@ -1258,7 +1439,6 @@ const reducer = createReducer(
           const nextMinMax = generateScalarCardMinMaxStep(
             loadable.runToSeries as RunToSeries<PluginType.SCALARS>
           );
-          scalarMinMaxByDataId.set(dataId, nextMinMax);
           nextCardStateMap[dataId] = {
             ...nextCardStateMap[dataId],
             dataMinMax: nextMinMax,
@@ -1272,25 +1452,6 @@ const reducer = createReducer(
         }
       }
 
-      for (const cardId in state.cardMetadataMap) {
-        if (!state.cardMetadataMap.hasOwnProperty(cardId)) {
-          continue;
-        }
-        const typedCardId = cardId as CardId;
-        const dataId = getCardId(state.cardMetadataMap[typedCardId]);
-        if (!affectedDataIds.has(dataId)) {
-          continue;
-        }
-        affectedCardIds.add(typedCardId);
-        const nextMinMax = scalarMinMaxByDataId.get(dataId);
-        if (nextMinMax) {
-          nextCardStateMap[typedCardId] = {
-            ...nextCardStateMap[typedCardId],
-            dataMinMax: nextMinMax,
-          };
-        }
-      }
-
       return {
         ...state,
         timeSeriesData: nextTimeSeriesData,
@@ -1301,7 +1462,7 @@ const reducer = createReducer(
           state.timeSeriesData,
           affectedCardIds
         ),
-        stepMinMax: nextStepMinMax,
+        stepMinMax: getTimeSeriesStepMinMax(nextTimeSeriesData),
         cardStateMap: nextCardStateMap,
       };
     }
@@ -1338,7 +1499,21 @@ const reducer = createReducer(
       const tagGroupPageIndex = new Map(state.tagGroupPageIndex);
       tagGroupPageIndex.set(tagGroup, normalizePageIndex(pageIndex));
 
-      return {...state, tagGroupPageIndex};
+      const source = state.tagMetadataSource;
+      if (!source?.catalog) return {...state, tagGroupPageIndex};
+      return {
+        ...state,
+        tagGroupPageIndex,
+        tagMetadataSource: {
+          ...source,
+          catalog: {
+            ...source.catalog,
+            cards: source.catalog.cards.filter(
+              (card) => getTagGroupName(card.tag) !== tagGroup
+            ),
+          },
+        },
+      };
     }
   ),
   on(
@@ -1792,24 +1967,104 @@ const reducer = createReducer(
     };
   }),
   on(actions.unusedTimeSeriesPurged, (state, {runIds}) => {
-    const timeSeriesData = retainTimeSeriesRuns(
-      state.timeSeriesData,
-      new Set(runIds)
-    );
-    if (timeSeriesData === state.timeSeriesData) {
-      return state;
+    const {timeSeriesData, inactiveTimeSeries, changedLoadableKeys} =
+      retainTimeSeriesRuns(
+        state.timeSeriesData,
+        new Set(runIds),
+        [...new Set(state.visibleCardMap.values())]
+          .filter((cardId) => hasOwn(state.cardMetadataMap, cardId))
+          .map((cardId) => state.cardMetadataMap[cardId]),
+        state.inactiveTimeSeries
+      );
+
+    // Only a card whose own loadable dropped runs can have a different max
+    // step or scalar data range; every other card keeps its entries, so its
+    // selectors stay memoized and its chart is not redrawn. Cards that have
+    // no step index or no data range yet are filled in as well: a restored
+    // catalog card or pinned copy starts without either, and a cache hit has
+    // no subsequent history response to restore them.
+    const affectedCardIds = new Set<CardId>();
+    let nextCardStateMap = state.cardStateMap;
+    // A card and its pinned copy, and every run of a single-run plugin's tag,
+    // read the same loadable, so the range is computed once per tag.
+    const scalarMinMaxByTag = new Map<string, MinMaxStep>();
+    for (const cardId of Object.keys(state.cardMetadataMap) as CardId[]) {
+      const {plugin, tag, sample} = state.cardMetadataMap[cardId];
+      const loadableChanged = changedLoadableKeys.has(
+        getLoadableKey(plugin, tag, sample)
+      );
+      if (
+        loadableChanged ||
+        (!hasOwn(state.cardStepIndex, cardId) &&
+          getMaxStepIndex(cardId, state.cardMetadataMap, timeSeriesData) !==
+            null)
+      ) {
+        affectedCardIds.add(cardId);
+      }
+      if (
+        plugin !== PluginType.SCALARS ||
+        !hasOwn(timeSeriesData[PluginType.SCALARS], tag)
+      ) {
+        continue;
+      }
+      const hasDataMinMax =
+        hasOwn(state.cardStateMap, cardId) &&
+        state.cardStateMap[cardId].dataMinMax !== undefined;
+      if (!loadableChanged && hasDataMinMax) {
+        continue;
+      }
+      let dataMinMax = scalarMinMaxByTag.get(tag);
+      if (dataMinMax === undefined) {
+        dataMinMax = generateScalarCardMinMaxStep(
+          timeSeriesData[PluginType.SCALARS][tag].runToSeries
+        );
+        scalarMinMaxByTag.set(tag, dataMinMax);
+      }
+      if (nextCardStateMap === state.cardStateMap) {
+        // Kept by identity until a range actually changes: every card's state
+        // is read through this one object.
+        nextCardStateMap = {...state.cardStateMap};
+      }
+      nextCardStateMap[cardId] = {...nextCardStateMap[cardId], dataMinMax};
     }
+
+    if (
+      timeSeriesData === state.timeSeriesData &&
+      !affectedCardIds.size &&
+      nextCardStateMap === state.cardStateMap
+    ) {
+      const previousKeys = state.inactiveTimeSeries.keys();
+      if (
+        inactiveTimeSeries.size === state.inactiveTimeSeries.size &&
+        [...inactiveTimeSeries].every(
+          ([key, bytes]) =>
+            previousKeys.next().value === key &&
+            state.inactiveTimeSeries.get(key) === bytes
+        )
+      ) {
+        return state;
+      }
+      return {...state, inactiveTimeSeries};
+    }
+
     return {
       ...state,
       timeSeriesData,
-      cardStepIndex: buildNormalizedCardStepIndexMap(
-        state.cardMetadataMap,
-        state.cardStepIndex,
-        timeSeriesData,
-        state.timeSeriesData
-      ),
-      stepMinMax: getTimeSeriesStepMinMax(timeSeriesData),
-      cardStateMap: rebuildScalarCardMinMax(state, timeSeriesData),
+      inactiveTimeSeries,
+      cardStepIndex: affectedCardIds.size
+        ? buildNormalizedCardStepIndexMap(
+            state.cardMetadataMap,
+            state.cardStepIndex,
+            timeSeriesData,
+            state.timeSeriesData,
+            affectedCardIds
+          )
+        : state.cardStepIndex,
+      stepMinMax:
+        timeSeriesData === state.timeSeriesData
+          ? state.stepMinMax
+          : getTimeSeriesStepMinMax(timeSeriesData),
+      cardStateMap: nextCardStateMap,
     };
   })
 );
@@ -1837,24 +2092,6 @@ function buildPluginTagData(
 ): NonSampledPluginTagMetadata {
   return {
     tagDescriptions: tagMetadata[pluginType].tagDescriptions,
-    tagToRuns: buildTagToRuns(tagMetadata[pluginType].runTagInfo),
+    tagToRuns: tagMetadata[pluginType].tagToRuns,
   };
-}
-
-/**
- * Takes a run-to-tag map and inverts it.
- */
-function buildTagToRuns(runTagInfo: {[run: string]: string[]}) {
-  const tagToRuns: {[tag: string]: string[]} = {};
-  for (const run in runTagInfo) {
-    for (const tag of runTagInfo[run]) {
-      const runs = tagToRuns[tag];
-      if (runs) {
-        runs.push(run);
-      } else {
-        tagToRuns[tag] = [run];
-      }
-    }
-  }
-  return tagToRuns;
 }

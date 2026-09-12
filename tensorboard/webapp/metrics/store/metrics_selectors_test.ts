@@ -329,8 +329,6 @@ describe('metrics selectors', () => {
 
   describe('getCardRunLoadStates', () => {
     it("returns the tag's runs and the load state of requested runs", () => {
-      selectors.getCardRunLoadStates.release();
-
       const metricsState = buildMetricsState({
         timeSeriesData: {
           ...createTimeSeriesData(),
@@ -355,7 +353,7 @@ describe('metrics selectors', () => {
       metricsState.tagMetadata.scalars.tagToRuns = {tagA: ['run1', 'run2']};
       const state = appStateFromMetricsState(metricsState);
 
-      expect(selectors.getCardRunLoadStates(state, '<card_id>')).toEqual({
+      expect(selectors.getCardRunLoadStates('<card_id>')(state)).toEqual({
         tagRunIds: ['run1', 'run2'],
         runToLoadState: {
           run2: DataLoadState.LOADED,
@@ -365,8 +363,6 @@ describe('metrics selectors', () => {
     });
 
     it('returns empty state for a card without a request or metadata', () => {
-      selectors.getCardRunLoadStates.release();
-
       const metricsState = buildMetricsState({
         cardMetadataMap: {
           '<card_id>': {
@@ -379,11 +375,11 @@ describe('metrics selectors', () => {
       metricsState.tagMetadata.scalars.tagToRuns = {tagA: ['run1']};
       const state = appStateFromMetricsState(metricsState);
 
-      expect(selectors.getCardRunLoadStates(state, '<card_id>')).toEqual({
+      expect(selectors.getCardRunLoadStates('<card_id>')(state)).toEqual({
         tagRunIds: ['run1'],
         runToLoadState: {},
       });
-      expect(selectors.getCardRunLoadStates(state, '<unknown_card>')).toEqual({
+      expect(selectors.getCardRunLoadStates('<unknown_card>')(state)).toEqual({
         tagRunIds: [],
         runToLoadState: {},
       });
@@ -578,53 +574,16 @@ describe('metrics selectors', () => {
       );
       expect(selectors.getCardTimeSeries(state, 'card-nonexistent')).toBe(null);
     });
-  });
 
-  describe('getLoadableTimeSeries', () => {
-    it('getLoadableTimeSeries', () => {
-      const sampleScalarRunToSeries = {
-        run1: createScalarStepData(),
-        run2: createScalarStepData(),
-      };
-      const state = buildMetricsState({
-        timeSeriesData: {
-          ...createTimeSeriesData(),
-          scalars: {
-            tagA: {
-              runToLoadState: {
-                run1: DataLoadState.LOADED,
-                run2: DataLoadState.LOADED,
-              },
-              runToSeries: sampleScalarRunToSeries,
-            },
+    it('returns null when the card has no requested tag data', () => {
+      const state = appStateFromMetricsState(
+        buildMetricsState({
+          cardMetadataMap: {
+            card1: {plugin: PluginType.SCALARS, tag: 'absent', runId: null},
           },
-        },
-      });
-
-      expect(
-        selectors.getLoadableTimeSeries({
-          plugin: PluginType.SCALARS,
-          tag: 'tagA',
-          runId: null,
-        })(state)
-      ).toEqual(sampleScalarRunToSeries);
-    });
-
-    it('returns null when plugin data does not contain tag', () => {
-      const state = buildMetricsState({
-        timeSeriesData: {
-          ...createTimeSeriesData(),
-          scalars: {},
-        },
-      });
-
-      expect(
-        selectors.getLoadableTimeSeries({
-          plugin: PluginType.SCALARS,
-          tag: 'tagA',
-          runId: null,
-        })(state)
-      ).toBeNull();
+        })
+      );
+      expect(selectors.getCardTimeSeries(state, 'card1')).toBeNull();
     });
   });
 
@@ -1049,7 +1008,7 @@ describe('metrics selectors', () => {
         })
       );
 
-      expect(selectors.getMetricsCardMinMax(state, 'card1')).toEqual({
+      expect(selectors.getMetricsCardMinMax('card1')(state)).toEqual({
         minStep: 10,
         maxStep: 20,
       });
@@ -1069,7 +1028,7 @@ describe('metrics selectors', () => {
         })
       );
 
-      expect(selectors.getMetricsCardMinMax(state, 'card1')).toEqual({
+      expect(selectors.getMetricsCardMinMax('card1')(state)).toEqual({
         minStep: 0,
         maxStep: 100,
       });

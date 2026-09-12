@@ -130,6 +130,53 @@ describe('runs_reducers', () => {
   });
 
   describe('fetchRunsSucceeded', () => {
+    it('retains selected rows across windows without retaining visited unselected rows', () => {
+      const first = buildRun({id: 'exp/first', name: 'first'});
+      const unselected = buildRun({id: 'exp/unselected', name: 'unselected'});
+      const second = buildRun({id: 'exp/second', name: 'second'});
+      let state = runsReducers.reducers(
+        buildRunsState(),
+        actions.fetchRunsSucceeded({
+          experimentIds: ['exp'],
+          runsForAllExperiments: [first, unselected],
+          newRuns: {exp: {runs: [first, unselected]}},
+          catalog: {
+            runIds: [first.id, unselected.id],
+            totals: {exp: 1000000},
+            offset: 0,
+          },
+        })
+      );
+      expect([...state.ui.selectionState.values()]).toEqual([false, false]);
+      state = runsReducers.reducers(
+        state,
+        actions.runSelectionToggled({runId: first.id})
+      );
+      const color = state.data.defaultRunColorIdForGroupBy.get(first.id);
+      state = runsReducers.reducers(
+        state,
+        actions.fetchRunsSucceeded({
+          experimentIds: ['exp'],
+          runsForAllExperiments: [second, first],
+          newRuns: {exp: {runs: [second, first]}},
+          catalog: {runIds: [second.id], totals: {exp: 1000000}, offset: 100},
+        })
+      );
+      expect(state.ui.selectionState.get(first.id)).toBeTrue();
+      expect(state.ui.selectionState.has(unselected.id)).toBeFalse();
+      expect(Object.keys(state.data.runMetadata).sort()).toEqual([
+        first.id,
+        second.id,
+      ]);
+      expect(state.data.defaultRunColorIdForGroupBy.get(first.id)).toBe(color);
+      state = runsReducers.reducers(
+        state,
+        actions.runPageSelectionToggled({runIds: [second.id]})
+      );
+      expect(state.ui.selectionState.get(first.id)).toBeTrue();
+      expect(state.ui.selectionState.get(second.id)).toBeTrue();
+    });
+
     function createFakeRuns(count: number): Run[] {
       return [...new Array(count)].map((unused, index) => {
         return buildRun({id: `id1_${index}`});
@@ -1441,6 +1488,17 @@ describe('runs_reducers', () => {
       );
 
       expect(nextState.data.regexFilter).toBe('hello');
+    });
+
+    it('clears an existing regex when restoring an explicitly empty filter', () => {
+      const nextState = runsReducers.reducers(
+        buildRunsState({regexFilter: 'hello'}),
+        stateRehydratedFromUrl({
+          routeKind: RouteKind.EXPERIMENT,
+          partialState: {runs: {groupBy: null, regexFilter: ''}},
+        })
+      );
+      expect(nextState.data.regexFilter).toBe('');
     });
 
     it('sets regexFilter to the valid value provided', () => {

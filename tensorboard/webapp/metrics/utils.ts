@@ -20,24 +20,33 @@ export function groupCardIdWithMetdata(
 ): CardGroup[] {
   const tagPrefix = new Map<string, CardGroup>();
 
-  const sortedCards = cards.slice().sort((cardA, cardB) => {
-    return compareTagNames(cardA.tag, cardB.tag);
-  });
+  // Callers usually pass a list already ordered by `compareTagNames`. A linear
+  // check costs far less than re-sorting thousands of cards.
+  let sortedCards: DeepReadonly<CardIdWithMetadata[]> = cards;
+  for (let i = 1; i < cards.length; i++) {
+    if (compareTagNames(cards[i - 1].tag, cards[i].tag) > 0) {
+      sortedCards = cards.slice().sort((cardA, cardB) => {
+        return compareTagNames(cardA.tag, cardB.tag);
+      });
+      break;
+    }
+  }
 
   for (const card of sortedCards) {
     const groupName = getTagGroupName(card.tag);
 
-    if (!tagPrefix.has(groupName)) {
-      tagPrefix.set(groupName, {groupName, items: []});
+    const group = tagPrefix.get(groupName);
+    if (group) {
+      group.items.push(card);
+    } else {
+      tagPrefix.set(groupName, {groupName, items: [card]});
     }
-
-    tagPrefix.get(groupName)!.items.push(card);
   }
 
   return [...tagPrefix.values()];
 }
 
-function getTagGroupName(tag: string): string {
+export function getTagGroupName(tag: string): string {
   return tag.split('/', 1)[0];
 }
 
@@ -68,7 +77,10 @@ export function compareTagNames(tagA: string, tagB: string) {
       return 1;
     }
 
-    if (isDigit(tagA[aIndex]) && isDigit(tagB[bIndex])) {
+    const a = tagA.charCodeAt(aIndex);
+    const b = tagB.charCodeAt(bIndex);
+
+    if (isDigit(a) && isDigit(b)) {
       const aNumberStart = aIndex;
       const bNumberStart = bIndex;
       aIndex = consumeNumber(tagA, aIndex + 1);
@@ -84,15 +96,15 @@ export function compareTagNames(tagA: string, tagB: string) {
       continue;
     }
 
-    if (isBreak(tagA[aIndex])) {
-      if (!isBreak(tagB[bIndex])) {
+    if (isBreak(a)) {
+      if (!isBreak(b)) {
         return -1;
       }
-    } else if (isBreak(tagB[bIndex])) {
+    } else if (isBreak(b)) {
       return 1;
-    } else if (tagA[aIndex] < tagB[bIndex]) {
+    } else if (a < b) {
       return -1;
-    } else if (tagA[aIndex] > tagB[bIndex]) {
+    } else if (a > b) {
       return 1;
     }
 
@@ -100,6 +112,22 @@ export function compareTagNames(tagA: string, tagB: string) {
     bIndex++;
   }
 }
+
+const enum NumberState {
+  NATURAL,
+  REAL,
+  EXPONENT_SIGN,
+  EXPONENT,
+}
+
+const CHAR_CODE_DOT = 0x2e;
+const CHAR_CODE_SLASH = 0x2f;
+const CHAR_CODE_PLUS = 0x2b;
+const CHAR_CODE_MINUS = 0x2d;
+const CHAR_CODE_ZERO = 0x30;
+const CHAR_CODE_NINE = 0x39;
+const CHAR_CODE_UPPER_E = 0x45;
+const CHAR_CODE_LOWER_E = 0x65;
 
 /**
  * Returns endIndex of a number sequence in string starting from startIndex.
@@ -109,38 +137,32 @@ export function compareTagNames(tagA: string, tagB: string) {
  * with "." as a real number.
  */
 function consumeNumber(s: string, startIndex: number): number {
-  enum State {
-    NATURAL,
-    REAL,
-    EXPONENT_SIGN,
-    EXPONENT,
-  }
-
-  let state = State.NATURAL;
+  let state = NumberState.NATURAL;
   let i = startIndex;
   for (; i < s.length; i++) {
-    if (state === State.NATURAL) {
-      if (s[i] === '.') {
-        state = State.REAL;
-      } else if (s[i] === 'e' || s[i] === 'E') {
-        state = State.EXPONENT_SIGN;
-      } else if (!isDigit(s[i])) {
+    const c = s.charCodeAt(i);
+    if (state === NumberState.NATURAL) {
+      if (c === CHAR_CODE_DOT) {
+        state = NumberState.REAL;
+      } else if (c === CHAR_CODE_LOWER_E || c === CHAR_CODE_UPPER_E) {
+        state = NumberState.EXPONENT_SIGN;
+      } else if (!isDigit(c)) {
         break;
       }
-    } else if (state === State.REAL) {
-      if (s[i] === 'e' || s[i] === 'E') {
-        state = State.EXPONENT_SIGN;
-      } else if (!isDigit(s[i])) {
+    } else if (state === NumberState.REAL) {
+      if (c === CHAR_CODE_LOWER_E || c === CHAR_CODE_UPPER_E) {
+        state = NumberState.EXPONENT_SIGN;
+      } else if (!isDigit(c)) {
         break;
       }
-    } else if (state === State.EXPONENT_SIGN) {
-      if (isDigit(s[i]) || s[i] === '+' || s[i] === '-') {
-        state = State.EXPONENT;
+    } else if (state === NumberState.EXPONENT_SIGN) {
+      if (isDigit(c) || c === CHAR_CODE_PLUS || c === CHAR_CODE_MINUS) {
+        state = NumberState.EXPONENT;
       } else {
         break;
       }
-    } else if (state === State.EXPONENT) {
-      if (!isDigit(s[i])) {
+    } else if (state === NumberState.EXPONENT) {
+      if (!isDigit(c)) {
         break;
       }
     }
@@ -148,10 +170,10 @@ function consumeNumber(s: string, startIndex: number): number {
   return i;
 }
 
-function isDigit(character: string): boolean {
-  return '0' <= character && character <= '9';
+function isDigit(charCode: number): boolean {
+  return CHAR_CODE_ZERO <= charCode && charCode <= CHAR_CODE_NINE;
 }
 
-function isBreak(character: string): boolean {
-  return character === '/' || isDigit(character);
+function isBreak(charCode: number): boolean {
+  return charCode === CHAR_CODE_SLASH || isDigit(charCode);
 }

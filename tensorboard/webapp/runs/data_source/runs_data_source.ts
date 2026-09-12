@@ -16,7 +16,12 @@ import {Injectable} from '@angular/core';
 import {Observable} from 'rxjs';
 import {map} from 'rxjs/operators';
 import {TBHttpClient} from '../../webapp_data_source/tb_http_client';
-import {Run, RunsDataSource} from './runs_data_source_types';
+import {
+  Run,
+  RunPage,
+  RunPageRequest,
+  RunsDataSource,
+} from './runs_data_source_types';
 
 type BackendGetRunsResponse = Array<
   string | {name: string; start_time: number | null}
@@ -29,6 +34,50 @@ function runToRunId(run: string, experimentId: string) {
 @Injectable()
 export class TBRunsDataSource implements RunsDataSource {
   constructor(private readonly http: TBHttpClient) {}
+
+  fetchRunsPage(
+    experimentId: string,
+    request: RunPageRequest
+  ): Observable<RunPage> {
+    const params = new URLSearchParams({
+      include_start_time: 'true',
+      query_prefix: request.queryPrefix ?? '',
+      query: request.query,
+      offset: String(request.offset),
+      limit: String(request.limit),
+      sort_by: request.sortBy,
+      descending: String(request.descending),
+    });
+    const url = `/experiment/${experimentId}/data/runs`;
+    type Response = {
+      runs: Array<{name: string; start_time: number | null}>;
+      total: number;
+    };
+    const response =
+      request.sessionRanks || request.names
+        ? this.http.post<Response>(url, {
+            query: request.query,
+            query_prefix: request.queryPrefix ?? '',
+            offset: request.offset,
+            limit: request.limit,
+            sort_by: request.sortBy,
+            descending: request.descending,
+            ...(request.names ? {name: request.names} : {}),
+            session_ranks: request.sessionRanks ?? [],
+            default_rank: request.defaultRank ?? 0,
+          })
+        : this.http.get<Response>(`${url}?${params}`);
+    return response.pipe(
+      map(({runs, total}) => ({
+        total,
+        runs: runs.map(({name, start_time}) => ({
+          id: runToRunId(name, experimentId),
+          name,
+          startTime: start_time ?? undefined,
+        })),
+      }))
+    );
+  }
 
   fetchRuns(experimentId: string): Observable<Run[]> {
     return this.http

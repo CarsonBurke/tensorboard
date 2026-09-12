@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 """Compatibility and invalidation tests without a TensorFlow dependency."""
+
 import gzip
 import json
 from unittest import mock
@@ -55,7 +56,7 @@ class MetricsPerformanceTest(tb_test.TestCase):
             self.assertNotIn("ETag", response.headers)
         self.assertEqual(self.tags.call_count, 2)
 
-    def test_revision_reuses_body_and_conditional_responses(self):
+    def test_revision_conditional_responses(self):
         self.provider.metadata_revision.return_value = "epoch:1"
         first = self.tags_client.get("/")
         second = self.tags_client.get(
@@ -65,8 +66,6 @@ class MetricsPerformanceTest(tb_test.TestCase):
         self.assertEqual(second.data, b"")
         third = self.tags_client.get("/")
         self.assertEqual(first.data, third.data)
-        self.assertEqual(self.tags.call_count, 1)
-        self.assertEqual(self.provider.metadata_revision.call_count, 4)
         self.assertIn("private", third.headers["Cache-Control"])
 
     def test_versioned_protocol_and_invalidation(self):
@@ -102,7 +101,7 @@ class MetricsPerformanceTest(tb_test.TestCase):
         self.tags_client.get("/")
         self.assertEqual(self.tags.call_count, 2)
 
-    def test_revision_check_reauthorizes_and_scopes_cache(self):
+    def test_revision_check_reauthorizes_view(self):
         self.provider.metadata_revision.side_effect = (
             lambda ctx, **_: ctx.client_feature_flags["view"]
         )
@@ -114,24 +113,48 @@ class MetricsPerformanceTest(tb_test.TestCase):
             self.tags.return_value = {"view": view}
             response = self.tags_client.get("/", environ_overrides=env)
             self.assertEqual(response.json, {"view": view})
-        self.assertEqual(self.tags.call_count, 2)
         self.provider.metadata_revision.side_effect = RuntimeError(
             "access revoked"
         )
         with self.assertRaisesRegex(RuntimeError, "access revoked"):
             self.tags_client.get("/")
 
-    def test_cache_is_bounded(self):
-        for revision in range(12):
-            self.provider.metadata_revision.return_value = str(revision)
-            self.tags_client.get("/")
-        self.assertEqual(len(self.plugin._tag_cache), 8)
-        self.assertEqual(
-            self.plugin._tag_cache_bytes,
-            sum(map(len, self.plugin._tag_cache.values())),
-        )
+    def test_revision_is_scoped_to_selection_and_page(self):
+        self.provider.metadata_revision.return_value = "epoch:1"
+        first_page = {
+            "scalars": {"runs": ["selected"], "tagToRuns": {"a": [0]}}
+        }
+        second_page = {
+            "scalars": {"runs": ["selected"], "tagToRuns": {"b": [0]}}
+        }
+        other_run = {"scalars": {"runs": ["other"], "tagToRuns": {"a": [0]}}}
+        with mock.patch.object(
+            self.plugin,
+            "_tags_page_impl",
+            side_effect=[(first_page, 2), (second_page, 2), (other_run, 1)],
+        ):
+            headers = {"X-TensorBoard-Metadata-Revision": ""}
+            first = self.tags_client.get(
+                "/?run=selected&tag_limit=1", headers=headers
+            ).json
+            headers["X-TensorBoard-Metadata-Revision"] = first["revision"]
+            second = self.tags_client.get(
+                "/?run=selected&tag_limit=1&tag_offset=1", headers=headers
+            ).json
+            self.assertEqual(second["metadata"], second_page)
+            self.assertEqual(second["totalTags"], 2)
+            other = self.tags_client.get(
+                "/?run=other&tag_limit=1", headers=headers
+            ).json
+            self.assertEqual(other["metadata"], other_run)
+            self.assertEqual(other["totalTags"], 1)
+            unchanged = self.tags_client.get(
+                "/?run=other&tag_limit=1",
+                headers={"X-TensorBoard-Metadata-Revision": other["revision"]},
+            ).json
+            self.assertIsNone(unchanged["metadata"])
 
-    def test_scalar_json_matches_legacy_cleansing_with_both_providers(self):
+    def test_scalar_json_columns_with_both_providers(self):
         points = [
             provider.ScalarDatum(step=2**60 + i, wall_time=wt, value=value)
             for i, (wt, value) in enumerate(
@@ -153,10 +176,32 @@ class MetricsPerformanceTest(tb_test.TestCase):
             {"plugin": "scalars", "tag": "loss", "runs": ["run/é", "empty"]},
             {"plugin": {"invalid": float("inf")}, "tag": "loss"},
         ]
-        expected = json_util.Cleanse(
-            self.plugin._time_series_impl(
-                context.RequestContext(), "", requests
-            )
+        expected = [
+            {
+                "plugin": "scalars",
+                "tag": "loss",
+                "runToSeries": {
+                    "run/é": {
+                        "steps": [2**60 + i for i in range(5)],
+                        "wallTimes": [1.25, "NaN", "-Infinity", -0.0, 2.0],
+                        "values": [3.5, "Infinity", "NaN", -0.0, "-Infinity"],
+                    },
+                    "empty": {"steps": [], "wallTimes": [], "values": []},
+                },
+            },
+            {
+                "plugin": {"invalid": "Infinity"},
+                "tag": "loss",
+                "error": "Invalid plugin",
+            },
+        ]
+        self.assertEqual(
+            json_util.Cleanse(
+                self.plugin._time_series_impl(
+                    context.RequestContext(), "", requests
+                )
+            ),
+            expected,
         )
         for columnar in (False, True):
             if columnar:
@@ -185,8 +230,9 @@ class MetricsPerformanceTest(tb_test.TestCase):
                     else response.data
                 )
                 self.assertEqual(json.loads(body), expected)
-                self.assertIn(b'"step": 1152921504606846976', body)
-                self.assertIn(b'"value": -0.0', body)
+                # Large integer steps and signed zero survive serialization.
+                self.assertIn(b"1152921504606846976", body)
+                self.assertIn(b"-0.0", body)
 
 
 if __name__ == "__main__":

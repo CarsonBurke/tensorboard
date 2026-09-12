@@ -15,29 +15,42 @@ limitations under the License.
 import {Injectable} from '@angular/core';
 import {Actions, createEffect, ofType, OnInitEffects} from '@ngrx/effects';
 import {Action, createAction, createSelector, Store} from '@ngrx/store';
-import {EMPTY, forkJoin, merge, Observable, of} from 'rxjs';
+import {
+  EMPTY,
+  asapScheduler,
+  combineLatest,
+  forkJoin,
+  merge,
+  Observable,
+  of,
+} from 'rxjs';
 import {
   catchError,
-  throttleTime,
+  debounceTime,
+  distinctUntilChanged,
   filter,
+  finalize,
   map,
   mergeMap,
+  observeOn,
   switchMap,
   take,
+  takeUntil,
   tap,
   withLatestFrom,
 } from 'rxjs/operators';
-import * as routingActions from '../../app_routing/actions';
 import {State} from '../../app_state';
 import * as coreActions from '../../core/actions';
 import {getActivePlugin} from '../../core/store';
 import * as runsActions from '../../runs/actions';
 import * as selectors from '../../selectors';
 import {DataLoadState} from '../../types/data';
+import {selectors as settingsSelectors} from '../../settings';
 import * as actions from '../actions';
 import {
   isFailedTimeSeriesResponse,
   isSingleRunPlugin,
+  isSingleRunTimeSeriesRequest,
   MetricsDataSource,
   METRICS_PLUGIN_ID,
   TagMetadata,
@@ -49,7 +62,6 @@ import {
 import {
   getCardMetadata,
   getCardRunLoadStates,
-  getMetricsTagMetadataLoadState,
   getPinnedCardsWithMetadata,
 } from '../store';
 import {CardId, CardMetadata, PluginType} from '../types';
@@ -64,7 +76,7 @@ export type CardFetchInfo = CardMetadata & {
 
 const getCardFetchInfo = createSelector(
   getCardMetadata,
-  getCardRunLoadStates,
+  (state: State, cardId: CardId) => getCardRunLoadStates(cardId)(state),
   (maybeMetadata, runLoadStates, cardId /* props */): CardFetchInfo | null => {
     if (!maybeMetadata) {
       return null;
@@ -106,19 +118,6 @@ export class MetricsEffects implements OnInitEffects {
     return initAction();
   }
 
-  /**
-   * Our effects react when the plugin dashboard is fully "shown" and experiment
-   * ids are available. The `activePlugin` acts as our proxy to know whether it
-   * is shown.
-   *
-   * [Metrics Effects] Init  - the initial `activePlugin` is set.
-   * [Core] Plugin Changed   - subsequent `activePlugin` updates.
-   * [Core] PluginListing Fetch Successful - list of plugins fetched and the
-   *   first `activePlugin` set.
-   * [App Routing] Navigated - experiment id updates.
-   */
-  private readonly dashboardShownWithoutData$;
-
   private readonly reloadRequestedWhileShown$;
 
   private readonly loadTagMetadata$;
@@ -144,8 +143,10 @@ export class MetricsEffects implements OnInitEffects {
   }
 
   private fetchTimeSeries(requests: TimeSeriesRequest[]) {
+    let pending = true;
     return this.metricsDataSource.fetchTimeSeries(requests).pipe(
       tap((responses: TimeSeriesResponse[]) => {
+        pending = false;
         const errors = responses.filter(isFailedTimeSeriesResponse);
         if (errors.length) {
           console.error('Time series response contained errors:', errors);
@@ -170,10 +171,16 @@ export class MetricsEffects implements OnInitEffects {
         }
       }),
       catchError(() => {
+        pending = false;
         for (const request of requests) {
           this.store.dispatch(actions.fetchTimeSeriesFailed({request}));
         }
         return of(null);
+      }),
+      finalize(() => {
+        if (pending) {
+          this.store.dispatch(actions.timeSeriesRequestsCancelled({requests}));
+        }
       })
     );
   }
@@ -233,7 +240,46 @@ export class MetricsEffects implements OnInitEffects {
         this.store.dispatch(actions.multipleTimeSeriesRequested({requests}));
       }),
       mergeMap((requests: TimeSeriesRequest[]) =>
-        this.fetchTimeSeries(requests)
+        this.fetchTimeSeries(requests).pipe(
+          // Adjacent entries only add requests; they do not tear down work
+          // still owned by the buffer. A batch is cancelled if any requested
+          // run loses its last owner, then surviving missing runs restart.
+          takeUntil(
+            combineLatest([
+              this.getVisibleCardFetchInfos(),
+              this.store.select(selectors.getExperimentIdsFromRoute),
+              this.store.select(
+                selectors.getRunSelectionMapFilteredToCurrentRoute
+              ),
+              this.store.select(getActivePlugin),
+            ]).pipe(
+              filter(
+                ([cards, currentExperiments, selection, plugin]) =>
+                  plugin !== METRICS_PLUGIN_ID ||
+                  JSON.stringify(currentExperiments) !==
+                    JSON.stringify(experimentIds) ||
+                  requests.some((request) => {
+                    const owners = cards.filter(
+                      (card) =>
+                        card.plugin === request.plugin &&
+                        card.tag === request.tag &&
+                        card.sample === request.sample
+                    );
+                    if (isSingleRunTimeSeriesRequest(request)) {
+                      return !owners.some(
+                        (card) => card.runId === request.runId
+                      );
+                    }
+                    return (
+                      !owners.length ||
+                      request.runIds!.some((runId) => !selection.get(runId))
+                    );
+                  })
+              )
+            )
+          ),
+          takeUntil(this.reloadRequestedWhileShown$)
+        )
       )
     );
   }
@@ -286,25 +332,6 @@ export class MetricsEffects implements OnInitEffects {
     private readonly metricsDataSource: MetricsDataSource,
     private readonly savedPinsDataSource: SavedPinsDataSource
   ) {
-    this.dashboardShownWithoutData$ = actions$.pipe(
-      ofType(
-        initAction,
-        coreActions.changePlugin,
-        coreActions.pluginsListingLoaded,
-        routingActions.navigated
-      ),
-      withLatestFrom(
-        this.store.select(getActivePlugin),
-        this.store.select(getMetricsTagMetadataLoadState)
-      ),
-      filter(([, activePlugin, tagLoadState]) => {
-        return (
-          activePlugin === METRICS_PLUGIN_ID &&
-          tagLoadState.state === DataLoadState.NOT_LOADED
-        );
-      })
-    );
-
     this.reloadRequestedWhileShown$ = actions$.pipe(
       ofType(coreActions.reload, coreActions.manualReload),
       withLatestFrom(this.store.select(getActivePlugin)),
@@ -313,39 +340,99 @@ export class MetricsEffects implements OnInitEffects {
       })
     );
 
-    this.loadTagMetadata$ = merge(
-      this.dashboardShownWithoutData$,
-      this.reloadRequestedWhileShown$
-    ).pipe(
-      withLatestFrom(
-        this.store.select(getMetricsTagMetadataLoadState),
-        this.store.select(selectors.getExperimentIdsFromRoute)
+    const catalogRequest$ = combineLatest([
+      this.store.select(getActivePlugin),
+      this.store.select(selectors.getExperimentIdsFromRoute),
+      this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute),
+      this.store.select(selectors.getMetricsTagFilter),
+      this.store.select(selectors.getMetricsCatalogViewport),
+      this.store.select(settingsSelectors.getPageSize),
+      this.store.select(getPinnedCardsWithMetadata),
+      this.store.select(selectors.getUnresolvedImportedPinnedCards),
+      this.store.select(selectors.getMetricsTagGroupExpandedMap),
+      this.store.select(selectors.getMetricsTagGroupPageIndexMap),
+      this.store.select(selectors.getMetricsFilteredPluginTypes),
+    ]).pipe(
+      map(
+        ([
+          plugin,
+          experimentIds,
+          selection,
+          query,
+          viewport,
+          pageSize,
+          pins,
+          unresolvedPins,
+          expandedGroups,
+          groupPages,
+          plugins,
+        ]) => ({
+          plugin,
+          experimentIds,
+          request: {
+            runIds: [...selection]
+              .filter(([, selected]) => selected)
+              .map(([id]) => id)
+              .sort(),
+            pinnedRunIds: [
+              ...new Set(
+                [...pins, ...unresolvedPins].flatMap((pin) =>
+                  pin.runId ? [pin.runId] : []
+                )
+              ),
+            ].sort(),
+            query,
+            plugins: [...plugins].sort(),
+            groupOffset: viewport.groupOffset,
+            groupLimit: query ? 0 : viewport.groupLimit,
+            groups: query
+              ? []
+              : viewport.visibleGroups
+                  .filter((name) => expandedGroups.get(name))
+                  .map((name) => ({
+                    name,
+                    offset: (groupPages.get(name) ?? 0) * pageSize,
+                    limit: pageSize,
+                  })),
+            filteredOffset: viewport.filteredOffset,
+            filteredLimit: query ? viewport.filteredLimit : 0,
+            pinnedTags: [
+              ...new Set([...pins, ...unresolvedPins].map(({tag}) => tag)),
+            ].sort(),
+          },
+        })
       ),
-      filter(([, tagLoadState, experimentIds]) => {
-        /**
-         * When `experimentIds` is null, the actual ids have not
-         * appeared in the store yet.
-         */
-        return (
-          tagLoadState.state !== DataLoadState.LOADING && experimentIds !== null
-        );
-      }),
-      throttleTime(10),
-      tap(() => {
+      debounceTime(0, asapScheduler),
+      distinctUntilChanged((a, b) => JSON.stringify(a) === JSON.stringify(b))
+    );
+    this.loadTagMetadata$ = merge(
+      catalogRequest$,
+      this.reloadRequestedWhileShown$.pipe(
+        withLatestFrom(catalogRequest$),
+        map(([, request]) => request)
+      )
+    ).pipe(
+      switchMap(({plugin, experimentIds, request}) => {
+        if (plugin !== METRICS_PLUGIN_ID || !experimentIds) return EMPTY;
+        try {
+          new RegExp(request.query);
+        } catch {
+          return EMPTY;
+        }
         this.store.dispatch(actions.metricsTagMetadataRequested());
-      }),
-      switchMap(([, , experimentIds]) => {
-        return this.metricsDataSource.fetchTagMetadata(experimentIds!).pipe(
-          tap((tagMetadata: TagMetadata) => {
-            this.store.dispatch(
-              actions.metricsTagMetadataLoaded({tagMetadata})
-            );
-          }),
-          catchError(() => {
-            this.store.dispatch(actions.metricsTagMetadataFailed());
-            return of(null);
-          })
-        );
+        return this.metricsDataSource
+          .fetchTagMetadata(experimentIds, request)
+          .pipe(
+            tap((tagMetadata: TagMetadata) => {
+              this.store.dispatch(
+                actions.metricsTagMetadataLoaded({tagMetadata})
+              );
+            }),
+            catchError(() => {
+              this.store.dispatch(actions.metricsTagMetadataFailed());
+              return of(null);
+            })
+          );
       })
     );
 
@@ -354,13 +441,11 @@ export class MetricsEffects implements OnInitEffects {
     // visible card set last changed, which goes stale as runs are selected.
     this.visibleCardsChanged$ = this.actions$.pipe(
       ofType(actions.cardVisibilityChanged),
-      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
-      map((fetchInfos) => ({fetchInfos, refetchLoaded: false}))
+      map(() => ({refetchLoaded: false}))
     );
 
     this.visibleCardsReloaded$ = this.reloadRequestedWhileShown$.pipe(
-      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
-      map((fetchInfos) => ({fetchInfos, refetchLoaded: true}))
+      map(() => ({refetchLoaded: true}))
     );
 
     this.selectedRunsChanged$ = this.actions$.pipe(
@@ -371,16 +456,14 @@ export class MetricsEffects implements OnInitEffects {
         runsActions.runLocalStorageHydrated,
         runsActions.fetchRunsSucceeded
       ),
-      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
-      map((fetchInfos) => ({fetchInfos, refetchLoaded: false}))
+      map(() => ({refetchLoaded: false}))
     );
 
     // New tag metadata can reveal runs that a visible card has never
     // requested; the per-run filter below picks up exactly those.
     this.tagMetadataLoaded$ = this.actions$.pipe(
       ofType(actions.metricsTagMetadataLoaded),
-      mergeMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
-      map((fetchInfos) => ({fetchInfos, refetchLoaded: false}))
+      map(() => ({refetchLoaded: false}))
     );
 
     this.purgeUnusedTimeSeries$ = this.actions$.pipe(
@@ -394,31 +477,20 @@ export class MetricsEffects implements OnInitEffects {
         actions.fetchTimeSeriesFailed,
         actions.cardPinStateToggled,
         actions.metricsClearAllPinnedCards,
-        actions.metricsTagMetadataLoaded
+        actions.metricsTagMetadataLoaded,
+        actions.cardVisibilityChanged,
+        actions.timeSeriesRequestsCancelled,
+        coreActions.reload,
+        coreActions.manualReload,
+        coreActions.changePlugin
       ),
       withLatestFrom(
-        this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute),
-        this.store.select(getPinnedCardsWithMetadata)
+        this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute)
       ),
-      tap(([, runSelection, pinnedCards]) => {
-        // An empty selection means the run list has not been written yet;
-        // purging then would drop everything that is being fetched.
-        if (!runSelection.size) {
-          return;
-        }
-        const runIds: string[] = [];
-        for (const [runId, selected] of runSelection.entries()) {
-          if (selected) {
-            runIds.push(runId);
-          }
-        }
-        // Pinned single-run cards stay visible while their run is deselected,
-        // so their series must survive the purge.
-        for (const card of pinnedCards) {
-          if (card.runId) {
-            runIds.push(card.runId);
-          }
-        }
+      tap(([, runSelection]) => {
+        const runIds = [...runSelection]
+          .filter(([, selected]) => selected)
+          .map(([runId]) => runId);
         this.store.dispatch(actions.unusedTimeSeriesPurged({runIds}));
       })
     );
@@ -427,24 +499,80 @@ export class MetricsEffects implements OnInitEffects {
       this.visibleCardsChanged$,
       this.visibleCardsReloaded$,
       this.selectedRunsChanged$,
-      this.tagMetadataLoaded$
+      this.tagMetadataLoaded$,
+      this.actions$.pipe(
+        ofType(coreActions.changePlugin),
+        map(() => ({refetchLoaded: false}))
+      )
     ).pipe(
-      filter(({fetchInfos}) => fetchInfos.length > 0),
-
-      // Ignore card visibility events until we have non-null
-      // experimentIds.
       withLatestFrom(
-        this.store
-          .select(selectors.getExperimentIdsFromRoute)
-          .pipe(filter((experimentIds) => experimentIds !== null)),
-        this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute)
+        this.store.select(selectors.getExperimentIdsFromRoute),
+        this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute),
+        this.store.select(getActivePlugin)
       ),
-      mergeMap(([{fetchInfos, refetchLoaded}, experimentIds, runSelection]) => {
-        return this.fetchTimeSeriesForCards(
-          fetchInfos,
-          experimentIds!,
-          runSelection,
-          refetchLoaded
+      mergeMap(([{refetchLoaded}, experimentIds, runSelection, plugin]) =>
+        this.getVisibleCardFetchInfos().pipe(
+          take(1),
+          map((cards) => ({
+            refetchLoaded,
+            experimentIds,
+            runSelection,
+            plugin,
+            scope: JSON.stringify([
+              plugin,
+              experimentIds,
+              [
+                ...new Set(
+                  cards.map(({plugin, tag, runId, sample, tagRunIds}) =>
+                    JSON.stringify([
+                      plugin,
+                      tag,
+                      sample,
+                      isSingleRunPlugin(plugin)
+                        ? [runId]
+                        : tagRunIds.filter((id) => runSelection.get(id)).sort(),
+                    ])
+                  )
+                ),
+              ].sort(),
+            ]),
+          }))
+        )
+      ),
+      distinctUntilChanged(
+        (previous, next) => !next.refetchLoaded && previous.scope === next.scope
+      ),
+      mergeMap(({refetchLoaded, experimentIds, plugin}) => {
+        if (plugin !== METRICS_PLUGIN_ID || !experimentIds) return EMPTY;
+        // NgRx queues cancellation reducers while the triggering action is
+        // dispatching. Read statuses after that queue drains, not in finalize.
+        return of(null).pipe(
+          observeOn(asapScheduler),
+          switchMap(() => this.getVisibleCardFetchInfos().pipe(take(1))),
+          withLatestFrom(
+            this.store.select(
+              selectors.getRunSelectionMapFilteredToCurrentRoute
+            ),
+            this.store.select(selectors.getExperimentIdsFromRoute),
+            this.store.select(getActivePlugin)
+          ),
+          switchMap(
+            ([fetchInfos, selection, currentExperiments, activePlugin]) => {
+              if (
+                activePlugin !== METRICS_PLUGIN_ID ||
+                JSON.stringify(currentExperiments) !==
+                  JSON.stringify(experimentIds)
+              ) {
+                return EMPTY;
+              }
+              return this.fetchTimeSeriesForCards(
+                fetchInfos,
+                experimentIds,
+                selection,
+                refetchLoaded
+              );
+            }
+          )
         );
       })
     );

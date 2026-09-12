@@ -29,6 +29,7 @@ import {
 } from '../../../runs/store/testing';
 import {RunTableItem} from '../../../runs/views/runs_table/types';
 import {buildMockState} from '../../../testing/utils';
+import {MetricsState} from '../../store';
 import {
   appStateFromMetricsState,
   buildMetricsSettingsState,
@@ -236,6 +237,25 @@ describe('common selectors', () => {
     });
   });
 
+  it('keeps the scroll scope across run selection changes but resets for filters', () => {
+    const viewState = (selected: boolean, tagFilter = '') =>
+      buildMockState({
+        ...state,
+        ...appStateFromMetricsState(buildMetricsState({tagFilter})),
+        ...buildStateFromRunsState(
+          buildRunsState(
+            {runIds, runIdToExpId, runMetadata},
+            {selectionState: new Map([['run1', selected]])}
+          )
+        ),
+      });
+    const scope = selectors.getCatalogViewScope(viewState(true));
+    expect(selectors.getCatalogViewScope(viewState(false))).toBe(scope);
+    expect(selectors.getCatalogViewScope(viewState(true, 'loss'))).not.toBe(
+      scope
+    );
+  });
+
   describe('getScalarTagsForRunSelection', () => {
     it('returns all tags containing scalar data when no runs are selected', () => {
       const state = buildMockState({
@@ -339,6 +359,49 @@ describe('common selectors', () => {
         new Set(['tag-2'])
       );
     });
+
+    it('returns no tags when hideEmptyCards is false', () => {
+      // The only consumer ignores the tags while empty cards are shown, so the
+      // walk over the selected runs' tags is skipped.
+      const state = buildMockState({
+        ...appStateFromMetricsState(
+          buildMetricsState({
+            tagMetadata: {
+              histograms: {tagDescriptions: {}, tagToRuns: {}},
+              images: {tagDescriptions: {}, tagRunSampledInfo: {}},
+              scalars: {
+                tagDescriptions: {},
+                tagToRuns: {'tag-1': ['run1'], 'tag-2': ['run2', 'run3']},
+              },
+            },
+            settings: buildMetricsSettingsState({hideEmptyCards: false}),
+          })
+        ),
+        ...buildStateFromAppRoutingState(
+          buildAppRoutingState({
+            activeRoute: buildRoute({
+              routeKind: RouteKind.EXPERIMENT,
+              params: {},
+            }),
+          })
+        ),
+        ...buildStateFromRunsState(
+          buildRunsState(
+            {
+              runIds,
+              runIdToExpId,
+              runMetadata,
+            },
+            {
+              selectionState: new Map([['run2', true]]),
+            }
+          )
+        ),
+      });
+      expect(selectors.TEST_ONLY.getScalarTagsForRunSelection(state)).toEqual(
+        new Set<string>()
+      );
+    });
   });
 
   describe('getRenderableCardIdsWithMetadata', () => {
@@ -422,6 +485,26 @@ describe('common selectors', () => {
   });
 
   describe('getSortedRenderableCardIdsWithMetadata', () => {
+    function buildStateWithSelection(
+      metricsState: MetricsState,
+      selectionState: Map<string, boolean>
+    ) {
+      return buildMockState({
+        ...appStateFromMetricsState(metricsState),
+        ...buildStateFromAppRoutingState(
+          buildAppRoutingState({
+            activeRoute: buildRoute({
+              routeKind: RouteKind.EXPERIMENT,
+              params: {},
+            }),
+          })
+        ),
+        ...buildStateFromRunsState(
+          buildRunsState({runIds, runIdToExpId, runMetadata}, {selectionState})
+        ),
+      });
+    }
+
     it('shows empty scalar cards when hideEmptyCards is false', () => {
       const state = buildMockState({
         ...appStateFromMetricsState(
@@ -598,6 +681,70 @@ describe('common selectors', () => {
           runId: 'run1',
         },
       ]);
+    });
+
+    it('reuses the previous array when a run toggle leaves cards unchanged', () => {
+      // Sharing the metrics state mirrors the app, where a selection change
+      // leaves the card list and its metadata identities untouched.
+      const metricsState = buildMetricsState({
+        cardList: ['card1', 'card2'],
+        cardMetadataMap: {
+          card1: {plugin: PluginType.SCALARS, tag: 'tag-1', runId: null},
+          card2: {plugin: PluginType.SCALARS, tag: 'tag-2', runId: null},
+        },
+        settings: buildMetricsSettingsState({hideEmptyCards: false}),
+      });
+      const before = selectors.getSortedRenderableCardIdsWithMetadata(
+        buildStateWithSelection(metricsState, new Map([['run1', true]]))
+      );
+
+      const after = selectors.getSortedRenderableCardIdsWithMetadata(
+        buildStateWithSelection(
+          metricsState,
+          new Map([
+            ['run1', true],
+            ['run2', true],
+          ])
+        )
+      );
+
+      expect(after.map(({cardId}) => cardId)).toEqual(['card1', 'card2']);
+      expect(after).toBe(before);
+    });
+
+    it('emits a new array when card metadata changes', () => {
+      const before = selectors.getSortedRenderableCardIdsWithMetadata(
+        buildStateWithSelection(
+          buildMetricsState({
+            cardList: ['card1'],
+            cardMetadataMap: {
+              card1: {plugin: PluginType.SCALARS, tag: 'tag-1', runId: null},
+            },
+            settings: buildMetricsSettingsState({hideEmptyCards: false}),
+          }),
+          new Map([['run1', true]])
+        )
+      );
+
+      const after = selectors.getSortedRenderableCardIdsWithMetadata(
+        buildStateWithSelection(
+          buildMetricsState({
+            cardList: ['card1'],
+            cardMetadataMap: {
+              card1: {
+                plugin: PluginType.SCALARS,
+                tag: 'tag-1-renamed',
+                runId: null,
+              },
+            },
+            settings: buildMetricsSettingsState({hideEmptyCards: false}),
+          }),
+          new Map([['run1', true]])
+        )
+      );
+
+      expect(after).not.toBe(before);
+      expect(after.map(({tag}) => tag)).toEqual(['tag-1-renamed']);
     });
   });
 

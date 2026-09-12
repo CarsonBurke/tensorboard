@@ -32,3 +32,14 @@ export function mapObjectValues<T extends {} = {}>(
   }
   return result as T;
 }
+
+/**
+ * Checks whether `object` has `key` as its own property.
+ *
+ * Required for dictionaries keyed by user-controlled strings: a tag or run
+ * named `hasOwnProperty` or `constructor` shadows the inherited method, so
+ * `object.hasOwnProperty(key)` throws `TypeError: not a function`.
+ */
+export function hasOwn(object: object, key: string | number): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}

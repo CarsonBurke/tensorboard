@@ -78,6 +78,14 @@ tests use the stable TensorFlow version in `requirements_bazel.in`; the
 pip-package smoke test separately exercises the CI-selected version, currently
 `tf-nightly`.
 
+The `//tensorboard:tensorboard` visualization executable does not bundle
+TensorFlow or its summary writers. Local event viewing uses TensorBoard's
+compatibility implementation and the data server without loading the training
+runtime into every board process. TensorFlow-only features, such as Debugger V2
+and checkpoint-backed projector embeddings, still require TensorFlow to be
+available. Bazel targets that need those features should explicitly depend on
+`//tensorboard:expect_tensorflow_installed`; their tests retain that dependency.
+
 ```sh
 (tf)$ python -m pip install "uv==0.5.31"
 (tf)$ uv pip compile --python-version 3.10 --generate-hashes \

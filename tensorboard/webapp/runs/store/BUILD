@@ -17,6 +17,7 @@ tf_ts_library(
         "//tensorboard/webapp/app_routing:namespaced_state_reducer_helper",
         "//tensorboard/webapp/app_routing:types",
         "//tensorboard/webapp/app_routing/actions",
+        "//tensorboard/webapp/hparams/_redux:hparams_actions",
         "//tensorboard/webapp/runs:types",
         "//tensorboard/webapp/runs/actions",
         "//tensorboard/webapp/types",

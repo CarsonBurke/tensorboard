@@ -13,14 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {Observable} from 'rxjs';
-import {PluginType} from '../internal_types';
+import {CardMetadata, PluginType} from '../internal_types';
 
 export {PluginType} from '../internal_types';
 
 export const METRICS_PLUGIN_ID = 'timeseries';
 
-export type RunToTags = {
-  [runId: string]: string[];
+/** Map from tag name to the run ids that contain the tag. */
+export type TagToRuns = {
+  [tag: string]: string[];
 };
 
 export type TagToDescription = {
@@ -28,7 +29,7 @@ export type TagToDescription = {
 };
 
 export interface NonSampledTagMetadata {
-  runTagInfo: RunToTags;
+  tagToRuns: TagToRuns;
   tagDescriptions: TagToDescription;
 }
 
@@ -79,10 +80,63 @@ export function isSingleRunPlugin(
   return singleRunPluginTypes.includes(plugin);
 }
 
+export interface MetricsCatalogViewport {
+  groupOffset: number;
+  groupLimit: number;
+  visibleGroups: string[];
+  filteredOffset: number;
+  filteredLimit: number;
+}
+
+export interface MetricsCatalogGroup {
+  name: string;
+  totalCards: number;
+}
+
+export type MetricsCatalogCard =
+  | {plugin: PluginType.SCALARS; tag: string}
+  | {plugin: PluginType.HISTOGRAMS; tag: string; runId: string}
+  | {
+      plugin: PluginType.IMAGES;
+      tag: string;
+      runId: string;
+      sample: number;
+      numSample: number;
+    };
+
+export function getMetricsCatalogCardMetadata(
+  card: MetricsCatalogCard
+): CardMetadata {
+  const {plugin, tag} = card;
+  if (plugin === PluginType.SCALARS) {
+    return {plugin, tag, runId: null};
+  }
+  if (plugin === PluginType.HISTOGRAMS) {
+    return {plugin, tag, runId: card.runId};
+  }
+  return {
+    plugin,
+    tag,
+    runId: card.runId,
+    sample: card.sample,
+    numSample: card.numSample,
+  };
+}
+
+export interface MetricsCatalog {
+  groups: MetricsCatalogGroup[];
+  totalGroups: number;
+  groupOffset: number;
+  filteredOffset: number;
+  cards: MetricsCatalogCard[];
+  totalCards: number;
+}
+
 export type TagMetadata = {
   [PluginType.SCALARS]: NonSampledTagMetadata;
   [PluginType.HISTOGRAMS]: NonSampledTagMetadata;
   [PluginType.IMAGES]: SampledTagMetadata;
+  catalog?: MetricsCatalog;
 };
 
 export interface SingleRunTimeSeriesRequest {
@@ -165,8 +219,24 @@ export interface ImageStepDatum {
   imageId: ImageId;
 }
 
+export interface TagMetadataRequest {
+  runIds: string[];
+  query: string;
+  plugins?: PluginType[];
+  groupOffset: number;
+  groupLimit: number;
+  groups: Array<{name: string; offset: number; limit: number}>;
+  filteredOffset: number;
+  filteredLimit: number;
+  pinnedTags: string[];
+  pinnedRunIds?: string[];
+}
+
 export abstract class MetricsDataSource {
-  abstract fetchTagMetadata(experimentIds: string[]): Observable<TagMetadata>;
+  abstract fetchTagMetadata(
+    experimentIds: string[],
+    request?: TagMetadataRequest
+  ): Observable<TagMetadata>;
   abstract fetchTimeSeries(
     requests: TimeSeriesRequest[]
   ): Observable<TimeSeriesResponse[]>;

@@ -29,10 +29,9 @@ py_binary(
         ":assets_lib",  # link dep for webfiles assets
         ":default",
         ":dynamic_plugins",  # loads internal dynamic plugin like projector
-        ":lib",
+        ":lib_init_only",  # The server does not need TensorFlow summary writers.
         ":main_lib",
         ":program",
-        "//tensorboard:expect_tensorflow_installed",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/util:tb_logging",
         "//tensorboard/util:timing",  # non-strict dep, for patching convenience

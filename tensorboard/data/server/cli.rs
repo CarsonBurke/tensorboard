@@ -26,10 +26,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
+use tokio_stream::StreamExt;
 use tonic::transport::Server;
 
 use crate::commit::Commit;
-use crate::logdir::LogdirLoader;
 use crate::proto::tensorboard::data;
 use crate::server::DataProviderHandler;
 use crate::types::PluginSamplingHint;
@@ -213,7 +213,7 @@ fn wait_for_reload_request(
 }
 
 #[tokio::main]
-pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let opts = Opts::parse();
     init_logging(match opts.verbosity {
         0 => LevelFilter::Warn,
@@ -232,6 +232,17 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the logdir outside an async runtime (see docs for `DynLogdir::new`).
     let raw_logdir = opts.logdir;
+    let raw_logdir =
+        if !raw_logdir.as_os_str().is_empty() && !raw_logdir.to_string_lossy().contains("://") {
+            let absolute = if raw_logdir.is_absolute() {
+                raw_logdir
+            } else {
+                std::env::current_dir()?.join(raw_logdir)
+            };
+            absolute.canonicalize().unwrap_or(absolute)
+        } else {
+            raw_logdir
+        };
     let logdir = tokio::task::spawn_blocking(|| DynLogdir::new(raw_logdir))
         .await?
         .unwrap_or_else(|e| {
@@ -270,7 +281,13 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("listening on {:?}", bound);
     }
 
-    let commit = Arc::new(Commit::new());
+    let mut commit = Commit::new();
+    commit.disk = Some(crate::storage::DiskStore::open(
+        &data_location,
+        &opts.samples_per_plugin,
+        opts.checksum,
+    )?);
+    let commit = Arc::new(commit);
     let psh_ref = Arc::new(opts.samples_per_plugin);
     let reload_request_path = opts
         .port_file
@@ -287,9 +304,6 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let checksum = opts.checksum;
             let commit = Arc::clone(&commit);
             move || {
-                let mut loader = LogdirLoader::new(&commit, logdir, 0, psh_ref);
-                // Checksum only if `--checksum` given (i.e., off by default).
-                loader.checksum(checksum);
                 let mut last_seen_generation = 0u64;
                 // Advertise support before the first (possibly long) scan so
                 // Python does not mistake a current binary for an old one.
@@ -299,7 +313,17 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     info!("Starting load cycle");
                     let start = Instant::now();
-                    loader.reload();
+                    if let Err(e) = commit
+                        .disk
+                        .as_ref()
+                        .expect("production index")
+                        .reload(&logdir, &psh_ref, checksum)
+                    {
+                        error!("Load cycle failed: {}", e);
+                        // Do not acknowledge an incomplete reload as successful.
+                        thread::sleep(Duration::from_secs(1));
+                        continue;
+                    }
                     let end = Instant::now();
                     info!("Finished load cycle ({:?})", end - start);
                     if let Some(done) = &reload_done_path {
@@ -333,10 +357,17 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_location,
         commit,
     };
+    // Custom incoming sockets bypass tonic's TCP configuration. Small catalog
+    // pages must not wait for Nagle/delayed-ACK timers between HTTP/2 frames.
+    let incoming = TcpListenerStream::new(listener).map(|socket| {
+        let socket = socket?;
+        socket.set_nodelay(true)?;
+        Ok::<_, std::io::Error>(socket)
+    });
     Server::builder()
         .add_service(TensorBoardDataProviderServer::new(handler))
         .add_service(reflection)
-        .serve_with_incoming(TcpListenerStream::new(listener))
+        .serve_with_incoming(incoming)
         .await?;
     Ok(())
 }

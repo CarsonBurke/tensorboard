@@ -67,7 +67,28 @@ export interface Run {
   startTime: number | undefined;
 }
 
+export interface RunPageRequest {
+  query: string;
+  queryPrefix?: string;
+  offset: number;
+  limit: number;
+  sortBy: 'name' | 'start_time' | 'session_rank';
+  descending: boolean;
+  names?: string[];
+  sessionRanks?: Array<{prefix: string; rank: number}>;
+  defaultRank?: number;
+}
+
+export interface RunPage {
+  runs: Run[];
+  total: number;
+}
+
 @Injectable({providedIn: 'root'})
 export abstract class RunsDataSource {
   abstract fetchRuns(experimentId: string): Observable<Run[]>;
+  fetchRunsPage?: (
+    experimentId: string,
+    request: RunPageRequest
+  ) => Observable<RunPage>;
 }

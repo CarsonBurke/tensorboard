@@ -183,6 +183,30 @@ function getTicksForLinearScale(
 const canvasForMeasure = document.createElement('canvas').getContext('2d');
 
 /**
+ * Memoizes label measurements, keyed by axis + font + label text. Panning and
+ * zooming re-measure the same handful of label strings on every frame and
+ * `measureText` is expensive; reading `actualBoundingBox*` additionally forces
+ * the browser to compute full text metrics instead of the advance width alone.
+ * The axis is part of the key because the two axes measure different
+ * dimensions of the same text.
+ */
+const textDimMemo = new Map<string, number>();
+
+/**
+ * Bound on `textDimMemo`. Zooming produces new label strings indefinitely, so
+ * the memo is dropped wholesale once it exceeds this; a few thousand entries
+ * already cover many frames' worth of labels and re-measuring one screenful of
+ * ticks costs a single frame's worth of work.
+ */
+const MAX_MEMOIZED_TEXT_DIMS = 4096;
+
+// Metrics for an unchanged font string change once a web font finishes
+// loading, so measurements taken with the fallback font must not survive it.
+document.fonts?.addEventListener('loadingdone', () => {
+  textDimMemo.clear();
+});
+
+/**
  * Filters minor ticks by their position and dimensions so each label does not
  * get overlapped with another.
  * @param minorTicks Minor ticks to be filtered.
@@ -203,17 +227,30 @@ function filterTicksByVisibility(
   // While tick is in data coordinate system, DOM is on the opposite system;
   // while pixels go from top=0 to down, data goes from bottom=0 to up.
   const coordinateUnit = axis === 'x' ? 1 : -1;
+  // The font is invariant across the loop below and assigning it re-parses the
+  // CSS font shorthand.
+  canvasForMeasure.font = axisFont;
+  const memoKeyPrefix = `${axis}\u0000${axisFont}\u0000`;
 
   let currentMax: number | null = null;
   return minorTicks.filter((tick) => {
     const position = getDomPos(tick);
-    canvasForMeasure.font = axisFont;
-    const textMetrics = canvasForMeasure.measureText(tick.tickFormattedString);
-    const textDim =
-      axis === 'x'
-        ? textMetrics.width
-        : textMetrics.actualBoundingBoxAscent -
-          textMetrics.actualBoundingBoxDescent;
+    const memoKey = memoKeyPrefix + tick.tickFormattedString;
+    let textDim = textDimMemo.get(memoKey);
+    if (textDim === undefined) {
+      const textMetrics = canvasForMeasure.measureText(
+        tick.tickFormattedString
+      );
+      textDim =
+        axis === 'x'
+          ? textMetrics.width
+          : textMetrics.actualBoundingBoxAscent -
+            textMetrics.actualBoundingBoxDescent;
+      if (textDimMemo.size >= MAX_MEMOIZED_TEXT_DIMS) {
+        textDimMemo.clear();
+      }
+      textDimMemo.set(memoKey, textDim);
+    }
 
     if (currentMax === null) {
       if (position + coordinateUnit * textDim < 0) {

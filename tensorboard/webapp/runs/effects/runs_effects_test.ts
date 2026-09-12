@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {TestBed} from '@angular/core/testing';
+import {Actions} from '@ngrx/effects';
 import {provideMockActions} from '@ngrx/effects/testing';
 import {Action, Store} from '@ngrx/store';
 import {MockStore} from '@ngrx/store/testing';
@@ -27,23 +28,36 @@ import {RouteKind} from '../../app_routing/types';
 import {State} from '../../app_state';
 import * as coreActions from '../../core/actions';
 import * as hparamsActions from '../../hparams/_redux/hparams_actions';
+import {stateRehydratedFromUrl} from '../../app_routing/actions';
+import {
+  getDashboardHparamFilterMap,
+  getDashboardSessionGroups,
+} from '../../hparams/_redux/hparams_selectors';
+import {buildSessionGroup} from '../../hparams/_redux/testing';
 import {
   getActiveRoute,
   getDashboardExperimentNames,
   getExperimentIdsFromRoute,
+  getExperimentIdToExperimentAliasMap,
   getRuns,
   getRunsLoadState,
+  getRunCatalog,
+  getRunCatalogWindow,
+  getRunSelectorRegexFilter,
+  getRunsTableSortingInfo,
 } from '../../selectors';
 import {provideMockTbStore} from '../../testing/utils';
 import {DataLoadState} from '../../types/data';
 import * as actions from '../actions';
-import {Run} from '../data_source/runs_data_source_types';
+import {Run, RunPageRequest} from '../data_source/runs_data_source_types';
 import {
   provideTestingRunsDataSource,
   TestingRunsDataSource,
 } from '../data_source/testing';
 import {RunsEffects} from './index';
-import {ColumnHeaderType} from '../../widgets/data_table/types';
+import {ColumnHeaderType, SortingOrder} from '../../widgets/data_table/types';
+import {RUN_START_TIME_SORT_KEY} from '../views/runs_table/sorting_utils';
+import {DomainType} from '../../widgets/data_table/types';
 
 function createRun(override: Partial<Run> = {}) {
   return {
@@ -724,6 +738,388 @@ describe('runs_effects', () => {
         ]);
       });
     });
+  });
+
+  it('discards obsolete native catalog responses after navigation', () => {
+    const previous = new ReplaySubject<{runs: Run[]; total: number}>(1);
+    const current = new ReplaySubject<{runs: Run[]; total: number}>(1);
+    Object.assign(runsDataSource, {
+      fetchRunsPage: jasmine
+        .createSpy()
+        .and.callFake((experimentId: string) =>
+          experimentId === '123' ? previous : current
+        ),
+    });
+    effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+    const subscription = effects.loadRunsOnNavigationOrReload$.subscribe();
+    store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('123'));
+    store.overrideSelector(getExperimentIdsFromRoute, ['123']);
+    store.overrideSelector(getDashboardExperimentNames, {});
+    store.refreshState();
+    action.next(buildNavigatedAction());
+
+    store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('456'));
+    store.overrideSelector(getExperimentIdsFromRoute, ['456']);
+    store.refreshState();
+    action.next(buildNavigatedAction());
+
+    const run = createRun({id: '456/current', name: 'current'});
+    current.next({runs: [run], total: 1_000_000});
+    current.complete();
+    previous.next({runs: [createRun({id: '123/obsolete'})], total: 1});
+    previous.complete();
+
+    expect(
+      actualActions.filter(
+        (action) => action.type === actions.fetchRunsSucceeded.type
+      )
+    ).toEqual([
+      actions.fetchRunsSucceeded({
+        experimentIds: ['456'],
+        runsForAllExperiments: [run],
+        newRuns: {456: {runs: [run]}},
+        expNameByExpId: {},
+        catalog: {runIds: [run.id], totals: {456: 1_000_000}, offset: 0},
+      }),
+    ]);
+    subscription.unsubscribe();
+  });
+
+  it('cancels native requests when query, sorting, window, or restored URL changes', () => {
+    const responses = Array.from(
+      {length: 5},
+      () => new ReplaySubject<{runs: Run[]; total: number}>(1)
+    );
+    let next = 0;
+    Object.assign(runsDataSource, {
+      fetchRunsPage: () => responses[next++],
+    });
+    effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+    const subscription = effects.loadRunsOnNavigationOrReload$.subscribe();
+    store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('123'));
+    store.overrideSelector(getExperimentIdsFromRoute, ['123']);
+    store.overrideSelector(getDashboardExperimentNames, {});
+    store.refreshState();
+    action.next(buildNavigatedAction());
+    action.next(actions.runSelectorRegexFilterChanged({regexString: 'loss'}));
+    action.next(
+      actions.runsTableSortingInfoChanged({
+        sortingInfo: {name: 'run', order: SortingOrder.ASCENDING},
+      })
+    );
+    action.next(actions.runCatalogWindowChanged({offset: 100, limit: 100}));
+    store.overrideSelector(getRunSelectorRegexFilter, 'restored');
+    store.refreshState();
+    action.next({type: stateRehydratedFromUrl.type});
+    for (const response of responses.slice(0, 4)) {
+      expect(response.observers.length).toBe(0);
+      response.next({runs: [createRun({id: '123/obsolete'})], total: 1000});
+      response.complete();
+    }
+    const current = createRun({id: '123/current'});
+    responses[4].next({runs: [current], total: 1000});
+    responses[4].complete();
+    const succeeded = actualActions.filter(
+      (value) => value.type === actions.fetchRunsSucceeded.type
+    );
+    expect(succeeded).toEqual([
+      jasmine.objectContaining({
+        catalog: jasmine.objectContaining({runIds: [current.id]}),
+      }),
+    ]);
+    subscription.unsubscribe();
+  });
+
+  for (const sortBy of ['name', 'start_time'] as const) {
+    it(`seeks a globally merged ${sortBy} window across experiments`, () => {
+      const runs = {
+        a: [
+          createRun({id: 'a/alpha', name: 'alpha', startTime: 50}),
+          createRun({id: 'a/charlie', name: 'charlie', startTime: 20}),
+          createRun({id: 'a/echo', name: 'echo', startTime: 10}),
+        ],
+        b: [
+          createRun({id: 'b/bravo', name: 'bravo', startTime: 40}),
+          createRun({id: 'b/charlie', name: 'charlie', startTime: 20}),
+          createRun({id: 'b/delta', name: 'delta', startTime: 30}),
+        ],
+      };
+      Object.assign(runsDataSource, {
+        fetchRunsPage: (id: keyof typeof runs, request: RunPageRequest) => {
+          expect(request.limit).toBeGreaterThan(0);
+          expect(request.limit).toBeLessThanOrEqual(2);
+          const sorted = [...runs[id]].sort(
+            (a, b) =>
+              (sortBy === 'start_time' ? a.startTime! - b.startTime! : 0) ||
+              (a.name < b.name ? -1 : a.name === b.name ? 0 : 1)
+          );
+          return of({
+            runs: sorted.slice(request.offset, request.offset + request.limit),
+            total: sorted.length,
+          });
+        },
+      });
+      effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+      const subscription = effects.loadRunsOnNavigationOrReload$.subscribe();
+      store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('a'));
+      store.overrideSelector(getExperimentIdsFromRoute, ['a', 'b']);
+      store.overrideSelector(getDashboardExperimentNames, {});
+      store.overrideSelector(getRunSelectorRegexFilter, '');
+      store.overrideSelector(getRunCatalogWindow, {offset: 2, limit: 2});
+      store.overrideSelector(getRunsTableSortingInfo, {
+        name: sortBy === 'name' ? 'run' : RUN_START_TIME_SORT_KEY,
+        order: SortingOrder.ASCENDING,
+      });
+      store.refreshState();
+      action.next(actions.runCatalogWindowChanged({offset: 2, limit: 2}));
+      const succeeded = actualActions.find(
+        (value) => value.type === actions.fetchRunsSucceeded.type
+      );
+      expect(succeeded).toEqual(
+        jasmine.objectContaining({
+          catalog: jasmine.objectContaining({
+            runIds:
+              sortBy === 'name'
+                ? ['a/charlie', 'b/charlie']
+                : ['b/charlie', 'b/delta'],
+          }),
+        })
+      );
+      subscription.unsubscribe();
+    });
+  }
+  it('resolves every run in scope for select-all in paged mode', () => {
+    const runs = {
+      a: [
+        createRun({id: 'a/alpha', name: 'alpha'}),
+        createRun({id: 'a/beta', name: 'beta'}),
+        createRun({id: 'a/gamma', name: 'gamma'}),
+      ],
+      b: [
+        createRun({id: 'b/delta', name: 'delta'}),
+        createRun({id: 'b/epsilon', name: 'epsilon'}),
+      ],
+    };
+    const seenRequests: Array<{id: string; request: RunPageRequest}> = [];
+    Object.assign(runsDataSource, {
+      fetchRunsPage: (id: keyof typeof runs, request: RunPageRequest) => {
+        seenRequests.push({id, request});
+        const all = [...runs[id]].sort((x, y) =>
+          x.name < y.name ? -1 : 1
+        );
+        return of({
+          runs: all.slice(request.offset, request.offset + request.limit),
+          total: all.length,
+        });
+      },
+    });
+    effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+    const emitted: Action[] = [];
+    const subscription = effects.selectAllRuns$.subscribe((action) =>
+      emitted.push(action)
+    );
+    store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('a'));
+    store.overrideSelector(getExperimentIdsFromRoute, ['a', 'b']);
+    store.overrideSelector(getRunCatalog, {
+      runIds: ['a/alpha'],
+      totals: {a: 3, b: 2},
+      offset: 0,
+    });
+    store.overrideSelector(getRunSelectorRegexFilter, '');
+    store.overrideSelector(getRunsTableSortingInfo, {
+      name: 'run',
+      order: SortingOrder.ASCENDING,
+    });
+    store.refreshState();
+    action.next(actions.selectAllRuns());
+
+    expect(emitted).toEqual([
+      actions.runPageSelectionToggled({
+        runIds: ['a/alpha', 'a/beta', 'a/gamma', 'b/delta', 'b/epsilon'],
+      }),
+    ]);
+    // Full-scope fetch per experiment, not the current window.
+    expect(
+      seenRequests.map(({id, request}) => [id, request.offset, request.limit])
+    ).toEqual([
+      ['a', 0, 3],
+      ['b', 0, 2],
+    ]);
+    subscription.unsubscribe();
+  });
+
+  it('does nothing for select-all without a catalog', () => {
+    Object.assign(runsDataSource, {
+      fetchRunsPage: () => {
+        throw new Error('should not fetch without a catalog');
+      },
+    });
+    effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+    const emitted: Action[] = [];
+    const subscription = effects.selectAllRuns$.subscribe((action) =>
+      emitted.push(action)
+    );
+    store.refreshState();
+    action.next(actions.selectAllRuns());
+
+    expect(emitted).toEqual([]);
+    subscription.unsubscribe();
+  });
+
+  it('filters and ranks hparam subruns before a compact catalog window', () => {
+    const names = ['p/train', 'p/child/eval', 'q/eval', 'r/test', 'unknown'];
+    Object.assign(runsDataSource, {
+      fetchRunsPage: (_id: string, request: RunPageRequest) => {
+        const prefixes = [...(request.sessionRanks ?? [])].sort(
+          (a, b) => b.prefix.length - a.prefix.length
+        );
+        const rows = names
+          .map((name) => ({
+            run: createRun({id: `exp/${name}`, name}),
+            rank:
+              prefixes.find(({prefix}) => name.startsWith(prefix))?.rank ??
+              request.defaultRank ??
+              0,
+          }))
+          .filter(({rank}) => rank >= 0)
+          .sort((a, b) => a.rank - b.rank);
+        return of({
+          runs: rows
+            .slice(request.offset, request.offset + request.limit)
+            .map(({run}) => run),
+          total: rows.length,
+        });
+      },
+    });
+    effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+    const subscription = effects.loadRunsOnNavigationOrReload$.subscribe();
+    store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('exp'));
+    store.overrideSelector(getExperimentIdsFromRoute, ['exp']);
+    store.overrideSelector(getDashboardExperimentNames, {});
+    store.overrideSelector(getRunCatalogWindow, {offset: 1, limit: 1});
+    store.overrideSelector(getRunsTableSortingInfo, {
+      name: 'score',
+      order: SortingOrder.ASCENDING,
+    });
+    store.overrideSelector(getDashboardSessionGroups, [
+      buildSessionGroup({
+        hparams: {score: 30, enabled: true},
+        sessions: [{name: 'exp/p'}],
+      }),
+      buildSessionGroup({
+        hparams: {score: 10, enabled: false},
+        sessions: [{name: 'exp/p/child'}],
+      }),
+      buildSessionGroup({
+        hparams: {score: 20, enabled: true},
+        sessions: [{name: 'exp/q'}],
+      }),
+      buildSessionGroup({
+        hparams: {score: 10, enabled: true},
+        sessions: [{name: 'exp/r'}],
+      }),
+    ]);
+    store.overrideSelector(
+      getDashboardHparamFilterMap,
+      new Map([
+        [
+          'enabled',
+          {
+            type: DomainType.DISCRETE,
+            includeUndefined: false,
+            possibleValues: [true, false],
+            filterValues: [true],
+          },
+        ],
+      ])
+    );
+    store.refreshState();
+    action.next(actions.runCatalogWindowChanged({offset: 1, limit: 1}));
+    expect(actualActions).toContain(
+      jasmine.objectContaining({
+        type: actions.fetchRunsSucceeded.type,
+        catalog: {runIds: ['exp/q/eval'], totals: {exp: 3}, offset: 1},
+      })
+    );
+    subscription.unsubscribe();
+  });
+
+  it('merges non-BMP run names in backend Unicode scalar order', () => {
+    const names: Record<string, string[]> = {
+      a: ['\ue000', '\u{10000}'],
+      b: ['\ue001'],
+    };
+    Object.assign(runsDataSource, {
+      fetchRunsPage: (id: string, request: RunPageRequest) =>
+        of({
+          runs: names[id]
+            .slice(request.offset, request.offset + request.limit)
+            .map((name) => createRun({id: `${id}/${name}`, name})),
+          total: names[id].length,
+        }),
+    });
+    effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+    const subscription = effects.loadRunsOnNavigationOrReload$.subscribe();
+    store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('a'));
+    store.overrideSelector(getExperimentIdsFromRoute, ['a', 'b']);
+    store.overrideSelector(getDashboardExperimentNames, {});
+    store.overrideSelector(getRunCatalogWindow, {offset: 1, limit: 1});
+    store.overrideSelector(getRunsTableSortingInfo, {
+      name: 'run',
+      order: SortingOrder.ASCENDING,
+    });
+    store.refreshState();
+    action.next(actions.runCatalogWindowChanged({offset: 1, limit: 1}));
+    expect(actualActions).toContain(
+      jasmine.objectContaining({
+        type: actions.fetchRunsSucceeded.type,
+        catalog: {runIds: ['b/\ue001'], totals: {a: 2, b: 1}, offset: 1},
+      })
+    );
+    subscription.unsubscribe();
+  });
+
+  it('orders comparison windows by experiment alias rather than start time', () => {
+    const names: Record<string, string[]> = {
+      a: ['alpha', 'bravo'],
+      b: ['yankee', 'zulu'],
+    };
+    Object.assign(runsDataSource, {
+      fetchRunsPage: (id: string, request: RunPageRequest) =>
+        of({
+          runs: names[id]
+            .slice(request.offset, request.offset + request.limit)
+            .map((name) => createRun({id: `${id}/${name}`, name})),
+          total: names[id].length,
+        }),
+    });
+    effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+    const subscription = effects.loadRunsOnNavigationOrReload$.subscribe();
+    store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('a'));
+    store.overrideSelector(getExperimentIdsFromRoute, ['a', 'b']);
+    store.overrideSelector(getDashboardExperimentNames, {});
+    store.overrideSelector(getExperimentIdToExperimentAliasMap, {
+      a: {aliasText: 'second', aliasNumber: 2},
+      b: {aliasText: 'first', aliasNumber: 1},
+    });
+    store.overrideSelector(getRunCatalogWindow, {offset: 1, limit: 2});
+    store.overrideSelector(getRunsTableSortingInfo, {
+      name: 'experimentAlias',
+      order: SortingOrder.ASCENDING,
+    });
+    store.refreshState();
+    action.next(actions.runCatalogWindowChanged({offset: 1, limit: 2}));
+    expect(actualActions).toContain(
+      jasmine.objectContaining({
+        type: actions.fetchRunsSucceeded.type,
+        catalog: {
+          runIds: ['b/zulu', 'a/alpha'],
+          totals: {a: 2, b: 2},
+          offset: 1,
+        },
+      })
+    );
+    subscription.unsubscribe();
   });
 
   describe('removeHparamFilterWhenColumnIsRemoved$', () => {

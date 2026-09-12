@@ -25,6 +25,12 @@ import {ObjectRenderer} from './renderer/renderer_types';
 
 type Cacheable = {};
 
+/**
+ * Coordinate identifier of a series that has never been transformed. The
+ * coordinator's identifiers start at 0 and only increase.
+ */
+const NEVER_TRANSFORMED = -1;
+
 export interface RenderCache {
   getFromPreviousFrame(key: string): Cacheable | null;
   setToCurrentFrame(key: string, value: Cacheable): void;
@@ -98,7 +104,12 @@ export abstract class DataDrawable {
   private readonly getMetadataMapImpl: () => DataSeriesMetadataMap;
   private readonly renderer: ObjectRenderer;
   private readonly renderCache = new RenderCacheContainer();
-  private coordinateIdentifier: number | null = null;
+  /**
+   * Coordinate identifier each entry of `series` was transformed with,
+   * parallel to `series`. Hidden series are skipped by the transform, so
+   * entries may lag the coordinator's current identifier.
+   */
+  private seriesIdentifiers: number[] = [];
   private layout: Rect = {x: 0, width: 1, y: 0, height: 1};
 
   constructor(config: DrawableConfig) {
@@ -116,6 +127,8 @@ export abstract class DataDrawable {
       this.layout.height !== layout.height
     ) {
       this.paintDirty = true;
+      // Ui coordinates are relative to the layout, so they are all stale.
+      this.seriesIdentifiers.fill(NEVER_TRANSFORMED);
     }
     this.layout = layout;
   }
@@ -156,45 +169,77 @@ export abstract class DataDrawable {
     this.paintDirty = false;
   }
 
-  private isCoordinateUpdated() {
-    return this.coordinator.getUpdateIdentifier() !== this.coordinateIdentifier;
-  }
-
-  private clearCoordinateIdentifier() {
-    this.coordinateIdentifier = null;
-  }
-
   setData(data: DataSeries[]) {
-    this.clearCoordinateIdentifier();
     this.rawSeriesData = data;
+    this.seriesIdentifiers.fill(NEVER_TRANSFORMED);
   }
 
+  /**
+   * Maps data coordinates of stale series into ui coordinates.
+   *
+   * Every pan, zoom, and resize frame invalidates the transform, making this
+   * the hottest loop in the chart, so a series is transformed only when its
+   * own coordinates are stale and something paints it: a hidden series is
+   * left untransformed until the frame it becomes visible again.
+   */
   private transformCoordinatesIfStale(): void {
-    if (!this.isCoordinateUpdated()) {
-      return;
-    }
-
+    const identifier = this.coordinator.getUpdateIdentifier();
     const layoutRect = this.getLayoutRect();
-    this.series = new Array(this.rawSeriesData.length);
+    const metadataMap = this.getMetadataMap();
+    let transformed = false;
 
-    for (let i = 0; i < this.rawSeriesData.length; i++) {
-      const datum = this.rawSeriesData[i];
-      this.series[i] = {
-        id: datum.id,
-        polyline: new Float32Array(datum.points.length * 2),
-      };
-      for (let pointIndex = 0; pointIndex < datum.points.length; pointIndex++) {
-        const [x, y] = this.coordinator.transformDataToUiCoord(layoutRect, [
-          datum.points[pointIndex].x,
-          datum.points[pointIndex].y,
-        ]);
-        this.series[i].polyline[pointIndex * 2] = x;
-        this.series[i].polyline[pointIndex * 2 + 1] = y;
-      }
+    if (this.series.length !== this.rawSeriesData.length) {
+      this.series.length = this.rawSeriesData.length;
+      this.seriesIdentifiers.length = this.rawSeriesData.length;
     }
 
-    this.coordinateIdentifier = this.coordinator.getUpdateIdentifier();
-    this.markAsPaintDirty();
+    for (let index = 0; index < this.rawSeriesData.length; index++) {
+      const datum = this.rawSeriesData[index];
+      const internalSeries = this.series[index];
+      if (
+        !internalSeries ||
+        internalSeries.id !== datum.id ||
+        internalSeries.polyline.length !== datum.points.length * 2
+      ) {
+        // Keeps `series` parallel to the data even for a series that is
+        // never painted. Zeroed coordinates are never drawn: only a visible
+        // series is transformed, and only a visible series is painted.
+        this.series[index] = {
+          id: datum.id,
+          polyline: new Float32Array(datum.points.length * 2),
+          hasNaN: false,
+        };
+        this.seriesIdentifiers[index] = NEVER_TRANSFORMED;
+      }
+      if (this.seriesIdentifiers[index] === identifier) {
+        continue;
+      }
+      const metadata = metadataMap[datum.id];
+      if (!metadata?.visible) {
+        // Nothing paints this series, so its stale coordinates cannot be
+        // seen. Leaving its identifier behind transforms it on the frame it
+        // is painted again.
+        continue;
+      }
+      // Renderers cache the polyline they last drew and compare its contents
+      // to decide whether to rewrite the DOM or the GPU geometry, so each
+      // transform must produce a new buffer instead of writing in place.
+      // Skipping the transform above leaves the previous buffer in place,
+      // which those comparisons short-circuit on identity.
+      const polyline = new Float32Array(datum.points.length * 2);
+      const hasNaN = this.coordinator.transformDataToUiCoords(
+        layoutRect,
+        datum.points,
+        polyline
+      );
+      this.series[index] = {id: datum.id, polyline, hasNaN};
+      this.seriesIdentifiers[index] = identifier;
+      transformed = true;
+    }
+
+    if (transformed) {
+      this.markAsPaintDirty();
+    }
   }
 
   /**

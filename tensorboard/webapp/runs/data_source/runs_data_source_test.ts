@@ -34,6 +34,34 @@ describe('TBRunsDataSource test', () => {
     dataSource = TestBed.inject(RunsDataSource);
   });
 
+  it('keeps large exact run selections in the POST body, not the request URL', () => {
+    const names = Array.from(
+      {length: 500},
+      (_, index) => `train/${index}/${'long run name & '.repeat(12)}`
+    );
+    const result = jasmine.createSpy();
+    dataSource.fetchRunsPage!('exp1', {
+      query: '',
+      offset: 50,
+      limit: 25,
+      sortBy: 'name',
+      descending: false,
+      names,
+    }).subscribe(result);
+    const request = httpMock.expectOne('/experiment/exp1/data/runs');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body.name).toEqual(names);
+    const page = names.slice(50, 75);
+    request.flush({
+      runs: page.map((name) => ({name, start_time: 42})),
+      total: 500,
+    });
+    expect(result).toHaveBeenCalledWith({
+      runs: page.map((name) => ({id: `exp1/${name}`, name, startTime: 42})),
+      total: 500,
+    });
+  });
+
   describe('fetchRuns', () => {
     it('fetches from "/experiment/${experimentId}/data/runs"', fakeAsync(() => {
       const results = jasmine.createSpy();

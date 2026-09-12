@@ -16,6 +16,7 @@ import {ExperimentAlias} from '../../../experiments/types';
 import {Run} from '../../../runs/store/runs_types';
 import {TimeSelection, XAxisType} from '../../types';
 import {ScalarStepDatum} from '../../data_source';
+import {Extent} from '../../../widgets/line_chart_v2/lib/public_types';
 import {
   MinMaxStep,
   PartialSeries,
@@ -304,4 +305,79 @@ export function formatTimeSelection(
     maybeClipTimeSelection(timeSelection, minMaxStep),
     rangeSelectionEnabled
   );
+}
+
+function isSameExtent(a: Extent | null, b: Extent | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.x[0] === b.x[0] &&
+    a.x[1] === b.x[1] &&
+    a.y[0] === b.y[0] &&
+    a.y[1] === b.y[1]
+  );
+}
+
+/**
+ * Coalesces line chart view box changes into at most one store dispatch per
+ * animation frame.
+ *
+ * A pan emits a new extent on every mousemove, and every `cardViewBoxChanged`
+ * replaces the card state map, which every card on the page reads. The chart
+ * renders the drag itself, so the store only needs the extent the gesture
+ * reached by the end of a frame. The last extent of a gesture is never
+ * dropped: it is dispatched on the following frame, or on `dispose()` if the
+ * card is torn down first.
+ */
+export class ViewBoxCoalescer {
+  private frameId: number | null = null;
+  private pendingViewBox: Extent | null = null;
+  private hasPendingViewBox = false;
+  private storeViewBox: Extent | null = null;
+
+  constructor(private readonly dispatch: (viewBox: Extent | null) => void) {}
+
+  /**
+   * Records the view box the store currently holds for the card, which is the
+   * baseline for skipping no-op dispatches. Keeping the store as the baseline
+   * means a view box changed by anything other than this coalescer is not
+   * mistaken for one it already sent.
+   */
+  setStoreViewBox(viewBox: Extent | null) {
+    this.storeViewBox = viewBox;
+  }
+
+  push(viewBox: Extent | null) {
+    this.pendingViewBox = viewBox;
+    this.hasPendingViewBox = true;
+    if (this.frameId !== null) {
+      return;
+    }
+    this.frameId = requestAnimationFrame(() => {
+      this.frameId = null;
+      this.flush();
+    });
+  }
+
+  dispose() {
+    if (this.frameId !== null) {
+      cancelAnimationFrame(this.frameId);
+      this.frameId = null;
+    }
+    this.flush();
+  }
+
+  private flush() {
+    if (!this.hasPendingViewBox) {
+      return;
+    }
+    const viewBox = this.pendingViewBox;
+    this.hasPendingViewBox = false;
+    this.pendingViewBox = null;
+    if (isSameExtent(viewBox, this.storeViewBox)) {
+      return;
+    }
+    this.storeViewBox = viewBox;
+    this.dispatch(viewBox);
+  }
 }

@@ -41,10 +41,19 @@ export class SeriesLineView extends DataDrawable {
   /**
    * @param polyline Expects the polyline to have even length and encode two-dimensional
    *   coordinates.
+   * @param hasNaN Whether `polyline` holds a NaN, as recorded by the
+   *   coordinate transform.
    */
   private partitionPolyline(
-    polyline: Polyline
+    polyline: Polyline,
+    hasNaN: boolean
   ): Array<{polyline: Float32Array; type: PartitionType}> {
+    // A series without NaNs is a single number partition covering the whole
+    // polyline, which needs neither a copy of it nor the zero coordinate.
+    if (!hasNaN) {
+      return [{type: PartitionType.NUMBER, polyline}];
+    }
+
     const partition = [];
     let partitionStartInd: number = 0;
     let isPrevValueNaN = false;
@@ -95,8 +104,8 @@ export class SeriesLineView extends DataDrawable {
   }
 
   redraw() {
+    const map = this.getMetadataMap();
     for (const series of this.series) {
-      const map = this.getMetadataMap();
       const metadata = map[series.id];
       if (!metadata) continue;
       if (series.polyline.length % 2 !== 0) {
@@ -105,7 +114,10 @@ export class SeriesLineView extends DataDrawable {
         );
       }
 
-      const partitionedPolyline = this.partitionPolyline(series.polyline);
+      const partitionedPolyline = this.partitionPolyline(
+        series.polyline,
+        series.hasNaN
+      );
 
       for (const [
         partitionInd,
@@ -114,7 +126,9 @@ export class SeriesLineView extends DataDrawable {
         if (type === PartitionType.NUMBER) {
           if (polyline.length === 2) {
             this.paintBrush.setCircle(
-              JSON.stringify(['circle', series.id, partitionInd]),
+              // The leading number keeps ids with delimiters unambiguous;
+              // serializing them on every frame is measurable.
+              'circle:' + partitionInd + ':' + series.id,
               {x: polyline[0], y: polyline[1]},
               {
                 color: metadata.color,
@@ -125,7 +139,7 @@ export class SeriesLineView extends DataDrawable {
             );
           } else {
             this.paintBrush.setLine(
-              JSON.stringify(['line', series.id, partitionInd]),
+              'line:' + partitionInd + ':' + series.id,
               polyline,
               {
                 color: metadata.color,
@@ -139,12 +153,11 @@ export class SeriesLineView extends DataDrawable {
         } else if (!metadata.aux) {
           for (let index = 0; index < polyline.length; index += 2) {
             this.paintBrush.setTriangle(
-              JSON.stringify([
-                'NaN',
-                series.id,
-                polyline[index],
-                polyline[index + 1],
-              ]),
+              // Keyed by position in the series, not by coordinate: two NaNs
+              // can share a coordinate (identical wall times), and a
+              // coordinate key would both collide (leaking the overwritten
+              // renderer object) and miss the cache on every pan and zoom.
+              'NaN:' + partitionInd + ':' + index + ':' + series.id,
               {x: polyline[index], y: polyline[index + 1]},
               {
                 color: metadata.color,

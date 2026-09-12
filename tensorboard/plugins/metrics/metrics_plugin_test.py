@@ -14,13 +14,15 @@
 # ==============================================================================
 """Integration tests for the Metrics Plugin."""
 
-
 import argparse
 import collections.abc
+import json
 import os.path
+from unittest import mock
 
 import tensorflow.compat.v1 as tf1
 import tensorflow.compat.v2 as tf
+from werkzeug import test, wrappers
 
 from tensorboard import context
 from tensorboard.backend.event_processing import data_provider
@@ -31,6 +33,8 @@ from tensorboard.data import provider
 from tensorboard.plugins import base_plugin
 from tensorboard.plugins.image import metadata as image_metadata
 from tensorboard.plugins.metrics import metrics_plugin
+from tensorboard.plugins.scalar import metadata as scalar_metadata
+from tensorboard.plugins.scalar import plugin_data_pb2
 
 tf1.enable_eager_execution()
 
@@ -130,15 +134,13 @@ class MetricsPluginTest(tf.test.TestCase):
         """Cleans non-deterministic data from a TimeSeriesResponse, in
         place."""
         for response in responses:
-            run_to_series = response.get("runToSeries", {})
-            for run, series in run_to_series.items():
-                for datum in series:
-                    if "wallTime" in datum:
-                        datum["wallTime"] = "<wall_time>"
-
-            # Clean images.
-            run_to_image_series = response.get("runToSeries", {})
-            for run, series in run_to_image_series.items():
+            for series in response.get("runToSeries", {}).values():
+                if isinstance(series, dict):
+                    # Columnar scalars; see `ScalarColumns` in http_api.md.
+                    series["wallTimes"] = ["<wall_time>"] * len(
+                        series["wallTimes"]
+                    )
+                    continue
                 for datum in series:
                     if "wallTime" in datum:
                         datum["wallTime"] = "<wall_time>"
@@ -146,6 +148,14 @@ class MetricsPluginTest(tf.test.TestCase):
                         datum["imageId"] = "<image_id>"
 
         return responses
+
+    def _scalar_columns(self, steps, values):
+        """Builds an expected `ScalarColumns` dict with cleaned wall times."""
+        return {
+            "steps": list(steps),
+            "wallTimes": ["<wall_time>"] * len(steps),
+            "values": list(values),
+        }
 
     def _get_image_blob_key(self, run, tag, step=0, sample=0):
         """Returns a single image's blob_key after it has been written."""
@@ -171,7 +181,8 @@ class MetricsPluginTest(tf.test.TestCase):
         response = self._plugin._tags_impl(context.RequestContext(), "eid")
 
         expected_tags = {
-            "runTagInfo": {},
+            "runs": [],
+            "tagToRuns": {},
             "tagDescriptions": {},
         }
         self.assertEqual(expected_tags, response["scalars"])
@@ -183,6 +194,109 @@ class MetricsPluginTest(tf.test.TestCase):
             },
             response["images"],
         )
+
+    def test_tag_pages_filter_runs_before_pagination(self):
+        for run, tags in (("selected", ["a", "b"]), ("other", ["b", "c"])):
+            for tag in tags:
+                self._write_scalar(run, tag)
+        self._multiplexer.Reload()
+        client = test.Client(self._plugin._serve_tags, wrappers.Response)
+        page = client.get(
+            "/?run=selected&tag_offset=1&tag_limit=1",
+            headers={"X-TensorBoard-Metadata-Revision": ""},
+        ).json
+        self.assertEqual(page["totalTags"], 2)
+        self.assertEqual(page["metadata"]["scalars"]["runs"], ["selected"])
+        self.assertEqual(page["metadata"]["scalars"]["tagToRuns"], {"b": [0]})
+        exact = client.get("/?run=selected&run=other&tag=b&tag_limit=0").json
+        self.assertEqual(exact["totalTags"], 1)
+        self.assertEqual(exact["scalars"]["runs"], ["other", "selected"])
+        self.assertEqual(exact["scalars"]["tagToRuns"], {"b": [0, 1]})
+        empty = client.get("/?run_filter=true&tag_limit=1").json
+        self.assertEqual(empty["totalTags"], 0)
+        self.assertEqual(empty["scalars"]["tagToRuns"], {})
+        self.assertEqual(
+            client.get("/?run=selected&tag_offset=-1&tag_limit=1").status_code,
+            400,
+        )
+
+    def _catalog_request(self, **overrides):
+        body = dict(
+            runIds=["experiment/selected"],
+            query="",
+            plugins=[],
+            groupOffset=0,
+            groupLimit=40,
+            groups=[dict(name="group", offset=0, limit=1)],
+            filteredOffset=0,
+            filteredLimit=40,
+            pinnedTags=[],
+            pinnedRunIds=[],
+        )
+        body.update(overrides)
+        return body
+
+    def test_catalog_json_and_colab_get_keep_qualified_scope(self):
+        self._write_scalar("selected", "group/tag2", "**safe**")
+        self._write_scalar("selected", "group/tag10")
+        self._write_scalar("other", "private/tag")
+        self._multiplexer.Reload()
+        client = test.Client(self._plugin._serve_catalog, wrappers.Response)
+        body = self._catalog_request()
+        response = client.post("/", data=json.dumps(body))
+        self.assertEqual(response.status_code, 200)
+        catalog = response.json
+        self.assertEqual(catalog["totalCards"], 2)
+        self.assertEqual(
+            catalog["cards"], [dict(plugin="scalars", tag="group/tag2")]
+        )
+        self.assertEqual(
+            catalog["metadata"]["scalars"],
+            {
+                "tagToRuns": {"group/tag2": ["experiment/selected"]},
+                "tagDescriptions": {
+                    "group/tag2": "<p><strong>safe</strong></p>"
+                },
+            },
+        )
+        self.assertEqual(
+            client.get("/", query_string={"request": json.dumps(body)}).json,
+            catalog,
+        )
+        empty = client.post(
+            "/", data=json.dumps(self._catalog_request(runIds=[]))
+        ).json
+        self.assertEqual(empty["totalCards"], 0)
+        self.assertEqual(empty["metadata"]["scalars"]["tagToRuns"], {})
+
+    def test_catalog_rejects_malformed_requests_before_provider_access(self):
+        client = test.Client(self._plugin._serve_catalog, wrappers.Response)
+        with mock.patch.object(
+            self._plugin._data_provider,
+            "list_metrics_catalog",
+            side_effect=AssertionError("invalid request reached provider"),
+        ):
+            for body in (
+                [],
+                self._catalog_request(groupOffset=-1),
+                self._catalog_request(groupLimit=True),
+                self._catalog_request(filteredLimit=2**64),
+                self._catalog_request(filteredOffset=1.5),
+                self._catalog_request(query="["),
+                self._catalog_request(runIds=["unqualified"]),
+                self._catalog_request(plugins=["audio"]),
+                self._catalog_request(groups=[dict(name="group", offset=0)]),
+                self._catalog_request(
+                    groups=[dict(name="group", offset=0, limit=-1)]
+                ),
+            ):
+                with self.subTest(body=body):
+                    self.assertEqual(
+                        client.post("/", data=json.dumps(body)).status_code,
+                        400,
+                    )
+            self.assertEqual(client.post("/", data="{").status_code, 400)
+            self.assertEqual(client.delete("/").status_code, 405)
 
     def test_tags(self):
         self._write_scalar("run1", "scalars/tagA", None)
@@ -204,9 +318,10 @@ class MetricsPluginTest(tf.test.TestCase):
 
         self.assertEqual(
             {
-                "runTagInfo": {
-                    "run1": ["scalars/tagA", "scalars/tagB"],
-                    "run2": ["scalars/tagB"],
+                "runs": ["run1", "run2"],
+                "tagToRuns": {
+                    "scalars/tagA": [0],
+                    "scalars/tagB": [0, 1],
                 },
                 "tagDescriptions": {},
             },
@@ -214,9 +329,10 @@ class MetricsPluginTest(tf.test.TestCase):
         )
         self.assertEqual(
             {
-                "runTagInfo": {
-                    "run1": ["histograms/tagA", "histograms/tagB"],
-                    "run2": ["histograms/tagB"],
+                "runs": ["run1", "run2"],
+                "tagToRuns": {
+                    "histograms/tagA": [0],
+                    "histograms/tagB": [0, 1],
                 },
                 "tagDescriptions": {},
             },
@@ -252,9 +368,10 @@ class MetricsPluginTest(tf.test.TestCase):
 
         self.assertEqual(
             {
-                "runTagInfo": {
-                    "run1": ["scalars/tagA", "scalars/tagB"],
-                    "run2": ["scalars/tagB"],
+                "runs": ["run1", "run2"],
+                "tagToRuns": {
+                    "scalars/tagA": [0],
+                    "scalars/tagB": [0, 1],
                 },
                 "tagDescriptions": {
                     "scalars/tagA": "<p>Describing tagA</p>",
@@ -265,9 +382,10 @@ class MetricsPluginTest(tf.test.TestCase):
         )
         self.assertEqual(
             {
-                "runTagInfo": {
-                    "run1": ["histograms/tagA", "histograms/tagB"],
-                    "run2": ["histograms/tagB"],
+                "runs": ["run1", "run2"],
+                "tagToRuns": {
+                    "histograms/tagA": [0],
+                    "histograms/tagB": [0, 1],
                 },
                 "tagDescriptions": {
                     "histograms/tagA": "<p>Describing tagA</p>",
@@ -321,6 +439,53 @@ class MetricsPluginTest(tf.test.TestCase):
             {"histograms/tagA": expected_composite_description},
             response["histograms"]["tagDescriptions"],
         )
+
+    def test_tags_from_columnar_provider(self):
+        current = plugin_data_pb2.ScalarPluginData(
+            version=scalar_metadata.PROTO_VERSION
+        ).SerializeToString()
+        too_new = plugin_data_pb2.ScalarPluginData(
+            version=scalar_metadata.PROTO_VERSION + 1
+        ).SerializeToString()
+        data_provider = mock.Mock(spec=provider.DataProvider)
+        data_provider.list_scalars_tag_index.return_value = provider.TagIndex(
+            # Providers list runs in storage order, so the response must
+            # renumber them without disturbing which runs hold which tags.
+            runs=["zeta", "alpha"],
+            tags=["scalars/tagA", "scalars/tagB", "scalars/tagFuture"],
+            contents=[current, too_new],
+            run_tags=[[0, 2], [0, 1]],
+            run_contents=[[0, 1], [0, 0]],
+            descriptions={(0, 0): "tagA is hot", (1, 0): "tagA is cold"},
+        )
+        data_provider.list_tensors_metadata.return_value = {}
+        data_provider.list_blob_sequences.return_value = {}
+        plugin = metrics_plugin.MetricsPlugin(
+            base_plugin.TBContext(data_provider=data_provider)
+        )
+
+        response = plugin._tags_impl(context.RequestContext(), "eid")
+
+        self.assertEqual(
+            {
+                "runs": ["alpha", "zeta"],
+                "tagToRuns": {
+                    "scalars/tagA": [0, 1],
+                    "scalars/tagB": [0],
+                },
+                "tagDescriptions": {
+                    "scalars/tagA": (
+                        "<h1>Multiple descriptions</h1>\n"
+                        "<h2>For run: alpha</h2>\n"
+                        "<p>tagA is cold</p>\n"
+                        "<h2>For run: zeta</h2>\n"
+                        "<p>tagA is hot</p>"
+                    )
+                },
+            },
+            response["scalars"],
+        )
+        data_provider.list_scalars_metadata.assert_not_called()
 
     def test_tags_unsafe_description(self):
         self._write_scalar("<&#run>", "scalars/<&#tag>", "<&#description>")
@@ -385,23 +550,9 @@ class MetricsPluginTest(tf.test.TestCase):
                     "plugin": "scalars",
                     "tag": "scalars/tagA",
                     "runToSeries": {
-                        "run1": [
-                            {
-                                "wallTime": "<wall_time>",
-                                "step": 0,
-                                "value": 0.0,
-                            },
-                            {
-                                "wallTime": "<wall_time>",
-                                "step": 1,
-                                "value": 100.0,
-                            },
-                            {
-                                "wallTime": "<wall_time>",
-                                "step": 2,
-                                "value": -200.0,
-                            },
-                        ]
+                        "run1": self._scalar_columns(
+                            [0, 1, 2], [0.0, 100.0, -200.0]
+                        )
                     },
                 }
             ],
@@ -493,20 +644,8 @@ class MetricsPluginTest(tf.test.TestCase):
                 {
                     "plugin": "scalars",
                     "runToSeries": {
-                        "run1": [
-                            {
-                                "step": 0,
-                                "value": 0.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
-                        "run2": [
-                            {
-                                "step": 0,
-                                "value": 1.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
+                        "run1": self._scalar_columns([0], [0.0]),
+                        "run2": self._scalar_columns([0], [1.0]),
                     },
                     "tag": "scalars/tagA",
                 }
@@ -535,39 +674,21 @@ class MetricsPluginTest(tf.test.TestCase):
                 {
                     "plugin": "scalars",
                     "runToSeries": {
-                        "run1": [
-                            {
-                                "step": 0,
-                                "value": 0.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
+                        "run1": self._scalar_columns([0], [0.0]),
                     },
                     "tag": "scalars/tagA",
                 },
                 {
                     "plugin": "scalars",
                     "runToSeries": {
-                        "run2": [
-                            {
-                                "step": 0,
-                                "value": 1.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
+                        "run2": self._scalar_columns([0], [1.0]),
                     },
                     "tag": "scalars/tagB",
                 },
                 {
                     "plugin": "scalars",
                     "runToSeries": {
-                        "run2": [
-                            {
-                                "step": 0,
-                                "value": 1.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
+                        "run2": self._scalar_columns([0], [1.0]),
                     },
                     "tag": "scalars/tagB",
                 },
@@ -592,13 +713,7 @@ class MetricsPluginTest(tf.test.TestCase):
                 {
                     "plugin": "scalars",
                     "runToSeries": {
-                        "run2": [
-                            {
-                                "step": 0,
-                                "value": 1.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
+                        "run2": self._scalar_columns([0], [1.0]),
                     },
                     "tag": "scalars/tagA",
                     "run": "run2",
@@ -645,25 +760,35 @@ class MetricsPluginTest(tf.test.TestCase):
                 {
                     "plugin": "scalars",
                     "runToSeries": {
-                        "run1": [
-                            {
-                                "step": 0,
-                                "value": 0.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
-                        "run3": [
-                            {
-                                "step": 0,
-                                "value": 2.0,
-                                "wallTime": "<wall_time>",
-                            },
-                        ],
+                        "run1": self._scalar_columns([0], [0.0]),
+                        "run3": self._scalar_columns([0], [2.0]),
                     },
                     "tag": "scalars/tagA",
                 }
             ],
             clean_response,
+        )
+
+    def test_time_series_distinct_run_filters_stay_separate(self):
+        self._write_scalar_data("run1", "scalars/tagA", [0])
+        self._write_scalar_data("run2", "scalars/tagA", [1])
+
+        self._multiplexer.Reload()
+
+        # Requests for one plugin and tag are read in a single provider call,
+        # so each response must still see only the runs its own filter admits.
+        requests = [
+            {"plugin": "scalars", "tag": "scalars/tagA", "runs": ["run1"]},
+            {"plugin": "scalars", "tag": "scalars/tagA", "run": "run2"},
+            {"plugin": "scalars", "tag": "scalars/tagA"},
+        ]
+        response = self._plugin._time_series_impl(
+            context.RequestContext(), "", requests
+        )
+
+        self.assertEqual(
+            [{"run1"}, {"run2"}, {"run1", "run2"}],
+            [set(series["runToSeries"]) for series in response],
         )
 
     def test_time_series_empty_runs_list_returns_no_series(self):
@@ -695,7 +820,7 @@ class MetricsPluginTest(tf.test.TestCase):
         image_id = self._get_image_blob_key(
             "run1", "images/tagA", step=0, sample=0
         )
-        (data, content_type) = self._plugin._image_data_impl(
+        data, content_type = self._plugin._image_data_impl(
             context.RequestContext(), image_id
         )
 
@@ -764,7 +889,7 @@ class MetricsPluginTest(tf.test.TestCase):
         )
 
         image_id = original_response[0]["runToSeries"]["run1"][0]["imageId"]
-        (data, content_type) = self._plugin._image_data_impl(
+        data, content_type = self._plugin._image_data_impl(
             context.RequestContext(), image_id
         )
 

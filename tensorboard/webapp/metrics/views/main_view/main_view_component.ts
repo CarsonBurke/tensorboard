@@ -20,6 +20,7 @@ import {
   InjectionToken,
   Input,
   Optional,
+  NgZone,
   Output,
   Type,
   ViewChild,
@@ -27,7 +28,10 @@ import {
 import {CdkScrollable} from '@angular/cdk/scrolling';
 
 import {PluginType} from '../../types';
-import {CardObserver} from '../card_renderer/card_lazy_loader';
+import {
+  CardObserver,
+  CARD_RETENTION_VIEWPORTS,
+} from '../card_renderer/card_lazy_loader';
 
 export const SHARE_BUTTON_COMPONENT = new InjectionToken<Type<unknown>>(
   'Customizable Share Button'
@@ -46,9 +50,12 @@ export class MainViewComponent {
     if (!scrollable) {
       return;
     }
+    this.cardObserver?.destroy();
     this.cardObserver = new CardObserver(
       scrollable.getElementRef().nativeElement,
-      '600px 0px 600px 0px'
+      1,
+      this.zone,
+      CARD_RETENTION_VIEWPORTS
     );
   }
 
@@ -73,14 +80,16 @@ export class MainViewComponent {
   constructor(
     @Optional()
     @Inject(SHARE_BUTTON_COMPONENT)
-    readonly customShareButton: Type<unknown>
+    readonly customShareButton: Type<unknown>,
+    private readonly zone: NgZone
   ) {}
 
   readonly PluginType = PluginType;
 
-  /**
-   * Load cards that are not yet visible, if they are roughly 1 card row away in
-   * scroll distance.
-   */
+  ngOnDestroy() {
+    this.cardObserver?.destroy();
+  }
+
+  /** Render one viewport ahead/behind so scrolling can reuse prepared charts. */
   cardObserver!: CardObserver;
 }

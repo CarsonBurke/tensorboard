@@ -14,11 +14,12 @@
 # ==============================================================================
 """Experimental framework for generic TensorBoard data providers."""
 
-
-from typing import Collection, Sequence, Tuple, Union
+from typing import Collection, Mapping, Sequence, Tuple, Union
 import abc
 import dataclasses
 import enum
+import functools
+import re
 
 import numpy as np
 
@@ -147,6 +148,19 @@ class DataProvider(metaclass=abc.ABCMeta):
         """
         return None
 
+    def list_scalars_tag_index(self, ctx=None, *, experiment_id, plugin_name):
+        """Optional columnar equivalent of list_scalars_metadata.
+
+        Returns a `TagIndex` listing every (run, tag) pair that has data,
+        naming each run, tag, and summary metadata content once. A wide
+        experiment has one tag name per run and one metadata object per pair
+        otherwise; building those dominates a metadata listing.
+
+        None means unsupported; callers should fall back to
+        `list_scalars_metadata`.
+        """
+        return None
+
     def metadata_revision(self, ctx=None, *, experiment_id):
         """Optional opaque token for caching time-series tag metadata.
 
@@ -215,6 +229,331 @@ class DataProvider(metaclass=abc.ABCMeta):
           tensorboard.errors.PublicError: See `DataProvider` class docstring.
         """
         pass
+
+    def list_runs_page(
+        self,
+        ctx=None,
+        *,
+        experiment_id,
+        query="",
+        offset=0,
+        limit=0,
+        sort_by="start_time",
+        descending=False,
+        names=None,
+        query_prefix="",
+        session_ranks=None,
+        default_rank=0,
+    ):
+        """Return a catalog page and match count.
+
+        Disk-backed providers override this to query the index directly.
+        The default preserves support for existing in-memory providers.
+
+        `session_ranks` contains {"prefix": str, "rank": int} entries.
+        The longest string prefix of the experiment-relative run name wins;
+        the last entry wins for duplicate prefixes. Unmatched runs use
+        `default_rank`. Negative ranks exclude runs before counting/paging.
+        `session_rank` ordering sorts by rank, then name, in the requested
+        direction.
+        """
+        pattern = re.compile(query)
+        names = None if names is None else frozenset(names)
+        session_ranks = {
+            entry["prefix"]: entry["rank"] for entry in session_ranks or ()
+        }
+
+        def session_rank(name):
+            if not session_ranks:
+                return default_rank
+            for length in range(len(name), -1, -1):
+                rank = session_ranks.get(name[:length])
+                if rank is not None:
+                    return rank
+            return default_rank
+
+        runs = [
+            run
+            for run in self.list_runs(ctx, experiment_id=experiment_id)
+            if (names is None or run.run_name in names)
+            and session_rank(run.run_name) >= 0
+            and (
+                pattern.search(run.run_name)
+                or (
+                    query_prefix
+                    and (
+                        pattern.search(query_prefix)
+                        or pattern.search(query_prefix + "/" + run.run_name)
+                    )
+                )
+            )
+        ]
+        if sort_by == "name":
+            key = lambda run: run.run_name
+        elif sort_by == "session_rank":
+            key = lambda run: (session_rank(run.run_name), run.run_name)
+        else:
+            key = lambda run: (
+                run.start_time if run.start_time is not None else float("inf"),
+                run.run_name,
+            )
+        runs.sort(key=key, reverse=descending)
+        return RunPage(
+            runs[offset : offset + limit if limit else None], len(runs)
+        )
+
+    def list_tags_page(
+        self,
+        ctx=None,
+        *,
+        experiment_id,
+        plugin_name,
+        data_class,
+        run_tag_filter=None,
+        query="",
+        offset=0,
+        limit=0,
+    ):
+        """Return a page of distinct tags with their selected run metadata."""
+        method = {
+            "scalars": self.list_scalars_metadata,
+            "tensors": self.list_tensors_metadata,
+            "blob_sequences": self.list_blob_sequences,
+        }[data_class]
+        mapping = (
+            method(
+                ctx,
+                experiment_id=experiment_id,
+                plugin_name=plugin_name,
+                run_tag_filter=run_tag_filter,
+            )
+            or {}
+        )
+        pattern = re.compile(query)
+        tags = sorted(
+            {
+                tag
+                for run_tags in mapping.values()
+                for tag in run_tags
+                if pattern.search(tag)
+            }
+        )
+        selected = frozenset(tags[offset : offset + limit if limit else None])
+        page = {
+            run: {
+                tag: value for tag, value in run_tags.items() if tag in selected
+            }
+            for run, run_tags in mapping.items()
+            if selected.intersection(run_tags)
+        }
+        return TagPage(page, len(tags))
+
+    def list_metrics_catalog(self, ctx=None, *, request):
+        """Return group summaries, card windows, and their scoped metadata.
+
+        ``request`` and the result use the metrics catalog's JSON field names.
+        Run IDs are experiment ID + "/" + run name. Empty run scopes and zero
+        limits select nothing. Descriptions are Markdown; HTTP adapters render
+        them as safe HTML. Pins add metadata, never cards or counts.
+
+        Legacy providers may enumerate metadata for the selected runs here.
+        Indexed providers should override this method to count and page before
+        decoding metadata, rather than using this compatibility implementation.
+        """
+        # Only the compatibility catalog path needs plugin-specific parsing.
+        from tensorboard.plugins.histogram import metadata as histogram_metadata
+        from tensorboard.plugins.image import metadata as image_metadata
+        from tensorboard.plugins.scalar import metadata as scalar_metadata
+
+        plugin_metadata = {
+            "scalars": scalar_metadata,
+            "histograms": histogram_metadata,
+            "images": image_metadata,
+        }
+        allowed_versions = {}
+        methods = {
+            "scalars": self.list_scalars_metadata,
+            "histograms": self.list_tensors_metadata,
+            "images": self.list_blob_sequences,
+        }
+        plugins = set(request["plugins"]) or set(methods)
+        selected = {plugin: {} for plugin in methods}
+
+        def load(run_ids, plugin, tags=None):
+            by_experiment = {}
+            for run_id in sorted(set(run_ids)):
+                experiment, run = run_id.split("/", 1)
+                by_experiment.setdefault(experiment, set()).add(run)
+            result = {}
+            for experiment, runs in by_experiment.items():
+                mapping = (
+                    methods[plugin](
+                        ctx,
+                        experiment_id=experiment,
+                        plugin_name=plugin,
+                        run_tag_filter=RunTagFilter(runs=runs, tags=tags),
+                    )
+                    or {}
+                )
+                for run, run_tags in mapping.items():
+                    if run not in runs:
+                        continue
+                    for tag, value in run_tags.items():
+                        if tags is not None and tag not in tags:
+                            continue
+                        content_key = (plugin, value.plugin_content)
+                        if content_key not in allowed_versions:
+                            metadata = plugin_metadata[plugin]
+                            version = metadata.parse_plugin_metadata(
+                                value.plugin_content
+                            ).version
+                            allowed_versions[content_key] = (
+                                0 <= version <= metadata.PROTO_VERSION
+                            )
+                        if allowed_versions[content_key]:
+                            result[(experiment + "/" + run, tag)] = value
+            return result
+
+        for plugin in sorted(plugins):
+            selected[plugin] = load(request["runIds"], plugin)
+
+        # A span represents one scalar/histogram card or all samples of an
+        # image series. Only requested samples become actual card dictionaries.
+        pattern = re.compile(request["query"], re.IGNORECASE)
+        tag_key = functools.cmp_to_key(_compare_metrics_tags)
+        plugin_order = {plugin: index for index, plugin in enumerate(methods)}
+        spans = []
+        for plugin in sorted(plugins):
+            if plugin == "scalars":
+                spans.extend(
+                    (tag, plugin, "", 1)
+                    for tag in {tag for _, tag in selected[plugin]}
+                    if pattern.search(tag)
+                )
+            else:
+                for (run, tag), value in selected[plugin].items():
+                    count = (
+                        max(0, (value.max_length or 0) - 2)
+                        if plugin == "images"
+                        else 1
+                    )
+                    if count and pattern.search(tag):
+                        spans.append((tag, plugin, run, count))
+        spans.sort(
+            key=lambda span: (
+                tag_key(span[0]),
+                span[0],
+                plugin_order[span[1]],
+                span[2],
+            )
+        )
+        group_counts = {}
+        for tag, _, _, count in spans:
+            name = tag.split("/", 1)[0]
+            group_counts[name] = group_counts.get(name, 0) + count
+
+        cards = []
+        included = set()
+
+        def append_window(window, offset, limit):
+            end = offset + limit
+            position = 0
+            for tag, plugin, run, count in window:
+                start_sample = max(0, offset - position)
+                stop_sample = min(count, end - position)
+                for sample in range(start_sample, stop_sample):
+                    key = (plugin, tag, run, sample)
+                    if key in included:
+                        continue
+                    included.add(key)
+                    card = {"plugin": plugin, "tag": tag}
+                    if plugin != "scalars":
+                        card["runId"] = run
+                    if plugin == "images":
+                        card.update(sample=sample, numSample=count)
+                    cards.append(card)
+                position += count
+                if position >= end:
+                    break
+
+        if request["query"]:
+            groups = []
+            total_groups = 0
+            append_window(
+                spans, request["filteredOffset"], request["filteredLimit"]
+            )
+        else:
+            names = sorted(
+                group_counts,
+                key=lambda name: (tag_key(name), name),
+            )
+            total_groups = len(names)
+            groups = [
+                {"name": name, "totalCards": group_counts[name]}
+                for name in names[
+                    request["groupOffset"] : request["groupOffset"]
+                    + request["groupLimit"]
+                ]
+            ]
+            pages = {}
+            for page in request["groups"]:
+                pages.setdefault(page["name"], []).append(page)
+            # Grouping spans avoids rescanning the whole catalog per group.
+            requested_spans = {name: [] for name in pages}
+            for span in spans:
+                name = span[0].split("/", 1)[0]
+                if name in requested_spans:
+                    requested_spans[name].append(span)
+            for name in names:
+                for page in pages.get(name, ()):
+                    append_window(
+                        requested_spans[name], page["offset"], page["limit"]
+                    )
+
+        wanted_scalars = {
+            card["tag"] for card in cards if card["plugin"] == "scalars"
+        }
+        wanted_series = {
+            (card["plugin"], card.get("runId"), card["tag"])
+            for card in cards
+            if card["plugin"] != "scalars"
+        }
+        metadata_series = {}
+        for plugin, mapping in selected.items():
+            for (run, tag), value in mapping.items():
+                if (plugin == "scalars" and tag in wanted_scalars) or (
+                    plugin,
+                    run,
+                    tag,
+                ) in wanted_series:
+                    metadata_series[(plugin, tag, run)] = value
+        pinned_tags = set(request["pinnedTags"])
+        if pinned_tags:
+            pin_runs = set(request["runIds"]) | set(request["pinnedRunIds"])
+            for plugin in methods:
+                for (run, tag), value in load(
+                    pin_runs, plugin, pinned_tags
+                ).items():
+                    metadata_series[(plugin, tag, run)] = value
+        return {
+            "groups": groups,
+            "totalGroups": total_groups,
+            "groupOffset": request["groupOffset"],
+            "cards": cards,
+            "totalCards": sum(group_counts.values()),
+            "metadata": metrics_catalog_metadata(
+                (
+                    plugin,
+                    tag,
+                    run,
+                    value.description,
+                    max(0, (value.max_length or 0) - 2)
+                    if plugin == "images"
+                    else 0,
+                )
+                for (plugin, tag, run), value in sorted(metadata_series.items())
+            ),
+        }
 
     @abc.abstractmethod
     def list_scalars(
@@ -547,6 +886,92 @@ class DataProvider(metaclass=abc.ABCMeta):
         return []
 
 
+_METRICS_TAG_NUMBER = re.compile(r"[0-9]+(?:\.[0-9]*)?(?:[eE][+-]?[0-9]*)?")
+
+
+def _compare_metrics_tags(a, b):
+    """Match the frontend's slash-aware numeric ``compareTagNames``."""
+    i = j = 0
+    while i < len(a) and j < len(b):
+        left, right = a[i], b[j]
+        if "0" <= left <= "9" and "0" <= right <= "9":
+            # Like consumeNumber in metrics/utils.ts, consume incomplete
+            # exponents too: Number("2e") is NaN and compares equal.
+            am = _METRICS_TAG_NUMBER.match(a, i)
+            bm = _METRICS_TAG_NUMBER.match(b, j)
+            try:
+                an = float(am.group())
+            except ValueError:
+                an = float("nan")
+            try:
+                bn = float(bm.group())
+            except ValueError:
+                bn = float("nan")
+            i = am.end()
+            j = bm.end()
+            if an < bn:
+                return -1
+            if an > bn:
+                return 1
+            continue
+        left_break = left == "/" or "0" <= left <= "9"
+        right_break = right == "/" or "0" <= right <= "9"
+        if left_break != right_break:
+            return -1 if left_break else 1
+        if not left_break and left != right:
+            return -1 if left < right else 1
+        i += 1
+        j += 1
+    return (i < len(a)) - (j < len(b))
+
+
+def metrics_catalog_metadata(series):
+    """Format (plugin, tag, qualified run, description, samples) records.
+
+    Keep Markdown rendering at the HTTP boundary, as with other providers.
+    """
+    result = {
+        "scalars": {"tagDescriptions": {}, "tagToRuns": {}},
+        "histograms": {"tagDescriptions": {}, "tagToRuns": {}},
+        "images": {"tagDescriptions": {}, "tagRunSampledInfo": {}},
+    }
+    descriptions = {}
+    for plugin, tag, run, description, samples in series:
+        entry = result[plugin]
+        if plugin == "images":
+            entry["tagRunSampledInfo"].setdefault(tag, {})[run] = {
+                "maxSamplesPerStep": samples
+            }
+        else:
+            entry["tagToRuns"].setdefault(tag, set()).add(run)
+        if description:
+            descriptions.setdefault((plugin, tag), {}).setdefault(
+                description, set()
+            ).add(run)
+    for plugin in ("scalars", "histograms"):
+        result[plugin]["tagToRuns"] = {
+            tag: sorted(runs)
+            for tag, runs in result[plugin]["tagToRuns"].items()
+        }
+    for (plugin, tag), by_description in descriptions.items():
+        if len(by_description) == 1:
+            description = next(iter(by_description))
+        else:
+            parts = []
+            for text, runs in sorted(by_description.items()):
+                parts.append(
+                    "## For %s: %s\n%s"
+                    % (
+                        "runs" if len(runs) > 1 else "run",
+                        ", ".join(sorted(runs)),
+                        text,
+                    )
+                )
+            description = "# Multiple descriptions\n" + "\n".join(parts)
+        result[plugin]["tagDescriptions"][tag] = description
+    return result
+
+
 class ExperimentMetadata:
     """Metadata about an experiment.
 
@@ -618,6 +1043,18 @@ class ExperimentMetadata:
                 "creation_time=%r" % (self._creation_time,),
             )
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class RunPage:
+    runs: Sequence["Run"]
+    total: int
+
+
+@dataclasses.dataclass(frozen=True)
+class TagPage:
+    mapping: Mapping[str, Mapping[str, "_TimeSeries"]]
+    total: int
 
 
 class Run:
@@ -1011,6 +1448,29 @@ class ScalarColumnData:
     steps: Sequence[int]
     wall_times: Sequence[float]
     values: Sequence[float]
+
+
+@dataclasses.dataclass(frozen=True)
+class TagIndex:
+    """Columnar listing of the (run, tag) pairs of a plugin that have data.
+
+    Each run name, tag name, and summary metadata content is stated once and
+    referred to by index afterwards. For run `i`, `run_tags[i]` holds the
+    indices into `tags` of that run's tags, and the parallel `run_contents[i]`
+    holds the indices into `contents` of their summary metadata contents.
+    `descriptions` maps a `(run index, tag index)` pair to its summary
+    description, omitting the empty descriptions that dominate in practice.
+
+    Sequences are read-only by convention and may be backed by protobuf
+    arrays.
+    """
+
+    runs: Sequence[str]
+    tags: Sequence[str]
+    contents: Sequence[bytes]
+    run_tags: Sequence[Sequence[int]]
+    run_contents: Sequence[Sequence[int]]
+    descriptions: Mapping[Tuple[int, int], str]
 
 
 class ScalarDatum:

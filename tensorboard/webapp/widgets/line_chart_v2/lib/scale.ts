@@ -184,14 +184,42 @@ class Log10Scale implements Scale {
 }
 
 export class TemporalScale implements Scale {
-  private readonly scale = scaleTime();
+  /**
+   * `forward` runs once per data point per frame, and configuring a d3 scale
+   * costs far more than evaluating it, so the configuration is reused while
+   * the domain and range hold still.
+   */
+  private readonly transformScale = scaleTime();
+  /** Separate because `niceDomain` and `ticks` mutate the domain. */
+  private readonly tickScale = scaleTime();
+  private domainMin = NaN;
+  private domainMax = NaN;
+  private rangeMin = NaN;
+  private rangeMax = NaN;
+
+  private configuredScale(domain: [number, number], range: [number, number]) {
+    if (
+      this.domainMin !== domain[0] ||
+      this.domainMax !== domain[1] ||
+      this.rangeMin !== range[0] ||
+      this.rangeMax !== range[1]
+    ) {
+      // d3 copies both inputs, so the scale never aliases them.
+      this.transformScale.domain(domain).range(range);
+      this.domainMin = domain[0];
+      this.domainMax = domain[1];
+      this.rangeMin = range[0];
+      this.rangeMax = range[1];
+    }
+    return this.transformScale;
+  }
 
   forward(
     domain: [number, number],
     range: [number, number],
     x: number
   ): number {
-    return this.scale.domain(domain).range(range)(x);
+    return this.configuredScale(domain, range)(x);
   }
 
   reverse(
@@ -199,16 +227,16 @@ export class TemporalScale implements Scale {
     range: [number, number],
     x: number
   ): number {
-    return this.scale.domain(domain).range(range).invert(x).getTime();
+    return this.configuredScale(domain, range).invert(x).getTime();
   }
 
   niceDomain(domain: [number, number]): [number, number] {
-    const [minDate, maxDate] = this.scale.domain(domain).nice().domain();
+    const [minDate, maxDate] = this.tickScale.domain(domain).nice().domain();
     return [minDate.getTime(), maxDate.getTime()];
   }
 
   ticks(domain: [number, number], sizeGuidance: number): number[] {
-    return this.scale
+    return this.tickScale
       .domain(domain)
       .ticks(sizeGuidance)
       .map((date) => date.getTime());

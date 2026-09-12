@@ -41,6 +41,11 @@ export const fetchRunsSucceeded = createAction(
     runsForAllExperiments: Run[];
     newRuns: ExperimentIdToRuns;
     expNameByExpId?: Record<string, string>;
+    catalog?: {
+      runIds: string[];
+      totals: Record<string, number>;
+      offset: number;
+    };
   }>()
 );
 
@@ -67,6 +72,16 @@ export const runPageSelectionToggled = createAction(
   '[Runs] Run Page Selection Toggled',
   props<{runIds: string[]}>()
 );
+
+/**
+ * Requests toggling the selection of every run in the table scope.
+ *
+ * Unlike `runPageSelectionToggled`, which toggles exactly the given run ids,
+ * this resolves the full filtered run list first: in paged mode the table
+ * only holds one window, so selecting "all" from the window ids alone would
+ * leave every other page untouched.
+ */
+export const selectAllRuns = createAction('[Runs] Select All Runs');
 
 export const runSelectorRegexFilterChanged = createAction(
   '[Runs] Run Selector Regex Filter Changed',
@@ -126,4 +141,9 @@ export const runsTableHeaderOrderChanged = createAction(
 export const runsTableSortingInfoChanged = createAction(
   '[Runs] Runs Table Sorting Info Changed',
   props<{sortingInfo: SortingInfo}>()
+);
+
+export const runCatalogWindowChanged = createAction(
+  '[Runs] Catalog Window Changed',
+  props<{offset: number; limit: number}>()
 );

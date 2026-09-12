@@ -24,12 +24,18 @@ import {
   TBHttpClientTestingModule,
 } from '../../webapp_data_source/tb_http_client_testing';
 import {
-  BackendTagMetadata,
+  BackendScalarColumns,
   BackendTimeSeriesRequest,
   BackendTimeSeriesResponse,
 } from './metrics_backend_types';
 import {TBMetricsDataSource} from './metrics_data_source';
-import {MetricsDataSource, PluginType} from './types';
+import {MetricsDataSource, PluginType, TagMetadataRequest} from './types';
+
+const EMPTY_COLUMNS: BackendScalarColumns = {
+  steps: [],
+  wallTimes: [],
+  values: [],
+};
 
 describe('TBMetricsDataSource test', () => {
   let httpMock: HttpTestingController;
@@ -59,181 +65,88 @@ describe('TBMetricsDataSource test', () => {
   });
 
   describe('fetchTagMetadata', () => {
-    it('retains metadata identity for matching revisions and invalidates on changes', () => {
-      const body: BackendTagMetadata = {
-        scalars: {runTagInfo: {run: ['loss']}, tagDescriptions: {}},
-        histograms: {runTagInfo: {}, tagDescriptions: {}},
-        images: {tagRunSampledInfo: {}, tagDescriptions: {}},
-      };
-      const results: unknown[] = [];
-      const fetch = () => {
-        dataSource
-          .fetchTagMetadata(['exp1'])
-          .subscribe((result) => results.push(result));
-        return httpMock.expectOne(
-          '/experiment/exp1/data/plugin/timeseries/tags'
-        );
-      };
-      const first = fetch();
-      expect(first.request.headers.get('X-TensorBoard-Metadata-Revision')).toBe(
-        ''
-      );
-      first.flush({revision: 'one', metadata: body});
-      const second = fetch();
-      expect(
-        second.request.headers.get('X-TensorBoard-Metadata-Revision')
-      ).toBe('one');
-      second.flush({revision: 'one', metadata: null});
-      expect(results[1]).toBe(results[0]);
-      fetch().flush({
-        revision: 'two',
-        metadata: {
-          ...body,
-          scalars: {...body.scalars, runTagInfo: {run: ['loss', 'accuracy']}},
-        },
-      });
-      expect(results[2]).not.toBe(results[1]);
-      store.overrideSelector(selectors.getIsMetricsImageSupportEnabled, false);
-      store.refreshState();
-      fetch().flush({revision: 'two', metadata: null});
-      expect(results[3]).not.toBe(results[2]);
-    });
+    const scope: TagMetadataRequest = {
+      runIds: ['exp1/run/a', 'exp2/run/b'],
+      query: '',
+      groupOffset: 0,
+      groupLimit: 40,
+      groups: [{name: 'loss', offset: 20, limit: 10}],
+      filteredOffset: 0,
+      filteredLimit: 40,
+      pinnedTags: [],
+    };
 
-    it('does not fetch when no experiment is passed', () => {
-      const resultSpy = jasmine.createSpy();
-      dataSource.fetchTagMetadata([]).subscribe(resultSpy);
-
-      expect(resultSpy).not.toHaveBeenCalled();
-    });
-
-    it('removes image data when it is unsupported', () => {
-      store.overrideSelector(selectors.getIsMetricsImageSupportEnabled, false);
-      const resultSpy = jasmine.createSpy();
-      dataSource.fetchTagMetadata(['exp1']).subscribe(resultSpy);
-
-      const req = httpMock.expectOne(
-        '/experiment/exp1/data/plugin/timeseries/tags'
-      );
-      const testResponse: BackendTagMetadata = {
-        scalars: {tagDescriptions: {}, runTagInfo: {}},
-        histograms: {tagDescriptions: {}, runTagInfo: {}},
-        images: {
-          tagDescriptions: {tag3: 'foo'},
-          tagRunSampledInfo: {tag3: {run1: {maxSamplesPerStep: 1}}},
-        },
-      };
-      req.flush(testResponse);
-
-      expect(resultSpy).toHaveBeenCalledWith({
-        scalars: {tagDescriptions: {}, runTagInfo: {}},
-        histograms: {tagDescriptions: {}, runTagInfo: {}},
+    it('does not expand an absent selection into a catalog request', () => {
+      const result = jasmine.createSpy();
+      dataSource.fetchTagMetadata(['exp1']).subscribe(result);
+      expect(result).toHaveBeenCalledWith({
+        scalars: {tagDescriptions: {}, tagToRuns: {}},
+        histograms: {tagDescriptions: {}, tagToRuns: {}},
         images: {tagDescriptions: {}, tagRunSampledInfo: {}},
+        catalog: {
+          groups: [],
+          totalGroups: 0,
+          groupOffset: 0,
+          filteredOffset: 0,
+          cards: [],
+          totalCards: 0,
+        },
       });
+      httpMock.expectNone(() => true);
     });
 
-    it('converts run names to runIds', () => {
-      const resultSpy = jasmine.createSpy();
-      dataSource.fetchTagMetadata(['exp1']).subscribe(resultSpy);
-
-      const req = httpMock.expectOne(
-        '/experiment/exp1/data/plugin/timeseries/tags'
-      );
-      req.flush({
-        scalars: {
-          tagDescriptions: {},
-          runTagInfo: {run1: ['tag1']},
-        },
-        histograms: {
-          tagDescriptions: {},
-          runTagInfo: {run1: ['tag2']},
-        },
-        images: {
-          tagDescriptions: {},
-          tagRunSampledInfo: {tag3: {run1: {maxSamplesPerStep: 1}}},
-        },
-      } as BackendTagMetadata);
-
-      expect(resultSpy).toHaveBeenCalledWith({
-        scalars: {
-          tagDescriptions: {},
-          runTagInfo: {'exp1/run1': ['tag1']},
-        },
-        histograms: {
-          tagDescriptions: {},
-          runTagInfo: {'exp1/run1': ['tag2']},
-        },
-        images: {
-          tagDescriptions: {},
-          tagRunSampledInfo: {tag3: {'exp1/run1': {maxSamplesPerStep: 1}}},
-        },
-      });
+    it('excludes runs outside the route without broadening an empty selection for pins', () => {
+      const subscription = dataSource
+        .fetchTagMetadata(['exp1'], {
+          ...scope,
+          runIds: ['exp2/run/b'],
+          pinnedRunIds: ['exp1/pin', 'exp2/pin'],
+          pinnedTags: ['image'],
+        })
+        .subscribe();
+      const request = httpMock.expectOne('/data/plugin/timeseries/catalog');
+      expect(request.request.body.runIds).toEqual([]);
+      expect(request.request.body.pinnedRunIds).toEqual(['exp1/pin']);
+      expect(request.request.body.pinnedTags).toEqual(['image']);
+      subscription.unsubscribe();
     });
 
-    it('combines tag data from multiple experiments', () => {
-      const resultSpy = jasmine.createSpy();
-      dataSource.fetchTagMetadata(['exp1', 'exp2']).subscribe(resultSpy);
+    it('excludes unsupported images from server-side card counts and page offsets', () => {
+      store.overrideSelector(selectors.getIsMetricsImageSupportEnabled, false);
+      const subscription = dataSource
+        .fetchTagMetadata(['exp1'], scope)
+        .subscribe();
+      const request = httpMock.expectOne('/data/plugin/timeseries/catalog');
+      expect(request.request.body.plugins).toEqual([
+        PluginType.SCALARS,
+        PluginType.HISTOGRAMS,
+      ]);
+      subscription.unsubscribe();
+    });
 
-      const req1 = httpMock.expectOne(
-        '/experiment/exp1/data/plugin/timeseries/tags'
-      );
-      req1.flush({
-        scalars: {
-          tagDescriptions: {tag1: 'tag1 is Foo'},
-          runTagInfo: {run1: ['tag1']},
-        },
-        histograms: {
-          tagDescriptions: {},
-          runTagInfo: {run1: ['tag2']},
-        },
-        images: {
-          tagDescriptions: {},
-          tagRunSampledInfo: {tag3: {run1: {maxSamplesPerStep: 1}}},
-        },
-      } as BackendTagMetadata);
+    it('keeps pins when a persisted filter selects only a disabled plugin', () => {
+      store.overrideSelector(selectors.getIsMetricsImageSupportEnabled, false);
+      const subscription = dataSource
+        .fetchTagMetadata(['exp1'], {
+          ...scope,
+          plugins: [PluginType.IMAGES],
+          pinnedTags: ['loss'],
+        })
+        .subscribe();
+      const request = httpMock.expectOne('/data/plugin/timeseries/catalog');
+      expect(request.request.body.runIds).toEqual([]);
+      expect(request.request.body.pinnedRunIds).toEqual(['exp1/run/a']);
+      expect(request.request.body.pinnedTags).toEqual(['loss']);
+      subscription.unsubscribe();
+    });
 
-      const req2 = httpMock.expectOne(
-        '/experiment/exp2/data/plugin/timeseries/tags'
-      );
-      req2.flush({
-        scalars: {
-          tagDescriptions: {tag1: 'tag1 is Bar'},
-          runTagInfo: {run1: ['tag1']},
-        },
-        histograms: {
-          tagDescriptions: {},
-          runTagInfo: {run1: ['tag2']},
-        },
-        images: {
-          tagDescriptions: {},
-          tagRunSampledInfo: {
-            tag3: {
-              run1: {maxSamplesPerStep: 1},
-              run2: {maxSamplesPerStep: 1},
-            },
-          },
-        },
-      } as BackendTagMetadata);
-
-      expect(resultSpy).toHaveBeenCalledWith({
-        scalars: {
-          tagDescriptions: {tag1: 'tag1 is Bar'},
-          runTagInfo: {'exp1/run1': ['tag1'], 'exp2/run1': ['tag1']},
-        },
-        histograms: {
-          tagDescriptions: {},
-          runTagInfo: {'exp1/run1': ['tag2'], 'exp2/run1': ['tag2']},
-        },
-        images: {
-          tagDescriptions: {},
-          tagRunSampledInfo: {
-            tag3: {
-              'exp1/run1': {maxSamplesPerStep: 1},
-              'exp2/run1': {maxSamplesPerStep: 1},
-              'exp2/run2': {maxSamplesPerStep: 1},
-            },
-          },
-        },
-      });
+    it('cancels an obsolete catalog request when its consumer unsubscribes', () => {
+      const subscription = dataSource
+        .fetchTagMetadata(['exp1'], scope)
+        .subscribe();
+      const request = httpMock.expectOne('/data/plugin/timeseries/catalog');
+      subscription.unsubscribe();
+      expect(request.cancelled).toBeTrue();
     });
   });
 
@@ -258,6 +171,52 @@ describe('TBMetricsDataSource test', () => {
         .subscribe(resultSpy);
 
       expect(resultSpy).not.toHaveBeenCalled();
+    });
+
+    it('expands scalar columns into per-point series', () => {
+      const resultSpy = jasmine.createSpy();
+      dataSource
+        .fetchTimeSeries([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tag1',
+            experimentIds: ['exp1'],
+          },
+        ])
+        .subscribe(resultSpy);
+
+      httpMock
+        .expectOne('/experiment/exp1/data/plugin/timeseries/timeSeries')
+        .flush([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tag1',
+            runToSeries: {
+              run1: {
+                steps: [0, 10, 20],
+                wallTimes: [1234, 1235, 1236],
+                // Nonfinite values arrive as strings; see http_api.md.
+                values: [0.5, 'NaN', '-Infinity'],
+              },
+              run2: EMPTY_COLUMNS,
+            },
+          },
+        ] as unknown as BackendTimeSeriesResponse[]);
+
+      expect(resultSpy).toHaveBeenCalledWith([
+        {
+          plugin: PluginType.SCALARS,
+          tag: 'tag1',
+          runToSeries: {
+            'exp1/run1': [
+              {wallTime: 1234, step: 0, value: 0.5},
+              {wallTime: 1235, step: 10, value: 'NaN'},
+              {wallTime: 1236, step: 20, value: '-Infinity'},
+            ],
+            'exp1/run2': [],
+          },
+        },
+      ]);
     });
 
     it('batches multiple card requests for the same experiment', () => {
@@ -292,12 +251,12 @@ describe('TBMetricsDataSource test', () => {
         {
           plugin: PluginType.SCALARS,
           tag: 'tag1',
-          runToSeries: {run1: []},
+          runToSeries: {run1: EMPTY_COLUMNS},
         },
         {
           plugin: PluginType.SCALARS,
           tag: 'tag2',
-          runToSeries: {run2: []},
+          runToSeries: {run2: EMPTY_COLUMNS},
         },
       ] as BackendTimeSeriesResponse[]);
 
@@ -334,7 +293,7 @@ describe('TBMetricsDataSource test', () => {
         {
           plugin: PluginType.SCALARS,
           tag: 'tag1',
-          runToSeries: {run1: []},
+          runToSeries: {run1: EMPTY_COLUMNS},
         },
       ] as BackendTimeSeriesResponse[]);
 
@@ -345,7 +304,7 @@ describe('TBMetricsDataSource test', () => {
         {
           plugin: PluginType.SCALARS,
           tag: 'tag1',
-          runToSeries: {run1: []},
+          runToSeries: {run1: EMPTY_COLUMNS},
         },
       ] as BackendTimeSeriesResponse[]);
 
@@ -389,7 +348,7 @@ describe('TBMetricsDataSource test', () => {
         {
           plugin: PluginType.SCALARS,
           tag: 'tag1',
-          runToSeries: {run1: []},
+          runToSeries: {run1: EMPTY_COLUMNS},
         },
       ] as BackendTimeSeriesResponse[]);
 
@@ -434,7 +393,7 @@ describe('TBMetricsDataSource test', () => {
         {
           plugin: PluginType.SCALARS,
           tag: 'tag1',
-          runToSeries: {run1: []},
+          runToSeries: {run1: EMPTY_COLUMNS},
         },
       ] as BackendTimeSeriesResponse[]);
 
@@ -502,7 +461,7 @@ describe('TBMetricsDataSource test', () => {
         {
           plugin: PluginType.SCALARS,
           tag: 'tag1',
-          runToSeries: {run1: []},
+          runToSeries: {run1: EMPTY_COLUMNS},
         },
       ] as BackendTimeSeriesResponse[]);
 

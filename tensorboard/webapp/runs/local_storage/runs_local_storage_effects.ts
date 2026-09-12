@@ -113,6 +113,7 @@ export class RunsLocalStorageEffects {
   readonly hydrateFetchedRunsFromLocalStorage$;
   readonly hydrateExistingRunsFromLocalStorage$;
   readonly syncRunsToLocalStorage$;
+  private hydratedNamespace?: string;
 
   constructor(
     private readonly actions$: Actions,
@@ -131,7 +132,11 @@ export class RunsLocalStorageEffects {
           ),
           tap(
             ([
-              {experimentIds: fetchedExperimentIds, runsForAllExperiments},
+              {
+                experimentIds: fetchedExperimentIds,
+                runsForAllExperiments,
+                catalog,
+              },
               environment,
               experimentIds,
               currentSelection,
@@ -146,7 +151,8 @@ export class RunsLocalStorageEffects {
                 runsForAllExperiments,
                 currentSelection,
                 currentColorOverrides,
-                true
+                !catalog,
+                !!catalog
               );
             }
           )
@@ -225,12 +231,8 @@ export class RunsLocalStorageEffects {
                 return;
               }
 
-              const currentRunIds = new Set(currentRuns.map((run) => run.id));
-              const selection = pickMap(currentSelection, currentRunIds);
-              const colorOverrides = pickMap(
-                currentColorOverrides,
-                currentRunIds
-              );
+              const selection = new Map(currentSelection);
+              const colorOverrides = new Map(currentColorOverrides);
               const storedState = this.dataSource.getState(
                 namespace,
                 currentRuns
@@ -263,13 +265,14 @@ export class RunsLocalStorageEffects {
     currentRuns: Run[],
     currentSelection: Map<string, boolean>,
     currentColorOverrides: Map<string, string>,
-    removeWhenEmpty: boolean
+    removeWhenEmpty: boolean,
+    paged = false
   ) {
     const namespace = getNamespace(dataLocation, experimentIds);
     if (!namespace) {
       return;
     }
-    if (!currentRuns.length) {
+    if (!currentRuns.length && !paged) {
       if (removeWhenEmpty) {
         this.dataSource.setState(namespace, [], {
           selection: new Map(),
@@ -281,6 +284,9 @@ export class RunsLocalStorageEffects {
 
     const currentRunIds = new Set(currentRuns.map((run) => run.id));
     const storedState = this.dataSource.getState(namespace, currentRuns);
+    for (const [id, selected] of storedState.selection)
+      if (selected) currentRunIds.add(id);
+    for (const id of storedState.colorOverrides.keys()) currentRunIds.add(id);
     const selection = new Map([
       ...pickMap(currentSelection, currentRunIds),
       ...storedState.selection,
@@ -296,6 +302,7 @@ export class RunsLocalStorageEffects {
     );
 
     if (
+      !paged &&
       storedState.newestRunId &&
       storedState.newestRunId !== newestRunId &&
       colorOverrides.get(storedState.newestRunId) === NEWEST_RUN_COLOR
@@ -303,7 +310,7 @@ export class RunsLocalStorageEffects {
       colorOverrides.delete(storedState.newestRunId);
       autoNewestRunId = undefined;
     }
-    if (newestRunId && !colorOverrides.get(newestRunId)) {
+    if (!paged && newestRunId && !colorOverrides.get(newestRunId)) {
       colorOverrides.set(newestRunId, NEWEST_RUN_COLOR);
       autoNewestRunId = newestRunId;
     }
@@ -315,7 +322,9 @@ export class RunsLocalStorageEffects {
         colorOverrides: mapToRecord(colorOverrides),
       })
     );
-    if (storedState.sortingInfo) {
+    const restoreSorting = this.hydratedNamespace !== namespace;
+    this.hydratedNamespace = namespace;
+    if (storedState.sortingInfo && restoreSorting) {
       this.store.dispatch(
         runsActions.runsTableSortingInfoChanged({
           sortingInfo: storedState.sortingInfo,

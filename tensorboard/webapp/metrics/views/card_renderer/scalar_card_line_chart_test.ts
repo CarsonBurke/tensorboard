@@ -70,7 +70,6 @@ import {
   stepSelectorToggled,
   timeSelectionChanged,
 } from '../../actions';
-import {getMetricsCardRangeSelectionEnabled} from '../../store';
 import {TooltipSort, XAxisType} from '../../types';
 import {ScalarCardFobController} from './scalar_card_fob_controller';
 import {ScalarCardLineChartComponent} from './scalar_card_line_chart_component';
@@ -457,10 +456,7 @@ describe('scalar card line chart', () => {
       false
     );
     store.overrideSelector(selectors.getMetricsStepSelectorEnabled, false);
-    store.overrideSelector(
-      selectors.getMetricsCardRangeSelectionEnabled('card1'),
-      false
-    );
+    store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, false);
     store.overrideSelector(selectors.getMetricsCardUserViewBox, null);
 
     dispatchedActions = [];
@@ -1648,7 +1644,7 @@ describe('scalar card line chart', () => {
   });
 
   describe('data table line chart integration', () => {
-    it('updates viewBox value when line chart is zoomed', fakeAsync(async () => {
+    it('dispatches one view box change per frame', fakeAsync(async () => {
       const cardMetadataMap = {
         run1: buildOriginalSeriesMetadata({id: 'run1', visible: true}),
         run2: buildOriginalSeriesMetadata({id: 'run2', visible: true}),
@@ -1679,36 +1675,35 @@ describe('scalar card line chart', () => {
         Selector.SCALAR_CARD_LINE_CHART
       );
 
-      scalarCardLineChartComponent.componentInstance.onLineChartZoom({
-        x: [9.235, 30.4],
-        y: [0, 100],
-      });
-      scalarCardLineChartComponent.componentInstance.onLineChartZoom({
-        x: [8, 31],
-        y: [0, 100],
-      });
-      scalarCardLineChartComponent.componentInstance.onLineChartZoom(null);
+      const container = scalarCardLineChartComponent.componentInstance;
+      container.onLineChartZoom({x: [9.235, 30.4], y: [0, 100]});
+      container.onLineChartZoom({x: [8, 31], y: [0, 100]});
+
+      // Panning emits an extent per mousemove; only the extent the gesture
+      // reached by the end of the frame reaches the store.
+      expect(dispatchedActions).toEqual([]);
+
+      tick(16);
 
       expect(dispatchedActions).toEqual([
         cardViewBoxChanged({
-          userViewBox: {
-            x: [9.235, 30.4],
-            y: [0, 100],
-          },
-          cardId: 'card1',
-        }),
-        cardViewBoxChanged({
-          userViewBox: {
-            x: [8, 31],
-            y: [0, 100],
-          },
-          cardId: 'card1',
-        }),
-        cardViewBoxChanged({
-          userViewBox: null,
+          userViewBox: {x: [8, 31], y: [0, 100]},
           cardId: 'card1',
         }),
       ]);
+
+      // Panning back onto the view box the store already holds is a no-op.
+      container.onLineChartZoom({x: [8, 31], y: [0, 100]});
+      tick(16);
+
+      expect(dispatchedActions.length).toBe(1);
+
+      container.onLineChartZoom(null);
+      tick(16);
+
+      expect(dispatchedActions[1]).toEqual(
+        cardViewBoxChanged({userViewBox: null, cardId: 'card1'})
+      );
     }));
   });
 
@@ -1800,10 +1795,7 @@ describe('scalar card line chart', () => {
           start: {step: 10},
           end: {step: 25},
         };
-        store.overrideSelector(
-          getMetricsCardRangeSelectionEnabled('card1'),
-          true
-        );
+        store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, true);
         store.refreshState();
         fixture.detectChanges();
 

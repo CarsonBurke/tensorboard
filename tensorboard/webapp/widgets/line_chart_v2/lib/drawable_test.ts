@@ -72,6 +72,10 @@ function setUp(options: Partial<SetupParam> = {}): SetupValue {
         color: '#f00',
         visible: true,
       },
+      bar: {
+        color: '#0f0',
+        visible: true,
+      },
     }),
     ...options,
   };
@@ -219,8 +223,51 @@ describe('line_chart_v2/lib/drawable test', () => {
       dataDrawable.render();
 
       expect(dataDrawable.getSeriesData()).toEqual([
-        {id: 'foo', polyline: new Float32Array([0, 50, 50, 49, 100, 51])},
-        {id: 'bar', polyline: new Float32Array([0, 50, 50, 60, 100, 40])},
+        {
+          id: 'foo',
+          polyline: new Float32Array([0, 50, 50, 49, 100, 51]),
+          hasNaN: false,
+        },
+        {
+          id: 'bar',
+          polyline: new Float32Array([0, 50, 50, 60, 100, 40]),
+          hasNaN: false,
+        },
+      ]);
+    });
+
+    it('transforms a hidden series when it becomes visible', () => {
+      const metadataMap = {
+        foo: {color: '#f00', visible: false},
+      };
+      const {dataDrawable} = setUp({
+        layoutRect: {x: 0, y: 0, width: 100, height: 100},
+        data: [
+          buildSeries({
+            id: 'foo',
+            points: [
+              {x: 0, y: 0},
+              {x: 1, y: 1},
+            ],
+          }),
+        ],
+        viewBox: {x: 0, y: -50, width: 2, height: 100},
+        getMetadataMap: jasmine.createSpy().and.returnValue(metadataMap),
+      });
+
+      dataDrawable.render();
+
+      // Transforming points nothing paints is pure waste.
+      expect(dataDrawable.getSeriesData()).toEqual([
+        {id: 'foo', polyline: new Float32Array([0, 0, 0, 0]), hasNaN: false},
+      ]);
+
+      metadataMap.foo.visible = true;
+      dataDrawable.markAsPaintDirty();
+      dataDrawable.render();
+
+      expect(dataDrawable.getSeriesData()).toEqual([
+        {id: 'foo', polyline: new Float32Array([0, 50, 50, 49]), hasNaN: false},
       ]);
     });
 
@@ -290,8 +337,16 @@ describe('line_chart_v2/lib/drawable test', () => {
 
       dataDrawable.render();
       expect(dataDrawable.getSeriesData()).toEqual([
-        {id: 'foo', polyline: new Float32Array([0, 50, 50, 0, 100, 100])},
-        {id: 'bar', polyline: new Float32Array([0, 50, 50, 50, 100, 50])},
+        {
+          id: 'foo',
+          polyline: new Float32Array([0, 50, 50, 0, 100, 100]),
+          hasNaN: false,
+        },
+        {
+          id: 'bar',
+          polyline: new Float32Array([0, 50, 50, 50, 100, 50]),
+          hasNaN: false,
+        },
       ]);
       expect(redrawSpy).toHaveBeenCalledTimes(2);
     });

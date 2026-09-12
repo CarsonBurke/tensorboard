@@ -22,10 +22,11 @@ import {
 } from '@angular/core';
 import {Store} from '@ngrx/store';
 import {combineLatest, Observable} from 'rxjs';
-import {filter, map} from 'rxjs/operators';
+import {distinctUntilChanged, filter, map} from 'rxjs/operators';
 import {State} from '../../../app_state';
 import {DataLoadState} from '../../../types/data';
 import {RunColorScale} from '../../../types/ui';
+import {hasOwn} from '../../../util/lang';
 import {
   TimeSelectionToggleAffordance,
   TimeSelectionWithAffordance,
@@ -102,9 +103,12 @@ export class HistogramCardContainer implements CardRenderer, OnInit {
   constructor(private readonly store: Store<State>) {
     this.mode$ = this.store.select(getMetricsHistogramMode);
     this.xAxisType$ = this.store.select(getMetricsXAxisType);
-    this.showFullWidth$ = this.store
-      .select(getCardStateMap)
-      .pipe(map((map) => map[this.cardId]?.fullWidth));
+    this.showFullWidth$ = this.store.select(getCardStateMap).pipe(
+      map((map) => map[this.cardId]?.fullWidth),
+      // The card state map's identity changes whenever any card's view box
+      // moves; without this every histogram card would be marked dirty.
+      distinctUntilChanged()
+    );
   }
 
   @Input() cardId!: CardId;
@@ -158,7 +162,7 @@ export class HistogramCardContainer implements CardRenderer, OnInit {
     this.data$ = metadataAndSeries$.pipe(
       map(([cardMetadata, runToSeries]) => {
         const runId = cardMetadata.runId;
-        if (!runToSeries || !runToSeries.hasOwnProperty(runId)) {
+        if (!runToSeries || !hasOwn(runToSeries, runId)) {
           return [];
         }
         const series = runToSeries[runId] as HistogramStepDatum[];

@@ -14,7 +14,6 @@
 # ==============================================================================
 """Tests the TensorBoard core endpoints."""
 
-
 import collections.abc
 import contextlib
 import io
@@ -384,6 +383,127 @@ class CorePluginTest(tf.test.TestCase):
         self._add_run("run1")
         run_json = self._get_json(self.server, "/data/runs")
         self.assertEqual(run_json, ["run1"])
+
+    def test_run_catalog_filters_before_pagination(self):
+        for name in ("runC", "other", "runA", "runB"):
+            self._add_run(name)
+        page = self._get_json(
+            self.server,
+            "/data/runs?query=^run&sort_by=name&offset=1&limit=1",
+        )
+        self.assertEqual(page["total"], 3)
+        self.assertEqual([run["name"] for run in page["runs"]], ["runB"])
+        exact = self._get_json(
+            self.server,
+            "/data/runs?name=runC&name=other&query=^run&limit=0",
+        )
+        self.assertEqual(exact["total"], 1)
+        self.assertEqual([run["name"] for run in exact["runs"]], ["runC"])
+        comparison = self._get_json(
+            self.server,
+            "/data/runs?query=(?i)^experiment/runb$&query_prefix=Experiment&limit=1",
+        )
+        self.assertEqual(comparison["total"], 1)
+        self.assertEqual([run["name"] for run in comparison["runs"]], ["runB"])
+        self.assertEqual(
+            self.server.get("/data/runs?limit=-1").status_code, 400
+        )
+
+    def test_run_catalog_post_ranks_filter_before_window(self):
+        for name in (
+            "run",
+            "run/eval",
+            "run/eval/sub",
+            "runner",
+            "runs",
+            "other",
+            "omitted",
+        ):
+            self._add_run(name)
+        params = {
+            "query": "(?i)^experiment/",
+            "query_prefix": "Experiment",
+            "sort_by": "session_rank",
+            "session_ranks": [
+                {"prefix": "run", "rank": 3},
+                {"prefix": "run/eval", "rank": -1},
+                {"prefix": "run/eval/sub", "rank": 1},
+                {"prefix": "runner", "rank": 0},
+                {"prefix": "other", "rank": -1},
+                {"prefix": "other", "rank": 2},
+            ],
+            "default_rank": -1,
+            "offset": 0,
+            "limit": 0,
+        }
+        response = self.server.post(
+            "/data/runs",
+            data=json.dumps(params),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        page = json.loads(response.get_data())
+        self.assertEqual(page["total"], 5)
+        self.assertEqual(
+            [run["name"] for run in page["runs"]],
+            ["runner", "run/eval/sub", "other", "run", "runs"],
+        )
+        params.update(
+            name=["run", "run/eval", "run/eval/sub", "runner", "runs"],
+            offset=1,
+            limit=2,
+        )
+        for descending, expected in (
+            (False, ["run/eval/sub", "run"]),
+            (True, ["run", "run/eval/sub"]),
+        ):
+            params["descending"] = descending
+            response = self.server.post(
+                "/data/runs",
+                data=json.dumps(params),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+            page = json.loads(response.get_data())
+            self.assertEqual(page["total"], 4)
+            self.assertEqual([run["name"] for run in page["runs"]], expected)
+
+    def test_run_catalog_post_rejects_malformed_requests(self):
+        bodies = [
+            "{",
+            "null",
+            "[]",
+            json.dumps({"offset": -1}),
+            json.dumps({"limit": 2**64}),
+            json.dumps({"offset": True}),
+            json.dumps({"limit": 1.5}),
+            json.dumps({"offset": "1"}),
+            json.dumps({"descending": "false"}),
+            json.dumps({"sort_by": ["name"]}),
+            json.dumps({"query": None}),
+            json.dumps({"query_prefix": []}),
+            json.dumps({"query": "["}),
+            json.dumps({"name": "run"}),
+            json.dumps({"name": [1]}),
+            json.dumps({"name": None}),
+            json.dumps({"session_ranks": {"run": 1}}),
+            json.dumps({"session_ranks": [None]}),
+            json.dumps({"session_ranks": [{"prefix": "run"}]}),
+            json.dumps({"session_ranks": [{"prefix": 1, "rank": 0}]}),
+            json.dumps({"session_ranks": [{"prefix": "", "rank": True}]}),
+            json.dumps({"session_ranks": [{"prefix": "", "rank": 1.5}]}),
+            json.dumps({"session_ranks": [{"prefix": "", "rank": 2**63}]}),
+            json.dumps({"default_rank": False}),
+            json.dumps({"default_rank": -(2**63) - 1}),
+        ]
+        for body in bodies:
+            with self.subTest(body=body):
+                response = self.server.post(
+                    "/data/runs",
+                    data=body,
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 400)
 
     def testRunsWithStartTime(self):
         """Test the format of /data/runs with start times."""

@@ -31,6 +31,7 @@ import {
   OnChanges,
   OnDestroy,
   Output,
+  SimpleChanges,
   TemplateRef,
   ViewChild,
 } from '@angular/core';
@@ -73,6 +74,19 @@ export interface TooltipDatum<
 }
 
 const SCROLL_ZOOM_SPEED_FACTOR = 0.01;
+
+/**
+ * Inputs the cursored data is derived from. Typed against the component so a
+ * renamed input cannot silently stop triggering the recompute.
+ */
+const CURSORED_DATA_INPUTS: Array<keyof LineChartInteractiveViewComponent> = [
+  'seriesData',
+  'seriesMetadataMap',
+  'viewExtent',
+  'xScale',
+  'yScale',
+  'domDim',
+];
 
 export function scrollStrategyFactory(
   overlay: Overlay
@@ -216,6 +230,9 @@ export class LineChartInteractiveViewComponent
 
   private dragStartCoord: {x: number; y: number} | null = null;
   private isCursorInside = false;
+  // Set when an input changed while the cursored data was not observable, so
+  // the recompute can be deferred until it becomes observable again.
+  private cursoredDataStale = false;
   private readonly ngUnsubscribe = new Subject<void>();
   private readonly subscriptions: Subscription[] = [];
 
@@ -227,6 +244,9 @@ export class LineChartInteractiveViewComponent
   ngAfterViewInit() {
     this.subscriptions.push(
       this.state.subscribe((state) => {
+        if (state === InteractionState.NONE && this.cursoredDataStale) {
+          this.updateCursoredDataAndTooltipVisibility();
+        }
         this.onInteractionStateChange.emit(state);
       })
     );
@@ -455,7 +475,26 @@ export class LineChartInteractiveViewComponent
       });
   }
 
-  ngOnChanges() {
+  ngOnChanges(changes: SimpleChanges) {
+    if (!CURSORED_DATA_INPUTS.some((input) => input in changes)) {
+      return;
+    }
+
+    if (!this.isCursorInside) {
+      // Without a cursor there is nothing to show; `cursoredData` is already
+      // empty and `mouseenter` recomputes it when the cursor comes back.
+      return;
+    }
+
+    if (this.state.getValue() !== InteractionState.NONE) {
+      // Neither the tooltip nor the cursor dots are rendered mid-interaction,
+      // while panning and zooming change `viewExtent` on every frame. Defer the
+      // recompute (a bisect and two objects per series) until the interaction
+      // ends; the `state` subscription above flushes it.
+      this.cursoredDataStale = true;
+      return;
+    }
+
     this.updateCursoredDataAndTooltipVisibility();
   }
 
@@ -540,6 +579,7 @@ export class LineChartInteractiveViewComponent
   }
 
   private updateCursoredDataAndTooltipVisibility() {
+    this.cursoredDataStale = false;
     const cursorLoc = this.cursorLocationInDataCoord;
     if (cursorLoc === null) {
       this.cursoredData = [];

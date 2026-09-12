@@ -50,6 +50,8 @@ py_test(
         "//tensorboard/data:provider",
         "//tensorboard/plugins:base_plugin",
         "//tensorboard/plugins/image:metadata",
+        "//tensorboard/plugins/scalar:metadata",
+        "//tensorboard/plugins/scalar:protos_all_py_pb2",
         "//tensorboard/util:test_util",
         "@tensorboard_pip_deps//werkzeug",
     ],

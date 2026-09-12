@@ -284,6 +284,7 @@ describe('line_chart_v2/lib/renderer test', () => {
   describe('threejs renderer', () => {
     let renderer: ThreeRenderer;
     let scene: THREE.Scene;
+    let canvas: HTMLCanvasElement;
 
     function assertLine(line: THREE.Mesh, polyline: Polyline) {
       const geometry = line.geometry as THREE.BufferGeometry;
@@ -336,7 +337,7 @@ describe('line_chart_v2/lib/renderer test', () => {
       scene = new THREE.Scene();
       spyOn(TEST_ONLY.ThreeWrapper, 'createScene').and.returnValue(scene);
 
-      const canvas = document.createElement('canvas');
+      canvas = document.createElement('canvas');
       const coordinator = new ThreeCoordinator();
       renderer = new ThreeRenderer(canvas, coordinator, 2);
     });
@@ -371,6 +372,45 @@ describe('line_chart_v2/lib/renderer test', () => {
       const lineObject = scene.children[0] as THREE.Mesh;
       assertLine(lineObject, new Float32Array([0, 5, 5, 50, 10, 100]));
       assertMaterial(lineObject, '#00ff00', true);
+    });
+
+    describe('dispose', () => {
+      it('releases geometries, materials, and the webgl context', () => {
+        const cacheValue = renderer.createOrUpdateLineObject(
+          null,
+          new Float32Array([0, 10, 10, 100]),
+          DEFAULT_LINE_OPTIONS
+        )!;
+        const mesh = cacheValue.obj3d as THREE.Mesh;
+        const geometry = mesh.geometry as THREE.BufferGeometry;
+        const material = mesh.material as THREE.Material;
+        const geometryDispose = spyOn(geometry, 'dispose').and.callThrough();
+        const materialDispose = spyOn(material, 'dispose').and.callThrough();
+
+        renderer.dispose();
+
+        expect(scene.children.length).toBe(0);
+        expect(geometryDispose).toHaveBeenCalled();
+        expect(materialDispose).toHaveBeenCalled();
+        expect(canvas.getContext('webgl2')!.isContextLost()).toBe(true);
+      });
+
+      it('does not report the deliberate context loss to its owner', async () => {
+        const onContextLost = jasmine.createSpy('onContextLost');
+        const disposableCanvas = document.createElement('canvas');
+        const disposable = new ThreeRenderer(
+          disposableCanvas,
+          new ThreeCoordinator(),
+          2,
+          onContextLost
+        );
+
+        disposable.dispose();
+        // `webglcontextlost` is dispatched in a task of its own.
+        await new Promise((resolve) => setTimeout(resolve));
+
+        expect(onContextLost).not.toHaveBeenCalled();
+      });
     });
 
     describe('opacity support', () => {

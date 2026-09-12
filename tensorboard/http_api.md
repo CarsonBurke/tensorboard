@@ -108,6 +108,35 @@ Example response:
 
     ["train_run", "eval"]
 
+To browse without retrieving the full catalog, supply `limit` or `offset`.
+This paged form returns
+`{"runs": [{"name": "train_run", "start_time": 123.0}], "total": 1}`.
+`start_time` may be null. Parameters:
+
+- `offset`: nonnegative result offset, default 0.
+- `limit`: nonnegative page length; 0 explicitly requests all matching runs.
+- `query`: regular expression applied to run names, default empty.
+- `query_prefix`: experiment alias; matching also considers the prefix itself
+  and `prefix/run`. The returned name remains the original run name.
+- `name`: repeated exact run name; restricts results independently of `query`.
+- `sort_by`: `name` (default), `start_time`, or `session_rank`, with name as
+  a tie-breaker.
+- `descending`: `true` reverses the sort.
+- `session_ranks`: JSON array of `{"prefix": string, "rank": integer}`.
+  The longest matching run-name prefix determines a run's rank; duplicate
+  prefixes use the last entry. Negative ranks exclude runs before counting or
+  windowing. Prefix matching is not restricted to directory boundaries.
+- `default_rank`: rank for runs with no matching prefix, default 0.
+
+The windowed endpoint also accepts POST with these parameters in a JSON object,
+using an array for `name` and `session_ranks`. Native clients use POST for exact
+selection retention and hparam/session filtering to avoid URL length limits.
+Run-list scrolling automatically requests windows; these API offsets do not
+require manual top-level page controls.
+
+`total` counts matches before pagination. Invalid patterns or pagination values
+return HTTP 400. The unpaged form remains available to explicit legacy clients.
+
 ## `data/experiments`
 
 Returns all experiments known to the TensorBoard backend at this time. Each

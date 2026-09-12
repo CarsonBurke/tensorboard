@@ -16,6 +16,7 @@ limitations under the License.
 use async_stream::try_stream;
 use bytes::Bytes;
 use futures_core::Stream;
+use prost::Message;
 use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -30,7 +31,7 @@ use crate::commit::{self, BlobSequenceValue, Commit};
 use crate::downsample;
 use crate::proto::tensorboard as pb;
 use crate::proto::tensorboard::data;
-use crate::types::{Run, Tag, WallTime};
+use crate::types::{Run, Tag};
 use data::tensor_board_data_provider_server::TensorBoardDataProvider;
 
 /// Data provider gRPC service implementation.
@@ -47,6 +48,186 @@ impl DataProviderHandler {
             .runs
             .read()
             .map_err(|_| Status::internal("failed to read commit.runs"))
+    }
+
+    /// Builds a scalar listing response. Exposed so that the `bench` binary can
+    /// measure this path, which dominates the dashboard's first paint, without
+    /// standing up a gRPC server.
+    pub fn list_scalars_response(
+        &self,
+        req: data::ListScalarsRequest,
+    ) -> Result<data::ListScalarsResponse, Status> {
+        let want_plugin = parse_plugin_filter(req.plugin_filter)?;
+        if let Some(disk) = &self.commit.disk {
+            let listing = disk.listing(
+                &want_plugin,
+                pb::DataClass::Scalar,
+                req.run_tag_filter.as_ref(),
+            )?;
+            let mut res = data::ListScalarsResponse {
+                total_tags: listing.total,
+                ..Default::default()
+            };
+            let mut tags = HashMap::new();
+            let mut metadata = HashMap::new();
+            for row in listing.rows {
+                let (tag_name, tag_index, summary_metadata, summary_metadata_index) =
+                    if req.dedup_names {
+                        let tag_index = match tags.get(row.tag.as_str()) {
+                            Some(&index) => index,
+                            None => {
+                                let index = res.tag_names.len() as u32;
+                                tags.insert(row.tag.clone(), index);
+                                res.tag_names.push(row.tag);
+                                index
+                            }
+                        };
+                        let key = row.metadata.encode_to_vec();
+                        let md_index = match metadata.entry(key) {
+                            std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+                            std::collections::hash_map::Entry::Vacant(entry) => {
+                                let index = res.summary_metadata_table.len() as u32;
+                                res.summary_metadata_table.push(row.metadata);
+                                *entry.insert(index)
+                            }
+                        };
+                        (String::new(), tag_index, None, md_index)
+                    } else {
+                        (row.tag, 0, Some(row.metadata), 0)
+                    };
+                let run_name = row.run;
+                if res.runs.last().map_or(true, |r| r.run_name != run_name) {
+                    res.runs.push(data::list_scalars_response::RunEntry {
+                        run_name,
+                        tags: Vec::new(),
+                    });
+                }
+                res.runs
+                    .last_mut()
+                    .unwrap()
+                    .tags
+                    .push(data::list_scalars_response::TagEntry {
+                        tag_name,
+                        tag_index,
+                        metadata: Some(data::ScalarMetadata {
+                            max_step: if req.skip_statistics { 0 } else { row.max_step },
+                            max_wall_time: if req.skip_statistics {
+                                0.0
+                            } else {
+                                row.max_wall
+                            },
+                            summary_metadata,
+                            summary_metadata_index,
+                        }),
+                    });
+            }
+            return Ok(res);
+        }
+        let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
+        let runs = self.read_runs()?;
+
+        let mut res: data::ListScalarsResponse = Default::default();
+        // A wide experiment repeats each tag name once per run and usually
+        // shares one summary metadata value across every time series. Cloning
+        // those per entry is most of this handler's work and most of the
+        // response's bytes, so `dedup_names` clients get index references into
+        // tables built here instead.
+        let mut tag_indices: HashMap<String, u32> = HashMap::new();
+        // Summary metadata is deduplicated exactly, but encoding and hashing
+        // every series' metadata would cost more than it saves: a tag's
+        // metadata is nearly always identical across runs. Remember the last
+        // index matched for each tag and hash only when that misses.
+        let mut metadata_memo: Vec<Option<u32>> = Vec::new();
+        let mut metadata_indices: HashMap<Vec<u8>, u32> = HashMap::new();
+        for (run, data) in run_filter.entries(&runs) {
+            let data = data
+                .read()
+                .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
+            let mut run_res: data::list_scalars_response::RunEntry = Default::default();
+            for (tag, ts) in tag_filter.entries(&data.scalars) {
+                if plugin_name(&ts.metadata) != Some(&want_plugin) {
+                    continue;
+                }
+                let (max_step, max_wall_time) = if req.skip_statistics {
+                    if ts.valid_values().next().is_none() {
+                        continue;
+                    }
+                    (0, 0.0)
+                } else {
+                    let max_step = match ts.valid_values().next_back() {
+                        None => continue,
+                        Some((step, _, _)) => step.into(),
+                    };
+                    let max_wall_time = ts
+                        .valid_values()
+                        .map(|(_, wt, _)| wt)
+                        .max()
+                        .expect("have valid values for step but not wall time")
+                        .into();
+                    (max_step, max_wall_time)
+                };
+                let (tag_name, tag_index) = if req.dedup_names {
+                    let index = match tag_indices.get(tag.0.as_str()) {
+                        Some(index) => *index,
+                        None => {
+                            let index = res.tag_names.len() as u32;
+                            tag_indices.insert(tag.0.clone(), index);
+                            res.tag_names.push(tag.0.clone());
+                            metadata_memo.push(None);
+                            index
+                        }
+                    };
+                    (String::new(), index)
+                } else {
+                    (tag.0.clone(), 0)
+                };
+                let (summary_metadata, summary_metadata_index) = if req.dedup_names {
+                    let memo = &mut metadata_memo[tag_index as usize];
+                    let index = match *memo {
+                        Some(index)
+                            if res.summary_metadata_table[index as usize] == *ts.metadata =>
+                        {
+                            index
+                        }
+                        _ => {
+                            // Encoded bytes are a faithful key: prost writes
+                            // fields in tag order, so equal messages encode
+                            // equally and distinct ones do not.
+                            let key = ts.metadata.encode_to_vec();
+                            let index = match metadata_indices.get(&key) {
+                                Some(index) => *index,
+                                None => {
+                                    let index = res.summary_metadata_table.len() as u32;
+                                    res.summary_metadata_table.push(*ts.metadata.clone());
+                                    metadata_indices.insert(key, index);
+                                    index
+                                }
+                            };
+                            *memo = Some(index);
+                            index
+                        }
+                    };
+                    (None, index)
+                } else {
+                    (Some(*ts.metadata.clone()), 0)
+                };
+                run_res.tags.push(data::list_scalars_response::TagEntry {
+                    tag_name,
+                    tag_index,
+                    metadata: Some(data::ScalarMetadata {
+                        max_step,
+                        max_wall_time,
+                        summary_metadata,
+                        summary_metadata_index,
+                    }),
+                });
+            }
+            if !run_res.tags.is_empty() {
+                run_res.run_name = run.0.clone();
+                res.runs.push(run_res);
+            }
+        }
+        Ok(res)
     }
 }
 
@@ -65,7 +246,10 @@ impl TensorBoardDataProvider for DataProviderHandler {
     ) -> Result<Response<data::GetExperimentResponse>, Status> {
         Ok(Response::new(data::GetExperimentResponse {
             data_location: self.data_location.clone(),
-            metadata_revision: self.commit.metadata_revision(),
+            metadata_revision: match &self.commit.disk {
+                Some(disk) => disk.revision()?,
+                None => self.commit.metadata_revision(),
+            },
             ..Default::default()
         }))
     }
@@ -74,6 +258,9 @@ impl TensorBoardDataProvider for DataProviderHandler {
         &self,
         _request: Request<data::ListPluginsRequest>,
     ) -> Result<Response<data::ListPluginsResponse>, Status> {
+        if let Some(disk) = &self.commit.disk {
+            return Ok(Response::new(disk.plugins()?));
+        }
         let runs = self.read_runs()?;
         // Collect set of plugin names.
         let mut plugin_names = HashSet::new();
@@ -104,29 +291,76 @@ impl TensorBoardDataProvider for DataProviderHandler {
 
     async fn list_runs(
         &self,
-        _request: Request<data::ListRunsRequest>,
+        request: Request<data::ListRunsRequest>,
     ) -> Result<Response<data::ListRunsResponse>, Status> {
+        let req = request.into_inner();
+        if let Some(disk) = &self.commit.disk {
+            return Ok(Response::new(disk.list_runs(req)?));
+        }
+        let order = match req.sort_by.as_str() {
+            "" | "start_time" => "start_time",
+            "name" => "name",
+            "session_rank" => "session_rank",
+            _ => {
+                return Err(Status::invalid_argument(
+                    "sort_by must be name, start_time, or session_rank",
+                ))
+            }
+        };
+        let offset = crate::storage::page_number(req.offset)? as usize;
+        let limit = if req.limit == 0 {
+            usize::MAX
+        } else {
+            crate::storage::page_number(req.limit)? as usize
+        };
+        let regex = regex::Regex::new(&req.query)
+            .map_err(|e| Status::invalid_argument(format!("invalid query regex: {}", e)))?;
+        let ranks = crate::storage::SessionRanks::new(&req.session_ranks, req.default_rank);
+        let names: Option<HashSet<_>> = req
+            .names
+            .as_ref()
+            .map(|filter| filter.names.iter().map(String::as_str).collect());
         let runs = self.read_runs()?;
-
-        // Buffer up started runs to sort by wall time. Keep `WallTime` rather than projecting down
-        // to f64 so that we're guaranteed that they're non-NaN and can sort them.
-        let mut results: Vec<(Run, WallTime)> = Vec::with_capacity(runs.len());
+        // Keep borrowed names and non-NaN WallTime values until pagination.
+        let mut results = Vec::new();
         for (run, data) in runs.iter() {
+            let rank = ranks.rank(&run.0);
+            if rank < 0
+                || names
+                    .as_ref()
+                    .map_or(false, |names| !names.contains(run.0.as_str()))
+                || !crate::storage::matches_query(&regex, &req.query_prefix, &run.0)
+            {
+                continue;
+            }
             let data = data
                 .read()
                 .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
             if let Some(start_time) = data.start_time {
-                results.push((run.clone(), start_time));
+                results.push((run, start_time, rank));
             }
         }
-        results.sort_by_key(|&(_, start_time)| start_time);
-        drop(runs); // release lock a bit earlier
-
+        results.sort_unstable_by(|a, b| {
+            let primary = match order {
+                "name" => std::cmp::Ordering::Equal,
+                "session_rank" => a.2.cmp(&b.2),
+                _ => a.1.cmp(&b.1),
+            };
+            let ordering = primary.then_with(|| a.0 .0.cmp(&b.0 .0));
+            if req.descending {
+                ordering.reverse()
+            } else {
+                ordering
+            }
+        });
         let res = data::ListRunsResponse {
+            total: results.len() as u64,
             runs: results
                 .into_iter()
-                .map(|(Run(name), start_time)| data::Run {
-                    name,
+                .skip(offset)
+                .take(limit)
+                .map(|(run, start_time, _)| data::Run {
+                    name: run.0.clone(),
                     start_time: start_time.into(),
                 })
                 .collect(),
@@ -134,60 +368,101 @@ impl TensorBoardDataProvider for DataProviderHandler {
         Ok(Response::new(res))
     }
 
+    async fn list_metrics_catalog(
+        &self,
+        request: Request<data::MetricsCatalogRequest>,
+    ) -> Result<Response<data::MetricsCatalogResponse>, Status> {
+        let req = request.into_inner();
+        if let Some(disk) = &self.commit.disk {
+            return Ok(Response::new(disk.metrics_catalog(req)?));
+        }
+        let names: HashSet<_> = req
+            .runs
+            .iter()
+            .chain(&req.pinned_runs)
+            .map(|r| r.name.as_str())
+            .collect();
+        let runs = self.read_runs()?;
+        let selected_names: HashSet<_> = req.runs.iter().map(|r| r.name.as_str()).collect();
+        let pinned_tags: HashSet<_> = req.pinned_tags.iter().map(String::as_str).collect();
+        let mut rows = Vec::new();
+        for name in names {
+            let run = match runs.get(name) {
+                Some(run) => run,
+                None => continue,
+            };
+            let run = run
+                .read()
+                .map_err(|_| Status::internal("failed to read catalog run"))?;
+            let selected = selected_names.contains(name);
+            for (tag, ts) in &run.scalars {
+                if !selected && !pinned_tags.contains(tag.0.as_str()) {
+                    continue;
+                }
+                if plugin_name(&ts.metadata) != Some("scalars")
+                    || ts.valid_values().next().is_none()
+                {
+                    continue;
+                }
+                rows.push(crate::storage::SeriesMetadata {
+                    run: name.to_owned(),
+                    tag: tag.0.clone(),
+                    metadata: *ts.metadata.clone(),
+                    max_step: 0,
+                    max_wall: 0.0,
+                    max_length: 0,
+                });
+            }
+            for (tag, ts) in &run.tensors {
+                if plugin_name(&ts.metadata) != Some("histograms")
+                    || ts.valid_values().next().is_none()
+                {
+                    continue;
+                }
+                if !selected && !pinned_tags.contains(tag.0.as_str()) {
+                    continue;
+                }
+                rows.push(crate::storage::SeriesMetadata {
+                    run: name.to_owned(),
+                    tag: tag.0.clone(),
+                    metadata: *ts.metadata.clone(),
+                    max_step: 0,
+                    max_wall: 0.0,
+                    max_length: 0,
+                });
+            }
+            for (tag, ts) in &run.blob_sequences {
+                if plugin_name(&ts.metadata) != Some("images") {
+                    continue;
+                }
+                if !selected && !pinned_tags.contains(tag.0.as_str()) {
+                    continue;
+                }
+                let max_length = match ts.valid_values().map(|(_, _, v)| v.0.len()).max() {
+                    Some(n) => n as i64,
+                    None => continue,
+                };
+                rows.push(crate::storage::SeriesMetadata {
+                    run: name.to_owned(),
+                    tag: tag.0.clone(),
+                    metadata: *ts.metadata.clone(),
+                    max_step: 0,
+                    max_wall: 0.0,
+                    max_length,
+                });
+            }
+        }
+        drop(runs);
+        Ok(Response::new(crate::storage::memory_metrics_catalog(
+            req, rows,
+        )?))
+    }
+
     async fn list_scalars(
         &self,
         req: Request<data::ListScalarsRequest>,
     ) -> Result<Response<data::ListScalarsResponse>, Status> {
-        let req = req.into_inner();
-        let want_plugin = parse_plugin_filter(req.plugin_filter)?;
-        let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
-        let runs = self.read_runs()?;
-
-        let mut res: data::ListScalarsResponse = Default::default();
-        for (run, data) in run_filter.entries(&runs) {
-            let data = data
-                .read()
-                .map_err(|_| Status::internal(format!("failed to read run data for {:?}", run)))?;
-            let mut run_res: data::list_scalars_response::RunEntry = Default::default();
-            for (tag, ts) in tag_filter.entries(&data.scalars) {
-                if plugin_name(&ts.metadata) != Some(&want_plugin) {
-                    continue;
-                }
-                let (max_step, max_wall_time) = if req.skip_statistics {
-                    if ts.valid_values().next().is_none() {
-                        continue;
-                    }
-                    (0, 0.0)
-                } else {
-                    let max_step = match ts.valid_values().next_back() {
-                        None => continue,
-                        Some((step, _, _)) => step.into(),
-                    };
-                    let max_wall_time = ts
-                        .valid_values()
-                        .map(|(_, wt, _)| wt)
-                        .max()
-                        .expect("have valid values for step but not wall time")
-                        .into();
-                    (max_step, max_wall_time)
-                };
-                run_res.tags.push(data::list_scalars_response::TagEntry {
-                    tag_name: tag.0.clone(),
-                    metadata: Some(data::ScalarMetadata {
-                        max_step,
-                        max_wall_time,
-                        summary_metadata: Some(*ts.metadata.clone()),
-                        ..Default::default()
-                    }),
-                });
-            }
-            if !run_res.tags.is_empty() {
-                run_res.run_name = run.0.clone();
-                res.runs.push(run_res);
-            }
-        }
-
-        Ok(Response::new(res))
+        Ok(Response::new(self.list_scalars_response(req.into_inner())?))
     }
 
     async fn read_scalars(
@@ -196,9 +471,28 @@ impl TensorBoardDataProvider for DataProviderHandler {
     ) -> Result<Response<data::ReadScalarsResponse>, Status> {
         let req = req.into_inner();
         let want_plugin = parse_plugin_filter(req.plugin_filter)?;
-        let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
         let num_points = parse_downsample(req.downsample)?;
-        let runs = self.read_runs()?;
+        let requested = req.run_tag_filter;
+        let selected = self
+            .commit
+            .disk
+            .as_ref()
+            .map(|disk| {
+                disk.read(
+                    &want_plugin,
+                    pb::DataClass::Scalar,
+                    requested.as_ref(),
+                    num_points,
+                )
+            })
+            .transpose()?;
+        let (run_filter, tag_filter) = parse_rtf(requested);
+        let runs = selected
+            .as_ref()
+            .unwrap_or(&self.commit)
+            .runs
+            .read()
+            .map_err(|_| Status::internal("failed to read selected runs"))?;
 
         let mut res: data::ReadScalarsResponse = Default::default();
         for (run, data) in run_filter.entries(&runs) {
@@ -246,6 +540,43 @@ impl TensorBoardDataProvider for DataProviderHandler {
     ) -> Result<Response<data::ListTensorsResponse>, Status> {
         let req = req.into_inner();
         let want_plugin = parse_plugin_filter(req.plugin_filter)?;
+        if let Some(disk) = &self.commit.disk {
+            let listing = disk.listing(
+                &want_plugin,
+                pb::DataClass::Tensor,
+                req.run_tag_filter.as_ref(),
+            )?;
+            let mut res = data::ListTensorsResponse {
+                total_tags: listing.total,
+                ..Default::default()
+            };
+            for row in listing.rows {
+                if res.runs.last().map_or(true, |r| r.run_name != row.run) {
+                    res.runs.push(data::list_tensors_response::RunEntry {
+                        run_name: row.run,
+                        tags: Vec::new(),
+                    });
+                }
+                res.runs
+                    .last_mut()
+                    .unwrap()
+                    .tags
+                    .push(data::list_tensors_response::TagEntry {
+                        tag_name: row.tag,
+                        metadata: Some(data::TensorMetadata {
+                            max_step: if req.skip_statistics { 0 } else { row.max_step },
+                            max_wall_time: if req.skip_statistics {
+                                0.0
+                            } else {
+                                row.max_wall
+                            },
+                            summary_metadata: Some(row.metadata),
+                            ..Default::default()
+                        }),
+                    });
+            }
+            return Ok(Response::new(res));
+        }
         let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
         let runs = self.read_runs()?;
 
@@ -302,9 +633,28 @@ impl TensorBoardDataProvider for DataProviderHandler {
     ) -> Result<Response<data::ReadTensorsResponse>, Status> {
         let req = req.into_inner();
         let want_plugin = parse_plugin_filter(req.plugin_filter)?;
-        let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
         let num_points = parse_downsample(req.downsample)?;
-        let runs = self.read_runs()?;
+        let requested = req.run_tag_filter;
+        let selected = self
+            .commit
+            .disk
+            .as_ref()
+            .map(|disk| {
+                disk.read(
+                    &want_plugin,
+                    pb::DataClass::Tensor,
+                    requested.as_ref(),
+                    num_points,
+                )
+            })
+            .transpose()?;
+        let (run_filter, tag_filter) = parse_rtf(requested);
+        let runs = selected
+            .as_ref()
+            .unwrap_or(&self.commit)
+            .runs
+            .read()
+            .map_err(|_| Status::internal("failed to read selected runs"))?;
 
         let mut res: data::ReadTensorsResponse = Default::default();
         for (run, data) in run_filter.entries(&runs) {
@@ -353,6 +703,37 @@ impl TensorBoardDataProvider for DataProviderHandler {
     ) -> Result<Response<data::ListBlobSequencesResponse>, Status> {
         let req = req.into_inner();
         let want_plugin = parse_plugin_filter(req.plugin_filter)?;
+        if let Some(disk) = &self.commit.disk {
+            let listing = disk.listing(
+                &want_plugin,
+                pb::DataClass::BlobSequence,
+                req.run_tag_filter.as_ref(),
+            )?;
+            let mut res = data::ListBlobSequencesResponse {
+                total_tags: listing.total,
+                ..Default::default()
+            };
+            for row in listing.rows {
+                if res.runs.last().map_or(true, |r| r.run_name != row.run) {
+                    res.runs.push(data::list_blob_sequences_response::RunEntry {
+                        run_name: row.run,
+                        tags: Vec::new(),
+                    });
+                }
+                res.runs.last_mut().unwrap().tags.push(
+                    data::list_blob_sequences_response::TagEntry {
+                        tag_name: row.tag,
+                        metadata: Some(data::BlobSequenceMetadata {
+                            max_step: row.max_step,
+                            max_wall_time: row.max_wall,
+                            max_length: row.max_length,
+                            summary_metadata: Some(row.metadata),
+                        }),
+                    },
+                );
+            }
+            return Ok(Response::new(res));
+        }
         let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
         let runs = self.read_runs()?;
 
@@ -410,8 +791,16 @@ impl TensorBoardDataProvider for DataProviderHandler {
     ) -> Result<Response<data::ReadBlobSequencesResponse>, Status> {
         let req = req.into_inner();
         let want_plugin = parse_plugin_filter(req.plugin_filter)?;
-        let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
         let num_points = parse_downsample(req.downsample)?;
+        if let Some(disk) = &self.commit.disk {
+            return Ok(Response::new(disk.blob_sequences(
+                &want_plugin,
+                &req.experiment_id,
+                req.run_tag_filter.as_ref(),
+                num_points,
+            )?));
+        }
+        let (run_filter, tag_filter) = parse_rtf(req.run_tag_filter);
         let runs = self.read_runs()?;
 
         let mut res: data::ReadBlobSequencesResponse = Default::default();
@@ -484,6 +873,15 @@ impl TensorBoardDataProvider for DataProviderHandler {
             .blob_key
             .parse()
             .map_err(|e| Status::invalid_argument(format!("failed to parse blob key: {:?}", e,)))?;
+        if let Some(disk) = &self.commit.disk {
+            let blob = disk.blob(&bk)?;
+            let stream = try_stream! {
+                for chunk in blob.chunks(BLOB_CHUNK_SIZE) {
+                    yield data::ReadBlobResponse {data:blob.slice_ref(chunk)};
+                }
+            };
+            return Ok(Response::new(Box::pin(stream) as Self::ReadBlobStream));
+        }
 
         let runs = self.read_runs()?;
         let run_data = runs
@@ -773,6 +1171,7 @@ mod tests {
         let handler = sample_handler(commit);
         let req = Request::new(data::ListRunsRequest {
             experiment_id: "123".to_string(),
+            ..Default::default()
         });
         let res = handler.list_runs(req).await.unwrap().into_inner();
         assert_eq!(
@@ -931,6 +1330,7 @@ mod tests {
                     names: vec!["train".to_string(), "nonexistent".to_string()],
                 }),
                 tags: None,
+                ..Default::default()
             }),
             downsample: Some(data::Downsample { num_points: 1000 }),
             ..Default::default()
@@ -1103,6 +1503,7 @@ mod tests {
                     names: vec!["train".to_string(), "nonexistent".to_string()],
                 }),
                 tags: None,
+                ..Default::default()
             }),
             downsample: Some(data::Downsample { num_points: 1000 }),
             ..Default::default()
@@ -1186,6 +1587,7 @@ mod tests {
                         }),
                     }],
                 }],
+                ..Default::default()
             }
         );
 
@@ -1204,6 +1606,7 @@ mod tests {
                 tags: Some(data::TagFilter {
                     names: vec!["input".to_string()],
                 }),
+                ..Default::default()
             }),
         });
         let read_res = handler

@@ -62,6 +62,11 @@ export interface RunsDataNonNamespacedState {
   runIdToExpId: Record<RunId, ExperimentId>;
   runMetadata: Record<RunId, Run>;
   runsLoadState: Record<ExperimentId, LoadState>;
+  catalog?: {
+    runIds: string[];
+    totals: Record<string, number>;
+    offset: number;
+  };
 }
 
 /**
@@ -79,6 +84,7 @@ export interface RunsUiNamespacedState {
   selectionState: Map<RunId, boolean>;
   runsTableHeaders: ColumnHeader[];
   sortingInfo: SortingInfo;
+  catalogWindow?: {offset: number; limit: number};
 }
 
 export interface RunsUiNonNamespacedState {}

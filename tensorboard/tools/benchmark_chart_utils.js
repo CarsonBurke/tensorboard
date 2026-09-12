@@ -71,7 +71,41 @@ function loadUtils(sourceRoot) {
   return {
     ...load(chart + 'line_chart_internal_utils.ts'),
     ...load(chart + 'sub_view/line_chart_interactive_utils.ts'),
+    coordinator: load(chart + 'lib/coordinator.ts'),
+    scale: load(chart + 'lib/scale.ts'),
+    scaleTypes: load(chart + 'lib/scale_types.ts'),
   };
+}
+
+/**
+ * Transforms every point of a series into ui coordinates, the way a chart
+ * does on each pan, zoom, and resize frame. Uses the batch coordinator API
+ * when the source tree has one, and the per-point API otherwise.
+ */
+function transformSeries(utils, coordinator, layoutRect, points, polyline) {
+  if (coordinator.transformDataToUiCoords) {
+    coordinator.transformDataToUiCoords(layoutRect, points, polyline);
+    return polyline;
+  }
+  for (let index = 0; index < points.length; index++) {
+    const [x, y] = coordinator.transformDataToUiCoord(layoutRect, [
+      points[index].x,
+      points[index].y,
+    ]);
+    polyline[index * 2] = x;
+    polyline[index * 2 + 1] = y;
+  }
+  return polyline;
+}
+
+function buildCoordinator(utils, scaleType) {
+  const coordinator = new utils.coordinator.Coordinator();
+  const scale = utils.scale.createScale(scaleType);
+  coordinator.setXScale(scale);
+  coordinator.setYScale(utils.scale.createScale(utils.scaleTypes.ScaleType.LINEAR));
+  coordinator.setDomContainerRect({x: 0, y: 0, width: 800, height: 400});
+  coordinator.setViewBoxRect({x: 0, y: 0, width: 1000, height: 1});
+  return coordinator;
 }
 
 function measure(fn, repetitions) {
@@ -89,6 +123,7 @@ const current = loadUtils(root);
 const baseline = process.argv[2]
   ? loadUtils(path.resolve(process.argv[2]))
   : null;
+const layoutRect = {x: 0, y: 0, width: 800, height: 400};
 const results = [];
 for (const count of [1000, 10000, 100000]) {
   let seed = 1;
@@ -98,6 +133,13 @@ for (const count of [1000, 10000, 100000]) {
   });
   const data = [{id: 'series', points}];
   const metadata = {series: {visible: true, aux: false}};
+  const buildState = (utils) => ({
+    linear: buildCoordinator(utils, utils.scaleTypes.ScaleType.LINEAR),
+    temporal: buildCoordinator(utils, utils.scaleTypes.ScaleType.TIME),
+    polyline: new Float32Array(count * 2),
+  });
+  const currentState = buildState(current);
+  const baselineState = baseline ? buildState(baseline) : null;
   for (const [name, call, repetitions] of [
     ['hover', (utils) => utils.findClosestIndex(points, count * 0.53), 1000],
     [
@@ -124,14 +166,45 @@ for (const count of [1000, 10000, 100000]) {
         ),
       20,
     ],
+    [
+      'step axis transform',
+      (utils, state) =>
+        transformSeries(
+          utils,
+          state.linear,
+          layoutRect,
+          points,
+          state.polyline
+        ),
+      20,
+    ],
+    [
+      'wall time axis transform',
+      (utils, state) =>
+        transformSeries(
+          utils,
+          state.temporal,
+          layoutRect,
+          points,
+          state.polyline
+        ),
+      20,
+    ],
   ]) {
-    if (baseline)
+    if (baseline) {
+      // Sources are evaluated in separate contexts, so compare values rather
+      // than prototypes.
+      const serialize = (value) =>
+        JSON.stringify(ArrayBuffer.isView(value) ? Array.from(value) : value);
       assert.strictEqual(
-        JSON.stringify(call(current)),
-        JSON.stringify(call(baseline))
+        serialize(call(current, currentState)),
+        serialize(call(baseline, baselineState))
       );
-    const before = baseline ? measure(() => call(baseline), repetitions) : null;
-    const after = measure(() => call(current), repetitions);
+    }
+    const before = baseline
+      ? measure(() => call(baseline, baselineState), repetitions)
+      : null;
+    const after = measure(() => call(current, currentState), repetitions);
     results.push({
       operation: name,
       points: count,

@@ -131,6 +131,11 @@ impl<T> Basin<T> {
         Basin(Vec::new())
     }
 
+    /// Restores an already sampled, step-sorted snapshot from persistent storage.
+    pub(crate) fn from_sorted(values: Vec<(Step, T)>) -> Self {
+        Basin(values)
+    }
+
     /// Extracts a slice containing the entire basin.
     pub fn as_slice(&self) -> &[(Step, T)] {
         &self.0[..]
@@ -350,9 +355,14 @@ impl<T, C: ReservoirControl> StageReservoir<T, C> {
         }
         self.committed_steps
             .extend(self.staged_items.iter().map(|(step, _)| *step));
-        basin
-            .0
-            .extend(self.staged_items.drain(..).map(|(step, t)| (step, f(t))));
+        // A commit empties the staging area, often after a large initial load.
+        // Consume its allocation too, rather than retaining the peak staging
+        // capacity alongside the committed basin for every time series.
+        basin.0.extend(
+            std::mem::take(&mut self.staged_items)
+                .into_iter()
+                .map(|(step, t)| (step, f(t))),
+        );
     }
 }
 

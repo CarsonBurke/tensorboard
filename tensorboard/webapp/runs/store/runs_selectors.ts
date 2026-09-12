@@ -54,6 +54,31 @@ export const getRunIdToExperimentId = createSelector(
 );
 
 /**
+ * Returns the map of ExperimentId to its RunIds.
+ *
+ * Keyed on the narrow `runIds` slice rather than on the whole data state:
+ * `RunsDataState` also holds the run selector's regex filter, so depending on
+ * the whole slice would rederive every run on each filter keystroke.
+ */
+const getRunIdsByExperimentId = createSelector(
+  getDataState,
+  (state: RunsDataState): Record<ExperimentId, RunId[]> => {
+    return state.runIds;
+  }
+);
+
+/**
+ * Returns the map of RunId to Run. Narrowly keyed for the same reason as
+ * `getRunIdsByExperimentId`.
+ */
+const getRunMetadata = createSelector(
+  getDataState,
+  (state: RunsDataState): Record<RunId, Run> => {
+    return state.runMetadata;
+  }
+);
+
+/**
  * Returns Observable that emits ExperimentId of given Run.
  */
 export const getExperimentIdForRunId = createSelector(
@@ -103,15 +128,19 @@ export const getRuns = createSelector(
 export const getDashboardRunsToHparams = createSelector(
   getDashboardSessionGroups,
   getExperimentIdsFromRoute,
-  getDataState,
-  (dashboardSessionGroups, experimentIds, state): RunToHparamsAndMetrics => {
+  getRunIdsByExperimentId,
+  (
+    dashboardSessionGroups,
+    experimentIds,
+    runIdsByExperimentId
+  ): RunToHparamsAndMetrics => {
     if (!experimentIds) {
       return {};
     }
 
     const runIds: string[] = [];
     for (const experimentId of experimentIds) {
-      runIds.push(...(state.runIds[experimentId] || []));
+      runIds.push(...(runIdsByExperimentId[experimentId] || []));
     }
 
     const sessionToHparams: Record<string, HparamValue[]> = {};
@@ -169,11 +198,13 @@ export const getRunToHparamMap = createSelector(
  * Get the runs used on the dashboard.
  */
 export const getDashboardRuns = createSelector(
-  getDataState,
+  getRunIdsByExperimentId,
+  getRunMetadata,
   getExperimentIdsFromRoute,
   getDashboardRunsToHparams,
   (
-    state: RunsDataState,
+    runIdsByExperimentId: Record<ExperimentId, RunId[]>,
+    runMetadata: Record<RunId, Run>,
     experimentIds: string[] | null,
     runsToHparamsAndMetrics: RunToHparamsAndMetrics
   ): Array<Run & {experimentId: string}> => {
@@ -182,10 +213,10 @@ export const getDashboardRuns = createSelector(
     }
     return experimentIds
       .map((experimentId) => {
-        return (state.runIds[experimentId] || [])
-          .filter((id) => Boolean(state.runMetadata[id]))
+        return (runIdsByExperimentId[experimentId] || [])
+          .filter((id) => Boolean(runMetadata[id]))
           .map((runId) => {
-            const run = {...state.runMetadata[runId], experimentId};
+            const run = {...runMetadata[runId], experimentId};
             run.hparams = runsToHparamsAndMetrics[runId]?.hparams ?? null;
             run.metrics = runsToHparamsAndMetrics[runId]?.metrics ?? null;
             return run;
@@ -345,4 +376,14 @@ export const getGroupedRunsTableHeaders = createSelector(
   getDashboardDisplayedHparamColumns,
   (runsTableHeaders, hparamColumns) =>
     dataTableUtils.groupColumns([...runsTableHeaders, ...hparamColumns])
+);
+
+export const getRunCatalog = createSelector(
+  getDataState,
+  (state) => state.catalog
+);
+
+export const getRunCatalogWindow = createSelector(
+  getUiState,
+  (state) => state.catalogWindow ?? {offset: 0, limit: 100}
 );

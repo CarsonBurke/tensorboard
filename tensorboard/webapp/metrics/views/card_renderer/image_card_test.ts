@@ -33,6 +33,7 @@ import {TruncatedPathModule} from '../../../widgets/text/truncated_path_module';
 import * as actions from '../../actions';
 import {ImageId, MetricsDataSource, PluginType} from '../../data_source';
 import * as selectors from '../../store/metrics_selectors';
+import {reducers} from '../../store/metrics_reducers';
 import {
   appStateFromMetricsState,
   buildMetricsState,
@@ -108,9 +109,14 @@ describe('image card', () => {
     store = TestBed.inject<Store<State>>(Store) as MockStore<State>;
     dataSource = TestBed.inject<MetricsDataSource>(MetricsDataSource);
     selectSpy = spyOn(store, 'select').and.callThrough();
+    let metricsState = buildMetricsState();
     // Cast to jasmine.Spy for compatibility between NgRx dispatch signature overloads.
     (spyOn(store, 'dispatch') as jasmine.Spy).and.callFake((action: Action) => {
       dispatchedActions.push(action);
+      if (action.type === actions.metricsCardStateUpdated.type) {
+        metricsState = reducers(metricsState, action);
+        store.setState(appStateFromMetricsState(metricsState));
+      }
     });
 
     store.overrideSelector(getExperimentIdForRunId, null);
@@ -430,6 +436,30 @@ describe('image card', () => {
 
       expect(imgCardEl.classes['actual-size']).not.toBeTruthy();
       expect(fullWidthSpy.calls.allArgs()).toEqual([[false], [true], [false]]);
+    });
+
+    it('restores actual-size mode after leaving and reentering the render buffer', () => {
+      provideMockCardSeriesData(selectSpy, PluginType.IMAGES, 'card1');
+      store.overrideSelector(selectors.getMetricsImageShowActualSize, false);
+      const first = createImageCardContainer('card1');
+      first.detectChanges();
+      first.debugElement
+        .query(By.css('[aria-label="Toggle actual image size"]'))
+        .nativeElement.click();
+      first.detectChanges();
+      first.destroy();
+
+      const restored = createImageCardContainer('card1');
+      const fullWidth = jasmine.createSpy('full-width layout');
+      restored.componentInstance.fullWidthChanged.subscribe(fullWidth);
+      restored.detectChanges();
+      expect(
+        restored.debugElement.query(By.css('image-card-component')).classes[
+          'actual-size'
+        ]
+      ).toBeTrue();
+      expect(fullWidth).toHaveBeenCalledWith(true);
+      restored.destroy();
     });
 
     it('disables UI toggle when global setting is on', () => {

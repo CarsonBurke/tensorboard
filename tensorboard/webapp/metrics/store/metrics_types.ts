@@ -18,6 +18,7 @@ import {ElementId} from '../../util/dom';
 import {
   HistogramStepDatum,
   ImageStepDatum,
+  MetricsCatalogViewport,
   NonSampledPluginType,
   PluginType,
   SampledPluginType,
@@ -40,8 +41,20 @@ import {
   TooltipSort,
   XAxisType,
 } from '../types';
-import {ColumnHeader, DataTableMode} from '../../widgets/data_table/types';
+import {
+  ColumnHeader,
+  DataTableMode,
+  SortingInfo,
+} from '../../widgets/data_table/types';
 import {Extent} from '../../widgets/line_chart_v2/lib/public_types';
+
+export const DEFAULT_METRICS_CATALOG_VIEWPORT: MetricsCatalogViewport = {
+  groupOffset: 0,
+  groupLimit: 40,
+  visibleGroups: [],
+  filteredOffset: 0,
+  filteredLimit: 40,
+};
 
 export const METRICS_FEATURE_KEY = 'metrics';
 
@@ -144,6 +157,9 @@ export type CardState = {
   rangeSelectionOverride: CardFeatureOverride;
   tableExpanded: boolean;
   fullWidth: boolean;
+  imageActualSize: boolean;
+  tableSorting: SortingInfo;
+  logScale: boolean;
 };
 
 export type CardStateMap = Record<CardId, Partial<CardState>>;
@@ -204,6 +220,7 @@ export interface MetricsNamespacedState {
   cardStateMap: CardStateMap;
   cardStepIndex: CardStepIndexMap;
   tagFilter: string;
+  catalogViewport?: MetricsCatalogViewport;
   tagGroupExpanded: Map<string, boolean>;
   tagGroupPageIndex: Map<string, number>;
   linkedTimeSelection: TimeSelection | null;
@@ -266,6 +283,8 @@ export interface MetricsSettings {
 
 export interface MetricsNonNamespacedState {
   timeSeriesData: TimeSeriesData;
+  /** Oldest-first inactive histories; keys identify plugin, tag, sample and run. */
+  inactiveTimeSeries: Map<string, number>;
   isSettingsPaneOpen: boolean;
   isSlideoutMenuOpen: boolean;
   lastPinnedCardTime: number;
@@ -275,7 +294,7 @@ export interface MetricsNonNamespacedState {
   settings: MetricsSettings;
   settingOverrides: Partial<MetricsSettings>;
   /**
-   * Map from ElementId to CardId. Only contains all visible cards.
+   * Map from ElementId to CardId. Contains cards in the render buffer.
    */
   visibleCardMap: Map<ElementId, CardId>;
   previousCardInteractions: CardInteractions;

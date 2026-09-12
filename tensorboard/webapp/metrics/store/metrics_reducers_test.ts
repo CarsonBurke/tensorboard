@@ -17,6 +17,7 @@ import {buildNavigatedAction, buildRoute} from '../../app_routing/testing';
 import {RouteKind} from '../../app_routing/types';
 import * as coreActions from '../../core/actions';
 import {persistentSettingsLoaded} from '../../persistent_settings';
+import * as runsActions from '../../runs/actions';
 import {buildDeserializedState} from '../../routes/testing';
 import {DataLoadState} from '../../types/data';
 import {nextElementId} from '../../util/dom';
@@ -80,7 +81,63 @@ function createScalarStepSeries(length: number): ScalarStepDatum[] {
 }
 
 describe('metrics reducers', () => {
+  it('preserves the catalog window when selecting or deselecting runs', () => {
+    const viewport = {
+      groupOffset: 80,
+      groupLimit: 60,
+      visibleGroups: ['loss'],
+      filteredOffset: 120,
+      filteredLimit: 40,
+    };
+    let state = buildMetricsState({catalogViewport: viewport});
+    for (const action of [
+      runsActions.runSelectionToggled({runId: 'run1'}),
+      runsActions.runSelectionToggled({runId: 'run1'}),
+      runsActions.singleRunSelected({runId: 'run2'}),
+      runsActions.runPageSelectionToggled({runIds: ['run1', 'run2']}),
+    ]) {
+      state = reducers(state, action);
+      expect(state.catalogViewport).toEqual(viewport);
+    }
+  });
+
   describe('loading tag metadata', () => {
+    it('materializes only the catalog card window even for a billion-image tag', () => {
+      const descriptor = {
+        plugin: PluginType.IMAGES as const,
+        tag: 'images/frames',
+        runId: 'run1',
+        sample: 999999999,
+        numSample: 1000000000,
+      };
+      const next = reducers(
+        buildMetricsState(),
+        actions.metricsTagMetadataLoaded({
+          tagMetadata: {
+            ...buildDataSourceTagMetadata(),
+            images: {
+              tagDescriptions: {},
+              tagRunSampledInfo: {
+                'images/frames': {run1: {maxSamplesPerStep: 1000000000}},
+              },
+            },
+            catalog: {
+              groups: [{name: 'images', totalCards: 1000000000}],
+              totalGroups: 1,
+              groupOffset: 0,
+              filteredOffset: 0,
+              cards: [descriptor],
+              totalCards: 1000000000,
+            },
+          },
+        })
+      );
+      expect(next.cardList.map((id) => next.cardMetadataMap[id])).toEqual([
+        descriptor,
+      ]);
+      expect(Object.keys(next.cardMetadataMap)).toEqual(next.cardList);
+    });
+
     const tagMetadataSample: {
       backendForm: DataSourceTagMetadata;
       storeForm: TagMetadata;
@@ -88,17 +145,14 @@ describe('metrics reducers', () => {
       backendForm: {
         scalars: {
           tagDescriptions: {tagA: 'Describing tagA'},
-          runTagInfo: {
-            test: ['tagB'],
-            train: ['tagA', 'tagB'],
+          tagToRuns: {
+            tagA: ['train'],
+            tagB: ['test', 'train'],
           },
         },
         histograms: {
           tagDescriptions: {histogramTagA: 'Describing histogram tagA'},
-          runTagInfo: {
-            test: ['histogramTagA'],
-            train: ['histogramTagA'],
-          },
+          tagToRuns: {histogramTagA: ['test', 'train']},
         },
         images: {
           tagDescriptions: {imageTagA: 'Describing image tagA'},
@@ -212,7 +266,7 @@ describe('metrics reducers', () => {
     it('retains metadata indexes on unchanged success and still resolves imported pins', () => {
       const tagMetadata = {
         ...buildDataSourceTagMetadata(),
-        scalars: {tagDescriptions: {}, runTagInfo: {run1: ['loss']}},
+        scalars: {tagDescriptions: {}, tagToRuns: {loss: ['run1']}},
       };
       const loaded = reducers(
         buildMetricsState(),
@@ -245,11 +299,11 @@ describe('metrics reducers', () => {
       const tagMetadata: DataSourceTagMetadata = {
         scalars: {
           tagDescriptions: {},
-          runTagInfo: {run1: ['tagA']},
+          tagToRuns: {tagA: ['run1']},
         },
         histograms: {
           tagDescriptions: {},
-          runTagInfo: {run2: ['tagB']},
+          tagToRuns: {tagB: ['run2']},
         },
         images: {
           tagDescriptions: {},
@@ -324,7 +378,7 @@ describe('metrics reducers', () => {
           ...buildDataSourceTagMetadata(),
           [PluginType.HISTOGRAMS]: {
             tagDescriptions: {},
-            runTagInfo: {run1: ['tagA']},
+            tagToRuns: {tagA: ['run1']},
           },
         },
       });
@@ -396,7 +450,7 @@ describe('metrics reducers', () => {
           },
           [PluginType.HISTOGRAMS]: {
             tagDescriptions: {},
-            runTagInfo: {run1: ['tagB']},
+            tagToRuns: {tagB: ['run1']},
           },
         },
       });
@@ -452,7 +506,7 @@ describe('metrics reducers', () => {
           ...buildDataSourceTagMetadata(),
           [PluginType.HISTOGRAMS]: {
             tagDescriptions: {},
-            runTagInfo: {run1: ['tagA']},
+            tagToRuns: {tagA: ['run1']},
           },
         },
       });
@@ -514,7 +568,7 @@ describe('metrics reducers', () => {
           ...buildDataSourceTagMetadata(),
           [PluginType.HISTOGRAMS]: {
             tagDescriptions: {},
-            runTagInfo: {run1: ['tagA']},
+            tagToRuns: {tagA: ['run1']},
           },
         },
       });
@@ -572,7 +626,7 @@ describe('metrics reducers', () => {
           ...buildDataSourceTagMetadata(),
           [PluginType.HISTOGRAMS]: {
             tagDescriptions: {},
-            runTagInfo: {run1: ['tagA', 'tagB']},
+            tagToRuns: {tagA: ['run1'], tagB: ['run1']},
           },
         },
       });
@@ -648,7 +702,7 @@ describe('metrics reducers', () => {
           ...buildDataSourceTagMetadata(),
           [PluginType.HISTOGRAMS]: {
             tagDescriptions: {},
-            runTagInfo: {run1: ['tagA']},
+            tagToRuns: {tagA: ['run1']},
           },
         },
       });
@@ -697,7 +751,7 @@ describe('metrics reducers', () => {
           ...buildDataSourceTagMetadata(),
           [PluginType.HISTOGRAMS]: {
             tagDescriptions: {},
-            runTagInfo: {run1: ['tagA']},
+            tagToRuns: {tagA: ['run1']},
           },
         },
       });
@@ -744,7 +798,7 @@ describe('metrics reducers', () => {
             ...buildDataSourceTagMetadata(),
             [PluginType.SCALARS]: {
               tagDescriptions: {},
-              runTagInfo: {run1: ['tagA']},
+              tagToRuns: {tagA: ['run1']},
             },
           },
         })
@@ -839,7 +893,7 @@ describe('metrics reducers', () => {
         ...buildDataSourceTagMetadata(),
         scalars: {
           tagDescriptions: {},
-          runTagInfo: {run1: ['tagA']},
+          tagToRuns: {tagA: ['run1']},
         },
       };
 
@@ -1009,6 +1063,15 @@ describe('metrics reducers', () => {
         [nextElementId(), 'card1'],
         [nextElementId(), 'card2'],
       ]),
+      timeSeriesData: {
+        ...buildTimeSeriesData(),
+        scalars: {
+          tagA: {
+            runToSeries: {'exp1/run1': createScalarStepData()},
+            runToLoadState: {'exp1/run1': DataLoadState.LOADED},
+          },
+        },
+      },
     });
 
     const navigate = buildNavigatedAction({
@@ -1401,6 +1464,8 @@ describe('metrics reducers', () => {
 
     it('drops unselected series on unusedTimeSeriesPurged', () => {
       const beforeState = buildMetricsState({
+        cardMetadataMap: {card1: createScalarCardMetadata()},
+        visibleCardMap: new Map([[nextElementId(), 'card1']]),
         timeSeriesData: {
           ...createTimeSeriesData(),
           [PluginType.SCALARS]: {
@@ -1436,6 +1501,7 @@ describe('metrics reducers', () => {
         runId: null,
       };
       const beforeState = buildMetricsState({
+        visibleCardMap: new Map([[nextElementId(), pinnedCardId]]),
         cardMetadataMap: {
           [cardId]: cardMetadata,
           [pinnedCardId]: cardMetadata,
@@ -1494,6 +1560,217 @@ describe('metrics reducers', () => {
       expect(nextState.cardStepIndex).toEqual({
         [cardId]: {index: 1, isClosest: false},
         [pinnedCardId]: {index: 1, isClosest: false},
+      });
+    });
+
+    it('restores scalar ranges and image steps when catalog cards reuse cached histories', () => {
+      const scalarCard = {
+        plugin: PluginType.SCALARS as const,
+        tag: 'scalar',
+        runId: null,
+      };
+      const imageCard = {
+        plugin: PluginType.IMAGES as const,
+        tag: 'image',
+        runId: 'run1',
+        sample: 0,
+        numSample: 1,
+      };
+      const scalarId = getCardId(scalarCard);
+      const imageId = getCardId(imageCard);
+      const tagMetadata = {
+        ...buildDataSourceTagMetadata(),
+        scalars: {
+          tagDescriptions: {},
+          tagToRuns: {scalar: ['run1']},
+        },
+        images: {
+          tagDescriptions: {},
+          tagRunSampledInfo: {image: {run1: {maxSamplesPerStep: 1}}},
+        },
+        catalog: {
+          groups: [],
+          totalGroups: 0,
+          groupOffset: 0,
+          filteredOffset: 0,
+          cards: [scalarCard, imageCard],
+          totalCards: 2,
+        },
+      };
+      let state = buildMetricsState({
+        timeSeriesData: {
+          scalars: {
+            scalar: {
+              runToSeries: {
+                run1: [
+                  {step: 20, wallTime: 1, value: 3},
+                  {step: 40, wallTime: 2, value: 5},
+                ],
+              },
+              runToLoadState: {run1: DataLoadState.LOADED},
+            },
+          },
+          histograms: {},
+          images: {
+            image: {
+              0: {
+                runToSeries: {
+                  run1: [
+                    {step: 10, wallTime: 1, imageId: 'first'},
+                    {step: 30, wallTime: 2, imageId: 'last'},
+                  ],
+                },
+                runToLoadState: {run1: DataLoadState.LOADED},
+              },
+            },
+          },
+        },
+      });
+      const cachedHistories = state.timeSeriesData;
+      const purge = actions.unusedTimeSeriesPurged({runIds: ['run1']});
+      state = reducers(state, actions.metricsTagMetadataLoaded({tagMetadata}));
+      state = reducers(state, purge);
+      state = reducers(
+        state,
+        actions.metricsCardStateUpdated({
+          cardId: scalarId,
+          settings: {logScale: true, tableExpanded: true},
+        })
+      );
+      state = reducers(
+        state,
+        actions.metricsCardStateUpdated({
+          cardId: imageId,
+          settings: {imageActualSize: true},
+        })
+      );
+      state = reducers(
+        state,
+        actions.metricsTagMetadataLoaded({
+          tagMetadata: {
+            ...tagMetadata,
+            catalog: {...tagMetadata.catalog, cards: []},
+          },
+        })
+      );
+      expect(state.cardStepIndex[imageId]).toBeUndefined();
+      expect(state.cardStateMap[scalarId]).toEqual({
+        logScale: true,
+        tableExpanded: true,
+      });
+      expect(state.cardStateMap[imageId]).toEqual({imageActualSize: true});
+
+      state = reducers(state, actions.metricsTagMetadataLoaded({tagMetadata}));
+      state = reducers(state, purge);
+      expect(state.timeSeriesData).toBe(cachedHistories);
+      expect(state.cardStateMap[scalarId].logScale).toBeTrue();
+      expect(state.cardStateMap[imageId].imageActualSize).toBeTrue();
+      expect(state.cardStateMap[scalarId].dataMinMax).toEqual({
+        minStep: 20,
+        maxStep: 40,
+      });
+      expect(state.cardStepIndex[imageId]).toEqual({
+        index: 1,
+        isClosest: false,
+      });
+      expect(reducers(state, purge)).toBe(state);
+    });
+
+    it('retains in-flight history until the last buffered original or pinned copy exits', () => {
+      const originalElement = nextElementId();
+      const duplicateElement = nextElementId();
+      const pinnedElement = nextElementId();
+      const loadable = {
+        runToSeries: {run1: createScalarStepData()},
+        runToLoadState: {run1: DataLoadState.LOADING},
+      };
+      let state = buildMetricsState({
+        cardMetadataMap: {
+          original: createScalarCardMetadata(),
+          pinned: createScalarCardMetadata(),
+        },
+        cardToPinnedCopy: new Map([['original', 'pinned']]),
+        pinnedCardToOriginal: new Map([['pinned', 'original']]),
+        visibleCardMap: new Map([
+          [originalElement, 'original'],
+          [duplicateElement, 'original'],
+          [pinnedElement, 'pinned'],
+        ]),
+        timeSeriesData: {
+          ...buildTimeSeriesData(),
+          scalars: {tagA: loadable},
+        },
+      });
+      for (const [elementId, cardId] of [
+        [originalElement, 'original'],
+        [duplicateElement, 'original'],
+      ] as const) {
+        state = reducers(
+          state,
+          actions.cardVisibilityChanged({
+            enteredCards: [],
+            exitedCards: [{elementId, cardId}],
+          })
+        );
+        state = reducers(
+          state,
+          actions.unusedTimeSeriesPurged({runIds: ['run1']})
+        );
+        expect(state.timeSeriesData.scalars['tagA']).toBe(loadable);
+      }
+      state = reducers(
+        state,
+        actions.cardVisibilityChanged({
+          enteredCards: [],
+          exitedCards: [{elementId: pinnedElement, cardId: 'pinned'}],
+        })
+      );
+      state = reducers(
+        state,
+        actions.unusedTimeSeriesPurged({runIds: ['run1']})
+      );
+      expect(state.timeSeriesData.scalars).toEqual({});
+    });
+
+    it('cancellation resets only pending requested runs without losing loaded history', () => {
+      const series = createScalarStepData();
+      const state = buildMetricsState({
+        timeSeriesData: {
+          ...buildTimeSeriesData(),
+          scalars: {
+            tagA: {
+              runToSeries: {run1: series},
+              runToLoadState: {
+                run1: DataLoadState.LOADED,
+                run2: DataLoadState.LOADING,
+                run3: DataLoadState.LOADING,
+                run4: DataLoadState.FAILED,
+              },
+            },
+          },
+        },
+      });
+      const next = reducers(
+        state,
+        actions.timeSeriesRequestsCancelled({
+          requests: [
+            {
+              plugin: PluginType.SCALARS,
+              tag: 'tagA',
+              experimentIds: ['exp1'],
+              runIds: ['run1', 'run2', 'run4'],
+            },
+          ],
+        })
+      );
+      expect(next.timeSeriesData.scalars['tagA']).toEqual({
+        runToSeries: {run1: series},
+        runToLoadState: {
+          run1: DataLoadState.LOADED,
+          run2: DataLoadState.NOT_LOADED,
+          run3: DataLoadState.LOADING,
+          run4: DataLoadState.FAILED,
+        },
       });
     });
 
@@ -1632,6 +1909,59 @@ describe('metrics reducers', () => {
       expect(state.timeSeriesData.scalars['loss'].runToSeries['run']).toBe(
         replaced
       );
+    });
+
+    it('shrinks global step bounds when reload omits or shortens cached histories', () => {
+      let state = buildMetricsState();
+      function load(
+        tag: string,
+        runToSeries: Record<string, ScalarStepDatum[]>
+      ) {
+        state = reducers(
+          state,
+          actions.fetchTimeSeriesLoaded({
+            requestResponses: [
+              {
+                request: {
+                  plugin: PluginType.SCALARS,
+                  tag,
+                  experimentIds: ['exp1'],
+                  runIds: ['run1'],
+                },
+                response: {plugin: PluginType.SCALARS, tag, runToSeries},
+              },
+            ],
+          })
+        );
+      }
+      load('tagA', {
+        run1: [
+          {step: 0, wallTime: 0, value: 0},
+          {step: 100, wallTime: 1, value: 1},
+        ],
+      });
+      load('tagB', {
+        run1: [
+          {step: 20, wallTime: 0, value: 0},
+          {step: 30, wallTime: 1, value: 1},
+        ],
+      });
+      expect(state.stepMinMax).toEqual({min: 0, max: 100});
+
+      load('tagA', {});
+      expect(state.timeSeriesData.scalars['tagA']).toEqual({
+        runToSeries: {},
+        runToLoadState: {run1: DataLoadState.LOADED},
+      });
+      expect(state.stepMinMax).toEqual({min: 20, max: 30});
+
+      load('tagB', {
+        run1: [
+          {step: 24, wallTime: 0, value: 0},
+          {step: 26, wallTime: 1, value: 1},
+        ],
+      });
+      expect(state.stepMinMax).toEqual({min: 24, max: 26});
     });
 
     it('updates store on fetch loaded successfully', () => {
@@ -2683,17 +3013,25 @@ describe('metrics reducers', () => {
         };
       }
 
+      // A response names the cards it affects by id, so the fixture must use
+      // the id the store would assign, not a placeholder.
+      const scalarCardId = getCardId({
+        plugin: PluginType.SCALARS,
+        tag: 'tagA',
+        runId: null,
+      });
+
       it('does not alter existing non-max step indices', () => {
         const runToSeries = {run1: createScalarStepSeries(5)};
         let beforeState = createScalarCardLoadedState(
-          'card1',
+          scalarCardId,
           runToSeries,
           'tagA'
         );
         beforeState = {
-          ...stateWithPinnedCopy(beforeState, 'card1', 'pinnedCopy1'),
+          ...stateWithPinnedCopy(beforeState, scalarCardId, 'pinnedCopy1'),
           cardStepIndex: {
-            card1: buildStepIndexMetadata({index: 2}),
+            [scalarCardId]: buildStepIndexMetadata({index: 2}),
             pinnedCopy1: buildStepIndexMetadata({index: 2}),
           },
         };
@@ -2717,7 +3055,7 @@ describe('metrics reducers', () => {
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
-          card1: buildStepIndexMetadata({index: 2}),
+          [scalarCardId]: buildStepIndexMetadata({index: 2}),
           pinnedCopy1: buildStepIndexMetadata({index: 2}),
         });
       });
@@ -2726,14 +3064,14 @@ describe('metrics reducers', () => {
         const stepCount = 5;
         const runToSeries = {run1: createScalarStepSeries(stepCount)};
         let beforeState = createScalarCardLoadedState(
-          'card1',
+          scalarCardId,
           runToSeries,
           'tagA'
         );
         beforeState = {
-          ...stateWithPinnedCopy(beforeState, 'card1', 'pinnedCopy1'),
+          ...stateWithPinnedCopy(beforeState, scalarCardId, 'pinnedCopy1'),
           cardStepIndex: {
-            card1: buildStepIndexMetadata({index: stepCount - 1}),
+            [scalarCardId]: buildStepIndexMetadata({index: stepCount - 1}),
             pinnedCopy1: buildStepIndexMetadata({index: stepCount - 1}),
           },
         };
@@ -2758,7 +3096,7 @@ describe('metrics reducers', () => {
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
-          card1: buildStepIndexMetadata({index: newStepCount - 1}),
+          [scalarCardId]: buildStepIndexMetadata({index: newStepCount - 1}),
           pinnedCopy1: buildStepIndexMetadata({index: newStepCount - 1}),
         });
       });
@@ -2769,14 +3107,14 @@ describe('metrics reducers', () => {
           run2: createScalarStepSeries(10),
         };
         let beforeState = createScalarCardLoadedState(
-          'card1',
+          scalarCardId,
           runToSeries,
           'tagA'
         );
         beforeState = {
-          ...stateWithPinnedCopy(beforeState, 'card1', 'pinnedCopy1'),
+          ...stateWithPinnedCopy(beforeState, scalarCardId, 'pinnedCopy1'),
           cardStepIndex: {
-            card1: buildStepIndexMetadata({index: 9}),
+            [scalarCardId]: buildStepIndexMetadata({index: 9}),
             pinnedCopy1: buildStepIndexMetadata({index: 9}),
           },
         };
@@ -2803,7 +3141,7 @@ describe('metrics reducers', () => {
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
-          card1: buildStepIndexMetadata({index: 2}),
+          [scalarCardId]: buildStepIndexMetadata({index: 2}),
           pinnedCopy1: buildStepIndexMetadata({index: 2}),
         });
       });
@@ -2811,12 +3149,12 @@ describe('metrics reducers', () => {
       it('auto-selects step index if it was missing', () => {
         const runToSeries = {};
         let beforeState = createScalarCardLoadedState(
-          'card1',
+          scalarCardId,
           runToSeries,
           'tagA'
         );
         beforeState = {
-          ...stateWithPinnedCopy(beforeState, 'card1', 'pinnedCopy1'),
+          ...stateWithPinnedCopy(beforeState, scalarCardId, 'pinnedCopy1'),
           cardStepIndex: {},
         };
 
@@ -2842,7 +3180,7 @@ describe('metrics reducers', () => {
         });
         const nextState = reducers(beforeState, action);
         expect(nextState.cardStepIndex).toEqual({
-          card1: buildStepIndexMetadata({index: 2}),
+          [scalarCardId]: buildStepIndexMetadata({index: 2}),
           pinnedCopy1: buildStepIndexMetadata({index: 2}),
         });
       });

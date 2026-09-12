@@ -50,7 +50,7 @@ import {buildRun} from '../../../runs/store/testing';
 import * as selectors from '../../../selectors';
 import {getIsScalarColumnContextMenusEnabled} from '../../../selectors';
 import {MatIconTestingModule} from '../../../testing/mat_icon_module';
-import {provideMockTbStore} from '../../../testing/utils';
+import {buildMockState, provideMockTbStore} from '../../../testing/utils';
 import {DataLoadState} from '../../../types/data';
 import {CardFobComponent} from '../../../widgets/card_fob/card_fob_component';
 import {
@@ -80,7 +80,6 @@ import {
   SortingOrder,
 } from '../../../widgets/data_table/types';
 import {ExperimentAliasModule} from '../../../widgets/experiment_alias/experiment_alias_module';
-import {IntersectionObserverTestingModule} from '../../../widgets/intersection_observer/intersection_observer_testing_module';
 import {
   Formatter,
   relativeTimeFormatter,
@@ -111,8 +110,6 @@ import {PluginType} from '../../data_source';
 import {
   getCardStateMap,
   getMetricsCardDataMinMax,
-  getMetricsCardMinMax,
-  getMetricsCardRangeSelectionEnabled,
   getMetricsCardTimeSelection,
   getMetricsLinkedTimeEnabled,
   getMetricsLinkedTimeSelection,
@@ -123,6 +120,9 @@ import {
   getSingleSelectionHeaders,
 } from '../../store';
 import {
+  appStateFromMetricsState,
+  buildMetricsState,
+  buildTimeSeriesData,
   buildScalarStepData,
   provideMockCardRunToSeriesData,
 } from '../../testing';
@@ -251,7 +251,6 @@ describe('scalar card', () => {
   let store: MockStore<State>;
   let selectSpy: jasmine.Spy;
   let overlayContainer: OverlayContainer;
-  let intersectionObserver: IntersectionObserverTestingModule;
   let dispatchedActions: Action[];
 
   const Selector = {
@@ -302,9 +301,6 @@ describe('scalar card', () => {
     const fixture = TestBed.createComponent(ScalarCardContainer);
     fixture.componentInstance.cardId = cardId;
     fixture.componentInstance.DataDownloadComponent = TestableDataDownload;
-    if (!initiallyHidden) {
-      intersectionObserver.simulateVisibilityChange(fixture, true);
-    }
     // Let the observables to be subscribed.
     fixture.detectChanges();
     // Flush the debounce on the `seriesData$`.
@@ -345,7 +341,6 @@ describe('scalar card', () => {
     await TestBed.configureTestingModule({
       imports: [
         ExperimentAliasModule,
-        IntersectionObserverTestingModule,
         CardFobModule,
         DataTableModule,
         MatDialogModule,
@@ -369,7 +364,6 @@ describe('scalar card', () => {
       schemas: [NO_ERRORS_SCHEMA],
     }).compileComponents();
 
-    intersectionObserver = TestBed.inject(IntersectionObserverTestingModule);
     store = TestBed.inject<Store<State>>(Store) as MockStore<State>;
     selectSpy = spyOn(store, 'select').and.callThrough();
     overlayContainer = TestBed.inject(OverlayContainer);
@@ -404,10 +398,7 @@ describe('scalar card', () => {
       false
     );
     store.overrideSelector(selectors.getMetricsStepSelectorEnabled, false);
-    store.overrideSelector(
-      selectors.getMetricsCardRangeSelectionEnabled('card1'),
-      false
-    );
+    store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, false);
     store.overrideSelector(selectors.getMetricsCardUserViewBox, null);
 
     dispatchedActions = [];
@@ -449,38 +440,40 @@ describe('scalar card', () => {
     it('renders loading spinner when loading', fakeAsync(() => {
       provideMockCardRunToSeriesData(selectSpy, PluginType.SCALARS, 'card1');
       store.overrideSelector(
-        selectors.getMultiRunCardLoadState,
-        DataLoadState.NOT_LOADED
+        selectors.getRunSelectionMapFilteredToCurrentRoute,
+        new Map([['run1', true]])
       );
-      triggerStoreUpdate();
+      const setLoadState = (status: DataLoadState) => {
+        const metrics = buildMetricsState({
+          cardMetadataMap: {
+            card1: {plugin: PluginType.SCALARS, tag: 'tagA', runId: null},
+          },
+          timeSeriesData: {
+            ...buildTimeSeriesData(),
+            scalars: {tagA: {runToSeries: {}, runToLoadState: {run1: status}}},
+          },
+        });
+        metrics.tagMetadata.scalars.tagToRuns = {tagA: ['run1']};
+        store.setState(buildMockState(appStateFromMetricsState(metrics)));
+        triggerStoreUpdate();
+      };
+      setLoadState(DataLoadState.NOT_LOADED);
 
       const fixture = createComponent('card1');
       let loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
       expect(loadingEl).not.toBeTruthy();
 
-      store.overrideSelector(
-        selectors.getMultiRunCardLoadState,
-        DataLoadState.LOADING
-      );
-      triggerStoreUpdate();
+      setLoadState(DataLoadState.LOADING);
       fixture.detectChanges();
       loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
       expect(loadingEl).toBeTruthy();
 
-      store.overrideSelector(
-        selectors.getMultiRunCardLoadState,
-        DataLoadState.LOADED
-      );
-      triggerStoreUpdate();
+      setLoadState(DataLoadState.LOADED);
       fixture.detectChanges();
       loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
       expect(loadingEl).not.toBeTruthy();
 
-      store.overrideSelector(
-        selectors.getMultiRunCardLoadState,
-        DataLoadState.FAILED
-      );
-      triggerStoreUpdate();
+      setLoadState(DataLoadState.FAILED);
       fixture.detectChanges();
       loadingEl = fixture.debugElement.query(By.css('mat-spinner'));
       expect(loadingEl).not.toBeTruthy();
@@ -542,6 +535,49 @@ describe('scalar card', () => {
         lineChartEl.componentInstance.seriesMetadataMap[id];
       expect(displayName).toBe('Run1 name');
       expect(visible).toBe(true);
+    }));
+
+    it('clears rendered series and metadata when loaded history is evicted', fakeAsync(() => {
+      const runToSeries = {
+        run1: [{wallTime: 100, value: 1, step: 333}],
+      };
+      const history = new ReplaySubject<typeof runToSeries | null>(1);
+      history.next(runToSeries);
+      store.overrideSelector(getMetricsScalarSmoothing, 0);
+      provideMockCardRunToSeriesData(
+        selectSpy,
+        PluginType.SCALARS,
+        'card1',
+        null,
+        runToSeries
+      );
+      selectSpy
+        .withArgs(selectors.getCardTimeSeries, 'card1')
+        .and.returnValue(history);
+      store.overrideSelector(
+        selectors.getCurrentRouteRunSelection,
+        new Map([['run1', true]])
+      );
+      store.overrideSelector(
+        commonSelectors.getFilteredRenderableRunsIds,
+        new Set(['run1'])
+      );
+      const fixture = createComponent('card1');
+      const chart = fixture.debugElement.query(
+        Selector.LINE_CHART
+      ).componentInstance;
+      expect(chart.seriesData.map((series: DataSeries) => series.id)).toEqual([
+        'run1',
+      ]);
+      expect(Object.keys(chart.seriesMetadataMap)).toEqual(['run1']);
+
+      history.next(null);
+      triggerStoreUpdate();
+      fixture.detectChanges();
+      expect(chart.seriesData).toEqual([]);
+      expect(chart.seriesMetadataMap).toEqual({});
+      fixture.destroy();
+      history.complete();
     }));
 
     describe('custom x axis formatter', () => {
@@ -893,10 +929,7 @@ describe('scalar card', () => {
         selectors.getIsScalarColumnCustomizationEnabled,
         true
       );
-      store.overrideSelector(
-        getMetricsCardRangeSelectionEnabled('card1'),
-        false
-      );
+      store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, false);
       const fixture = createComponent('card1');
 
       openOverflowMenu(fixture);
@@ -914,10 +947,7 @@ describe('scalar card', () => {
         selectors.getIsScalarColumnCustomizationEnabled,
         true
       );
-      store.overrideSelector(
-        getMetricsCardRangeSelectionEnabled('card1'),
-        true
-      );
+      store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, true);
       const fixture = createComponent('card1');
 
       openOverflowMenu(fixture);
@@ -2458,9 +2488,8 @@ describe('scalar card', () => {
           minStep: 0,
           maxStep: 30,
         });
-        store.overrideSelector(getMetricsCardMinMax, {
-          minStep: 10,
-          maxStep: 40,
+        store.overrideSelector(getCardStateMap, {
+          card1: {dataMinMax: {minStep: 10, maxStep: 40}},
         });
         const fixture = createComponent('card1');
         fixture.detectChanges();
@@ -3073,7 +3102,7 @@ describe('scalar card', () => {
     });
 
     describe('line chart integration', () => {
-      it('updates viewBox value when line chart is zoomed', fakeAsync(async () => {
+      it('dispatches one view box change per frame when zoomed', fakeAsync(async () => {
         const runToSeries = {
           run1: [buildScalarStepData({step: 10})],
           run2: [buildScalarStepData({step: 20})],
@@ -3100,6 +3129,8 @@ describe('scalar card', () => {
         });
         const fixture = createComponent('card1');
 
+        // A pan emits an extent per mousemove; only the one the gesture
+        // reached by the end of the frame reaches the store.
         fixture.componentInstance.onLineChartZoom({
           x: [9.235, 30.4],
           y: [0, 100],
@@ -3108,16 +3139,11 @@ describe('scalar card', () => {
           x: [8, 31],
           y: [0, 100],
         });
-        fixture.componentInstance.onLineChartZoom(null);
+        expect(dispatchedActions).toEqual([]);
+
+        tick(16);
 
         expect(dispatchedActions).toEqual([
-          cardViewBoxChanged({
-            userViewBox: {
-              x: [9.235, 30.4],
-              y: [0, 100],
-            },
-            cardId: 'card1',
-          }),
           cardViewBoxChanged({
             userViewBox: {
               x: [8, 31],
@@ -3125,11 +3151,26 @@ describe('scalar card', () => {
             },
             cardId: 'card1',
           }),
+        ]);
+
+        // A gesture that ends where the store already is changes nothing.
+        fixture.componentInstance.onLineChartZoom({
+          x: [8, 31],
+          y: [0, 100],
+        });
+        tick(16);
+
+        expect(dispatchedActions.length).toBe(1);
+
+        fixture.componentInstance.onLineChartZoom(null);
+        tick(16);
+
+        expect(dispatchedActions[1]).toEqual(
           cardViewBoxChanged({
             userViewBox: null,
             cardId: 'card1',
-          }),
-        ]);
+          })
+        );
       }));
     });
   });
@@ -3328,6 +3369,27 @@ describe('scalar card', () => {
           smoothed: 10,
         },
       ]);
+      const rows = fixture.debugElement
+        .queryAll(By.directive(ContentRowComponent))
+        .map((row) => row.nativeElement);
+      store.overrideSelector(getMetricsLinkedTimeSelection, {
+        start: {step: 3},
+        end: null,
+      });
+      store.refreshState();
+      fixture.detectChanges();
+      tick(0);
+      fixture.detectChanges();
+      const updatedRows = fixture.debugElement
+        .queryAll(By.directive(ContentRowComponent))
+        .map((row) => row.nativeElement);
+      expect(updatedRows[0]).toBe(rows[0]);
+      expect(updatedRows[1]).toBe(rows[1]);
+      expect(
+        scalarCardDataTable.componentInstance
+          .getTimeSelectionTableData()
+          .map((row: {value: number}) => row.value)
+      ).toEqual([20, 20]);
     }));
 
     it('skips selected runs that have no points', fakeAsync(() => {
@@ -3406,10 +3468,7 @@ describe('scalar card', () => {
         runToSeries
       );
       store.overrideSelector(getMetricsRangeSelectionEnabled, true);
-      store.overrideSelector(
-        getMetricsCardRangeSelectionEnabled('card1'),
-        true
-      );
+      store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, true);
       store.overrideSelector(
         selectors.getCurrentRouteRunSelection,
         new Map([
@@ -3491,10 +3550,7 @@ describe('scalar card', () => {
         runToSeries
       );
       store.overrideSelector(getMetricsRangeSelectionEnabled, true);
-      store.overrideSelector(
-        getMetricsCardRangeSelectionEnabled('card1'),
-        true
-      );
+      store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, true);
       store.overrideSelector(
         selectors.getCurrentRouteRunSelection,
         new Map([['run1', true]])
@@ -3560,10 +3616,7 @@ describe('scalar card', () => {
         runToSeries
       );
       store.overrideSelector(getMetricsRangeSelectionEnabled, true);
-      store.overrideSelector(
-        getMetricsCardRangeSelectionEnabled('card1'),
-        true
-      );
+      store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, true);
       store.overrideSelector(
         selectors.getCurrentRouteRunSelection,
         new Map([['run1', true]])
@@ -3679,10 +3732,7 @@ describe('scalar card', () => {
         runToSeries
       );
       store.overrideSelector(getMetricsRangeSelectionEnabled, true);
-      store.overrideSelector(
-        getMetricsCardRangeSelectionEnabled('card1'),
-        true
-      );
+      store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, true);
       store.overrideSelector(
         selectors.getCurrentRouteRunSelection,
         new Map([
@@ -3960,10 +4010,10 @@ describe('scalar card', () => {
       const scalarCardDataTable = fixture.debugElement.query(
         By.directive(ScalarCardDataTable)
       );
-      scalarCardDataTable.componentInstance.sortingInfo = {
+      scalarCardDataTable.triggerEventHandler('sortDataBy', {
         name: 'value',
         order: SortingOrder.ASCENDING,
-      };
+      });
       fixture.detectChanges();
 
       const data =
@@ -4009,10 +4059,10 @@ describe('scalar card', () => {
       const scalarCardDataTable = fixture.debugElement.query(
         By.directive(ScalarCardDataTable)
       );
-      scalarCardDataTable.componentInstance.sortingInfo = {
+      scalarCardDataTable.triggerEventHandler('sortDataBy', {
         name: 'value',
         order: SortingOrder.DESCENDING,
-      };
+      });
       fixture.detectChanges();
 
       const data =
@@ -4066,10 +4116,10 @@ describe('scalar card', () => {
       const scalarCardDataTable = fixture.debugElement.query(
         By.directive(ScalarCardDataTable)
       );
-      scalarCardDataTable.componentInstance.sortingInfo = {
+      scalarCardDataTable.triggerEventHandler('sortDataBy', {
         name: 'value',
         order: SortingOrder.DESCENDING,
-      };
+      });
       fixture.detectChanges();
 
       const data =
@@ -4160,6 +4210,9 @@ describe('scalar card', () => {
         aliasText: 'a',
         aliasNumber: 1,
       };
+      // These aliases were assigned directly rather than through an Angular
+      // input binding; notify the component of the changed metadata.
+      scalarCardDataTable.componentInstance.ngOnChanges();
       fixture.detectChanges();
 
       const data =
@@ -4616,10 +4669,7 @@ describe('scalar card', () => {
           start: {step: 10},
           end: {step: 25},
         });
-        store.overrideSelector(
-          getMetricsCardRangeSelectionEnabled('card1'),
-          true
-        );
+        store.overrideSelector(selectors.getMetricsRangeSelectionEnabled, true);
         store.refreshState();
         fixture.detectChanges();
 

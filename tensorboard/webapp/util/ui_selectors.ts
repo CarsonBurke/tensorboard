@@ -25,7 +25,12 @@ limitations under the License.
  * like `mergeMap` and `withLatestFrom` to achieve the same thing.
  */
 
-import {createSelector} from '@ngrx/store';
+import {
+  createSelector,
+  createSelectorFactory,
+  defaultMemoize,
+  MemoizedSelector,
+} from '@ngrx/store';
 import {
   getExperimentIdsFromRoute,
   getExperimentIdToExperimentAliasMap,
@@ -35,6 +40,7 @@ import {RouteKind} from '../app_routing/types';
 import {State} from '../app_state';
 import {getDarkModeEnabled} from '../feature_flag/store/feature_flag_selectors';
 import {getCardRunLoadStates} from '../metrics/store/metrics_selectors';
+import {CardId} from '../metrics/types';
 import {
   getDefaultRunColorIdMap,
   getRunColorOverride,
@@ -48,6 +54,7 @@ import {ExperimentId, RunId} from '../runs/store/runs_types';
 import {DataLoadState} from '../types/data';
 import {selectors} from '../settings';
 import {ColorPalette} from './colors';
+import {hasOwn} from './lang';
 import {matchRunToRegex, RunMatchable} from './matcher';
 
 /**
@@ -94,31 +101,35 @@ export const getRunSelectionMapFilteredToCurrentRoute = createSelector<
  * In-flight bookkeeping for a deselected run remains in metrics state so a
  * quick re-selection does not duplicate its request, but it must not keep the
  * visible card's spinner running.
+ *
+ * Per-card factory: each card owns its memo cell, so the run filter below runs
+ * only when that card's runs or the run selection actually change.
  */
-export const getMultiRunCardLoadState = createSelector(
-  getCardRunLoadStates,
-  getRunSelectionMapFilteredToCurrentRoute,
-  ({tagRunIds, runToLoadState}, runSelection): DataLoadState => {
-    const trackedRunIds = tagRunIds.filter(
-      (runId) => runSelection.get(runId) && runToLoadState.hasOwnProperty(runId)
-    );
-    if (!trackedRunIds.length) {
-      return DataLoadState.NOT_LOADED;
-    }
-    if (
-      trackedRunIds.every(
-        (runId) => runToLoadState[runId] === DataLoadState.LOADED
+export const getMultiRunCardLoadState = (cardId: CardId) =>
+  createSelector(
+    getCardRunLoadStates(cardId),
+    getRunSelectionMapFilteredToCurrentRoute,
+    ({tagRunIds, runToLoadState}, runSelection): DataLoadState => {
+      const trackedRunIds = tagRunIds.filter(
+        (runId) => runSelection.get(runId) && hasOwn(runToLoadState, runId)
+      );
+      if (!trackedRunIds.length) {
+        return DataLoadState.NOT_LOADED;
+      }
+      if (
+        trackedRunIds.every(
+          (runId) => runToLoadState[runId] === DataLoadState.LOADED
+        )
+      ) {
+        return DataLoadState.LOADED;
+      }
+      return trackedRunIds.some(
+        (runId) => runToLoadState[runId] === DataLoadState.LOADING
       )
-    ) {
-      return DataLoadState.LOADED;
+        ? DataLoadState.LOADING
+        : DataLoadState.NOT_LOADED;
     }
-    return trackedRunIds.some(
-      (runId) => runToLoadState[runId] === DataLoadState.LOADING
-    )
-      ? DataLoadState.LOADING
-      : DataLoadState.NOT_LOADED;
-  }
-);
+  );
 
 const getRunMatchableMap = createSelector(
   getExperimentIdToExperimentAliasMap,
@@ -135,27 +146,69 @@ const getRunMatchableMap = createSelector(
   }
 );
 
+function areRunSelectionsEqual(
+  a: Map<string, boolean> | null,
+  b: Map<string, boolean> | null
+): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.size !== b.size) return false;
+  for (const [runId, selected] of a) {
+    // Values are booleans, so a missing key (`undefined`) also compares unequal.
+    if (b.get(runId) !== selected) return false;
+  }
+  return true;
+}
+
 /**
  * Selects the run selection (runId to boolean) of current set of experiments.
  *
  * Note that emits null when current route is not about an experiment.
+ *
+ * The regex filter is folded into the selection, so it recomputes on every
+ * keystroke. Returning the previous map when the effective selection is
+ * unchanged keeps every downstream selector (card lists, run tables, chart
+ * requests) memoized.
  */
-export const getCurrentRouteRunSelection = createSelector(
+export const getCurrentRouteRunSelection: MemoizedSelector<
+  State,
+  Map<string, boolean> | null
+> = createSelectorFactory<State, Map<string, boolean> | null>((projector) =>
+  defaultMemoize(projector, undefined, areRunSelectionsEqual)
+)(
   getExperimentIdsFromRoute,
   getRunSelectionMapFilteredToCurrentRoute,
   getRunSelectorRegexFilter,
   getRunMatchableMap,
   getRouteKind,
-  (experimentIds, runSelection, regexFilter, runMatchableMap, routeKind) => {
+  (
+    experimentIds: string[] | null,
+    runSelection: Map<string, boolean>,
+    regexFilter: string,
+    runMatchableMap: Map<string, RunMatchable>,
+    routeKind: RouteKind
+  ) => {
     if (!experimentIds) {
       // There are no experiments in the route. Return null.
       return null;
     }
+    if (!regexFilter) {
+      // Nothing to match against: the selection is already scoped to the
+      // route, and no run has to be resolved to a name or alias.
+      return new Map(runSelection);
+    }
+
     const includeExperimentInfo = routeKind === RouteKind.COMPARE_EXPERIMENT;
     const filteredSelection = new Map<string, boolean>();
 
     for (const [runId, value] of runSelection.entries()) {
-      const runMatchable = runMatchableMap.get(runId)!;
+      const runMatchable = runMatchableMap.get(runId);
+      // A refresh can drop runs while their selection entry lingers in the
+      // runs store. Such a run has no name or alias left to match against,
+      // so a nonempty filter cannot keep it.
+      if (!runMatchable) {
+        filteredSelection.set(runId, false);
+        continue;
+      }
       filteredSelection.set(
         runId,
         matchRunToRegex(runMatchable, regexFilter, includeExperimentInfo) &&

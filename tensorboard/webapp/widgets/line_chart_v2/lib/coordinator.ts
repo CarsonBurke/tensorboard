@@ -15,7 +15,6 @@ limitations under the License.
 
 import {Rect, Scale, ScaleType} from './internal_types';
 import {createScale} from './scale';
-import {ChartUtils} from './utils';
 
 /**
  * A stateful convenient utility around scale for converting coordinate systems.
@@ -101,6 +100,34 @@ export class Coordinator {
   }
 
   /**
+   * Reused by the transform methods. A chart re-transforms every point of
+   * every series on each pan, zoom, and resize frame, so the domain and range
+   * tuples are hoisted out of the per-point work.
+   */
+  private readonly xDomain: [number, number] = [0, 0];
+  private readonly yDomain: [number, number] = [0, 0];
+  private readonly xRange: [number, number] = [0, 0];
+  private readonly yRange: [number, number] = [0, 0];
+
+  private prepareTransform(rectInUiCoordinate: Rect) {
+    const rect = rectInUiCoordinate;
+    const viewBox = this.currentViewBoxRect;
+    this.xDomain[0] = viewBox.x;
+    this.xDomain[1] = viewBox.x + viewBox.width;
+    this.yDomain[0] = viewBox.y;
+    this.yDomain[1] = viewBox.y + viewBox.height;
+    this.xRange[0] = rect.x;
+    this.xRange[1] = rect.x + rect.width;
+    if (this.isYAxisPointedDown()) {
+      this.yRange[0] = rect.y + rect.height;
+      this.yRange[1] = rect.y;
+    } else {
+      this.yRange[0] = rect.y;
+      this.yRange[1] = rect.y + rect.height;
+    }
+  }
+
+  /**
    * Converts data coordinate into ui coordinates where the ui coordinate bounds are
    * specified in `rectInUiCoordinate`.
    */
@@ -108,21 +135,39 @@ export class Coordinator {
     rectInUiCoordinate: Rect,
     dataCoordinate: [number, number]
   ): [number, number] {
-    const rect = rectInUiCoordinate;
-    const domain = ChartUtils.convertRectToExtent(this.currentViewBoxRect);
+    this.prepareTransform(rectInUiCoordinate);
     return [
-      this.xScale.forward(
-        domain.x,
-        [rect.x, rect.x + rect.width],
-        dataCoordinate[0]
-      ),
-      this.yScale.forward(
-        domain.y,
-        this.isYAxisPointedDown()
-          ? [rect.y + rect.height, rect.y]
-          : [rect.y, rect.y + rect.height],
-        dataCoordinate[1]
-      ),
+      this.xScale.forward(this.xDomain, this.xRange, dataCoordinate[0]),
+      this.yScale.forward(this.yDomain, this.yRange, dataCoordinate[1]),
     ];
+  }
+
+  /**
+   * Writes an entire series of data coordinates into `polyline` as
+   * interleaved x and y ui coordinates. Equivalent to
+   * `transformDataToUiCoord` per point, without its per-point allocations.
+   *
+   * `polyline` must hold two entries per point.
+   *
+   * Returns whether any written coordinate is NaN, which callers would
+   * otherwise have to rediscover with a second pass over `polyline`.
+   */
+  transformDataToUiCoords(
+    rectInUiCoordinate: Rect,
+    dataCoordinates: ReadonlyArray<{x: number; y: number}>,
+    polyline: Float32Array
+  ): boolean {
+    this.prepareTransform(rectInUiCoordinate);
+    const {xScale, yScale, xDomain, yDomain, xRange, yRange} = this;
+    let hasNaN = false;
+    for (let index = 0; index < dataCoordinates.length; index++) {
+      const dataCoordinate = dataCoordinates[index];
+      const x = xScale.forward(xDomain, xRange, dataCoordinate.x);
+      const y = yScale.forward(yDomain, yRange, dataCoordinate.y);
+      hasNaN = hasNaN || isNaN(x) || isNaN(y);
+      polyline[index * 2] = x;
+      polyline[index * 2 + 1] = y;
+    }
+    return hasNaN;
   }
 }

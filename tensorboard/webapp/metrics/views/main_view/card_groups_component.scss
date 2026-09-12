@@ -17,4 +17,6 @@ limitations under the License.
 
 :host {
   @include common.metrics-sub-view;
+  display: block;
+  overflow-anchor: none;
 }

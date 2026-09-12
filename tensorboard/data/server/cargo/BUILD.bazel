@@ -175,8 +175,35 @@ alias(
 )
 
 alias(
+    name = "regex",
+    actual = "@raze__regex__1_5_6//:regex",
+    tags = [
+        "cargo-raze",
+        "manual",
+    ],
+)
+
+alias(
     name = "reqwest",
     actual = "@raze__reqwest__0_11_0//:reqwest",
+    tags = [
+        "cargo-raze",
+        "manual",
+    ],
+)
+
+alias(
+    name = "ring",
+    actual = "@raze__ring__0_16_20//:ring",
+    tags = [
+        "cargo-raze",
+        "manual",
+    ],
+)
+
+alias(
+    name = "rusqlite",
+    actual = "@raze__rusqlite__0_28_0//:rusqlite",
     tags = [
         "cargo-raze",
         "manual",

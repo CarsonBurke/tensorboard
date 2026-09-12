@@ -78,23 +78,21 @@ describe('ui_selectors test', () => {
       };
 
       expect(
-        getMultiRunCardLoadState.projector(
+        getMultiRunCardLoadState('card1').projector(
           runStates,
           new Map([
             ['run1', true],
             ['run2', false],
-          ]),
-          'card1'
+          ])
         )
       ).toBe(DataLoadState.LOADED);
       expect(
-        getMultiRunCardLoadState.projector(
+        getMultiRunCardLoadState('card1').projector(
           runStates,
           new Map([
             ['run1', true],
             ['run2', true],
-          ]),
-          'card1'
+          ])
         )
       ).toBe(DataLoadState.LOADING);
     });
@@ -240,6 +238,61 @@ describe('ui_selectors test', () => {
             ['234/run1', true],
             ['234/run2', false],
             ['234/run3', false],
+          ])
+        );
+      });
+
+      it('keeps the same map when a regex change leaves selection unchanged', () => {
+        const buildState = (regexFilter: string) =>
+          buildMockState({
+            ...buildStateFromAppRoutingState(
+              buildAppRoutingState({
+                activeRoute: buildRoute({
+                  routeKind: RouteKind.EXPERIMENT,
+                  params: {experimentId: '234'},
+                }),
+              })
+            ),
+            ...buildStateFromRunsState(
+              buildRunsState(
+                {
+                  runIds: {'234': ['234/run1', '234/run2']},
+                  runIdToExpId: {'234/run1': '234', '234/run2': '234'},
+                  runMetadata: {
+                    '234/run1': buildRun({id: '234/run1', name: 'run1'}),
+                    '234/run2': buildRun({id: '234/run2', name: 'run2'}),
+                  },
+                  regexFilter,
+                },
+                {
+                  selectionState: new Map([
+                    ['234/run1', true],
+                    ['234/run2', false],
+                  ]),
+                }
+              )
+            ),
+            ...buildStateFromExperimentsState(
+              buildExperimentState({
+                experimentMap: {
+                  '234': buildExperiment({id: '234', name: 'Experiment 234'}),
+                },
+              })
+            ),
+          });
+
+        // Typing "r", "ru", "run" never excludes the selected run, so
+        // downstream selectors must keep their memoized results.
+        const initial = getCurrentRouteRunSelection(buildState('r'));
+        expect(getCurrentRouteRunSelection(buildState('ru'))).toBe(initial);
+        expect(getCurrentRouteRunSelection(buildState('run'))).toBe(initial);
+
+        const excluded = getCurrentRouteRunSelection(buildState('run2'));
+        expect(excluded).not.toBe(initial);
+        expect(excluded).toEqual(
+          new Map([
+            ['234/run1', false],
+            ['234/run2', false],
           ])
         );
       });

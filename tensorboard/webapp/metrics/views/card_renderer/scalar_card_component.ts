@@ -77,6 +77,17 @@ type ScalarTooltipDatum = TooltipDatum<
   ScalarCardPoint
 >;
 
+interface TooltipDataCache {
+  tooltipData: TooltipDatum<ScalarCardSeriesMetadata, ScalarCardPoint>[];
+  cursorLocationInDataCoord: {x: number; y: number};
+  cursorLocation: {x: number; y: number};
+  tooltipSort: TooltipSort;
+  isTooltipRowsLimitEnabled: boolean;
+  tooltipRowsLimit: number;
+  additionalItemsCount: number;
+  rows: ScalarTooltipDatum[];
+}
+
 @Component({
   standalone: false,
   selector: 'scalar-card-component',
@@ -97,7 +108,6 @@ export class ScalarCardComponent<Downloader> {
   @Input() ignoreOutliers!: boolean;
   @Input() isTooltipRowsLimitEnabled!: boolean;
   @Input() tooltipRowsLimit!: number;
-  @Input() isCardVisible!: boolean;
   @Input() isPinned!: boolean;
   @Input() loadState!: DataLoadState;
   @Input() showFullWidth!: boolean;
@@ -155,17 +165,32 @@ export class ScalarCardComponent<Downloader> {
 
   constructor(private readonly ref: ElementRef, private dialog: MatDialog) {}
 
+  ngOnChanges() {
+    if (this.cardState?.tableSorting) {
+      this.sortingInfo = this.cardState.tableSorting;
+    }
+    if (this.cardState?.logScale !== undefined) {
+      this.yScaleType = this.cardState.logScale
+        ? ScaleType.LOG10
+        : ScaleType.LINEAR;
+    }
+  }
+
   yScaleType = ScaleType.LINEAR;
   additionalItemsCount = 0;
 
   toggleYScaleType() {
     this.yScaleType =
       this.yScaleType === ScaleType.LINEAR ? ScaleType.LOG10 : ScaleType.LINEAR;
+    this.onCardStateChanged.emit({
+      logScale: this.yScaleType === ScaleType.LOG10,
+    });
   }
 
   sortDataBy(sortingInfo: SortingInfo) {
     this.sortingInfo = sortingInfo;
     this.onDataTableSorting.emit(sortingInfo);
+    this.onCardStateChanged.emit({tableSorting: sortingInfo});
   }
 
   resetDomain() {
@@ -194,64 +219,84 @@ export class ScalarCardComponent<Downloader> {
     }
   }
 
+  // `getCursorAwareTooltipData` is invoked from a template expression, so it
+  // runs on every change detection pass while its inputs only change when the
+  // cursor moves or the data reloads.
+  private tooltipDataCache: TooltipDataCache | null = null;
+
   getCursorAwareTooltipData(
     tooltipData: TooltipDatum<ScalarCardSeriesMetadata, ScalarCardPoint>[],
     cursorLocationInDataCoord: {x: number; y: number},
     cursorLocation: {x: number; y: number}
   ): ScalarTooltipDatum[] {
-    const scalarTooltipData = tooltipData.map((datum) => {
-      return {
-        ...datum,
-        metadata: {
-          ...datum.metadata,
-          closest: false,
-          distToCursorPixels: Math.hypot(
-            datum.domPoint.x - cursorLocation.x,
-            datum.domPoint.y - cursorLocation.y
-          ),
-          distToCursorX: datum.dataPoint.x - cursorLocationInDataCoord.x,
-          distToCursorY: datum.dataPoint.y - cursorLocationInDataCoord.y,
-        },
-      };
-    });
+    const cache = this.tooltipDataCache;
+    if (
+      cache !== null &&
+      cache.tooltipData === tooltipData &&
+      cache.cursorLocationInDataCoord === cursorLocationInDataCoord &&
+      cache.cursorLocation === cursorLocation &&
+      cache.tooltipSort === this.tooltipSort &&
+      cache.isTooltipRowsLimitEnabled === this.isTooltipRowsLimitEnabled &&
+      cache.tooltipRowsLimit === this.tooltipRowsLimit
+    ) {
+      this.additionalItemsCount = cache.additionalItemsCount;
+      return cache.rows;
+    }
 
+    const seriesCount = tooltipData.length;
+    // Every series needs its distance to the cursor: it marks the closest row
+    // and, for `TooltipSort.NEAREST`, orders the rows.
+    const distToCursorPixels = new Float64Array(seriesCount);
+    const order: number[] = [];
     let minDist = Infinity;
-    let minIndex = 0;
-    for (let index = 0; index < scalarTooltipData.length; index++) {
-      if (minDist > scalarTooltipData[index].metadata.distToCursorPixels) {
-        minDist = scalarTooltipData[index].metadata.distToCursorPixels;
-        minIndex = index;
+    let closestIndex = 0;
+    for (let index = 0; index < seriesCount; index++) {
+      const domPoint = tooltipData[index].domPoint;
+      const dist = Math.hypot(
+        domPoint.x - cursorLocation.x,
+        domPoint.y - cursorLocation.y
+      );
+      distToCursorPixels[index] = dist;
+      if (minDist > dist) {
+        minDist = dist;
+        closestIndex = index;
       }
+      order.push(index);
     }
 
-    if (scalarTooltipData.length) {
-      scalarTooltipData[minIndex].metadata.closest = true;
-    }
-
+    // Sorting indices rather than rows keeps the sort allocation free and lets
+    // the row limit apply before any row is built.
+    const cursorY = cursorLocationInDataCoord.y;
     switch (this.tooltipSort) {
       case TooltipSort.ASCENDING:
-        scalarTooltipData.sort((a, b) => a.dataPoint.y - b.dataPoint.y);
+        order.sort(
+          (a, b) => tooltipData[a].dataPoint.y - tooltipData[b].dataPoint.y
+        );
         break;
       case TooltipSort.DESCENDING:
-        scalarTooltipData.sort((a, b) => b.dataPoint.y - a.dataPoint.y);
+        order.sort(
+          (a, b) => tooltipData[b].dataPoint.y - tooltipData[a].dataPoint.y
+        );
         break;
       case TooltipSort.NEAREST:
-        scalarTooltipData.sort((a, b) => {
-          return a.metadata.distToCursorPixels - b.metadata.distToCursorPixels;
-        });
+        order.sort((a, b) => distToCursorPixels[a] - distToCursorPixels[b]);
         break;
       case TooltipSort.NEAREST_Y:
-        scalarTooltipData.sort((a, b) => {
-          return a.metadata.distToCursorY - b.metadata.distToCursorY;
+        order.sort((a, b) => {
+          const distToCursorYA = tooltipData[a].dataPoint.y - cursorY;
+          const distToCursorYB = tooltipData[b].dataPoint.y - cursorY;
+          return distToCursorYA - distToCursorYB;
         });
         break;
       case TooltipSort.DEFAULT:
       case TooltipSort.ALPHABETICAL:
-        scalarTooltipData.sort((a, b) => {
-          if (a.metadata.displayName < b.metadata.displayName) {
+        order.sort((a, b) => {
+          const nameA = tooltipData[a].metadata.displayName;
+          const nameB = tooltipData[b].metadata.displayName;
+          if (nameA < nameB) {
             return -1;
           }
-          if (a.metadata.displayName > b.metadata.displayName) {
+          if (nameA > nameB) {
             return 1;
           }
           return 0;
@@ -259,16 +304,30 @@ export class ScalarCardComponent<Downloader> {
         break;
     }
 
-    if (!this.isTooltipRowsLimitEnabled) {
-      this.additionalItemsCount = 0;
-      return scalarTooltipData;
-    }
+    const rowCount = this.isTooltipRowsLimitEnabled
+      ? Math.max(0, Math.min(this.tooltipRowsLimit, seriesCount))
+      : seriesCount;
+    // The closest series is not marked when the limit hides it.
+    const rows = order.slice(0, rowCount).map((index) => {
+      const datum = tooltipData[index];
+      return {
+        ...datum,
+        metadata: {...datum.metadata, closest: index === closestIndex},
+      };
+    });
 
-    this.additionalItemsCount = Math.max(
-      0,
-      scalarTooltipData.length - this.tooltipRowsLimit
-    );
-    return scalarTooltipData.slice(0, this.tooltipRowsLimit);
+    this.additionalItemsCount = seriesCount - rowCount;
+    this.tooltipDataCache = {
+      tooltipData,
+      cursorLocationInDataCoord,
+      cursorLocation,
+      tooltipSort: this.tooltipSort,
+      isTooltipRowsLimitEnabled: this.isTooltipRowsLimitEnabled,
+      tooltipRowsLimit: this.tooltipRowsLimit,
+      additionalItemsCount: this.additionalItemsCount,
+      rows,
+    };
+    return rows;
   }
 
   openDataDownloadDialog(): void {

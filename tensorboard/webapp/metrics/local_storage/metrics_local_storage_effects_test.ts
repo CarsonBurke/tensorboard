@@ -30,8 +30,14 @@ import {
 import {provideMockTbStore} from '../../testing/utils';
 import * as metricsActions from '../actions';
 import {PluginType} from '../data_source';
-import {MetricsLocalStorageDataSource} from './metrics_local_storage_data_source';
-import {MetricsLocalStorageEffects} from './metrics_local_storage_effects';
+import {
+  MetricsLocalStorageDataSource,
+  TEST_ONLY as STORAGE_TEST_ONLY,
+} from './metrics_local_storage_data_source';
+import {
+  MetricsLocalStorageEffects,
+  TEST_ONLY,
+} from './metrics_local_storage_effects';
 
 describe('MetricsLocalStorageEffects', () => {
   let actions: ReplaySubject<Action>;
@@ -41,6 +47,7 @@ describe('MetricsLocalStorageEffects', () => {
   let dispatchedActions: Action[];
 
   beforeEach(async () => {
+    window.localStorage.removeItem(STORAGE_TEST_ONLY.METRICS_LOCAL_STORAGE_KEY);
     actions = new ReplaySubject<Action>(1);
 
     await TestBed.configureTestingModule({
@@ -90,53 +97,45 @@ describe('MetricsLocalStorageEffects', () => {
   });
 
   afterEach(() => {
+    actions.complete();
+    window.localStorage.removeItem(STORAGE_TEST_ONLY.METRICS_LOCAL_STORAGE_KEY);
     store?.resetSelectors();
   });
 
-  it('clears persisted state when metadata has no tag groups', () => {
+  it('restores category choices even when no member metadata is loaded', () => {
+    const namespace = TEST_ONLY.getNamespace('/tmp/tensorboard/runs', [
+      'exp1',
+    ])!;
+    dataSource.setState(namespace, ['offscreen'], {
+      tagGroupExpanded: new Map([['offscreen', false]]),
+      tagGroupPageIndex: new Map([['offscreen', 7]]),
+    });
     store.overrideSelector(getNonEmptyCardIdsWithMetadata, []);
     store.refreshState();
-    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
-    effects.hydrateFetchedMetadataFromLocalStorage$.subscribe();
-
+    const subscription =
+      effects.hydrateFetchedMetadataFromLocalStorage$.subscribe();
     actions.next(
       metricsActions.metricsTagMetadataLoaded({
         tagMetadata: {
-          scalars: {tagDescriptions: {}, runTagInfo: {}},
-          histograms: {tagDescriptions: {}, runTagInfo: {}},
+          scalars: {tagDescriptions: {}, tagToRuns: {}},
+          histograms: {tagDescriptions: {}, tagToRuns: {}},
           images: {tagDescriptions: {}, tagRunSampledInfo: {}},
         },
       })
     );
-
-    expect(setStateSpy).toHaveBeenCalledOnceWith(
-      jasmine.stringMatching('/tmp/tensorboard/runs'),
-      [],
+    expect(new MetricsLocalStorageDataSource().getState(namespace, [])).toEqual(
       {
-        tagGroupExpanded: new Map(),
-        tagGroupPageIndex: new Map(),
+        tagGroupExpanded: new Map([
+          ['foo', true],
+          ['offscreen', false],
+        ]),
+        tagGroupPageIndex: new Map([
+          ['foo', 0],
+          ['offscreen', 7],
+        ]),
       }
     );
-    expect(dispatchedActions).toEqual([]);
-  });
-
-  it('does not clear persisted state before metadata has loaded', () => {
-    store.overrideSelector(getNonEmptyCardIdsWithMetadata, []);
-    store.refreshState();
-    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
-    effects.hydrateExistingMetadataFromLocalStorage$.subscribe();
-
-    actions.next(
-      coreActions.environmentLoaded({
-        environment: {
-          data_location: '/tmp/tensorboard/runs',
-          window_title: '',
-        },
-      })
-    );
-
-    expect(setStateSpy).not.toHaveBeenCalled();
-    expect(dispatchedActions).toEqual([]);
+    subscription.unsubscribe();
   });
 
   it('hydrates group expansion and page index after metadata loads', () => {
@@ -157,8 +156,8 @@ describe('MetricsLocalStorageEffects', () => {
     actions.next(
       metricsActions.metricsTagMetadataLoaded({
         tagMetadata: {
-          scalars: {tagDescriptions: {}, runTagInfo: {}},
-          histograms: {tagDescriptions: {}, runTagInfo: {}},
+          scalars: {tagDescriptions: {}, tagToRuns: {}},
+          histograms: {tagDescriptions: {}, tagToRuns: {}},
           images: {tagDescriptions: {}, tagRunSampledInfo: {}},
         },
       })

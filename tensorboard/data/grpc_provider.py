@@ -94,6 +94,162 @@ class GrpcDataProvider(provider.DataProvider):
             for run in res.runs
         ]
 
+    def list_runs_page(
+        self,
+        ctx,
+        *,
+        experiment_id,
+        query="",
+        offset=0,
+        limit=0,
+        sort_by="start_time",
+        descending=False,
+        names=None,
+        query_prefix="",
+        session_ranks=None,
+        default_rank=0,
+    ):
+        req = data_provider_pb2.ListRunsRequest(
+            experiment_id=experiment_id,
+            query=query,
+            offset=offset,
+            limit=limit,
+            sort_by=sort_by,
+            descending=descending,
+            query_prefix=query_prefix,
+            session_ranks=session_ranks or (),
+            default_rank=default_rank,
+        )
+        if names is not None:
+            req.names.names[:] = sorted(set(names))
+        with _translate_grpc_error():
+            res = self._stub.ListRuns(req)
+        # Older servers ignore window fields and omit the newly added total.
+        # Keep their full-list protocol behind the provider's existing paging
+        # implementation instead of reporting a populated catalog as empty.
+        if res.runs and not res.total:
+            return super().list_runs_page(
+                ctx,
+                experiment_id=experiment_id,
+                query=query,
+                offset=offset,
+                limit=limit,
+                sort_by=sort_by,
+                descending=descending,
+                names=names,
+                query_prefix=query_prefix,
+                session_ranks=session_ranks,
+                default_rank=default_rank,
+            )
+        return provider.RunPage(
+            [
+                provider.Run(
+                    run_id=run.name,
+                    run_name=run.name,
+                    start_time=run.start_time,
+                )
+                for run in res.runs
+            ],
+            res.total,
+        )
+
+    def list_tags_page(
+        self,
+        ctx,
+        *,
+        experiment_id,
+        plugin_name,
+        data_class,
+        run_tag_filter=None,
+        query="",
+        offset=0,
+        limit=0,
+    ):
+        if data_class == "scalars":
+            req = data_provider_pb2.ListScalarsRequest(
+                skip_statistics=True, dedup_names=True
+            )
+            rpc = self._stub.ListScalars
+            convert = lambda res: self._scalar_mapping(res, True)
+        elif data_class == "tensors":
+            req = data_provider_pb2.ListTensorsRequest(skip_statistics=True)
+            rpc = self._stub.ListTensors
+            convert = lambda res: self._tensor_mapping(res, True)
+        elif data_class == "blob_sequences":
+            req = data_provider_pb2.ListBlobSequencesRequest()
+            rpc = self._stub.ListBlobSequences
+            convert = self._blob_mapping
+        else:
+            raise ValueError("Unknown data class: %r" % data_class)
+        req.experiment_id = experiment_id
+        req.plugin_filter.plugin_name = plugin_name
+        _populate_rtf(run_tag_filter, req.run_tag_filter)
+        req.run_tag_filter.tag_query = query
+        req.run_tag_filter.tag_offset = offset
+        req.run_tag_filter.tag_limit = limit
+        with _translate_grpc_error():
+            res = rpc(req)
+        return provider.TagPage(convert(res), res.total_tags)
+
+    def list_metrics_catalog(self, ctx, *, request):
+        req = data_provider_pb2.MetricsCatalogRequest(
+            query="(?i)" + request["query"] if request["query"] else "",
+            plugins=request["plugins"],
+            group_offset=request["groupOffset"],
+            group_limit=request["groupLimit"],
+            filtered_offset=request["filteredOffset"],
+            filtered_limit=request["filteredLimit"],
+            pinned_tags=sorted(set(request["pinnedTags"])),
+        )
+        for field, run_ids in (
+            (req.runs, request["runIds"]),
+            (req.pinned_runs, request["pinnedRunIds"]),
+        ):
+            for run_id in sorted(set(run_ids)):
+                experiment, name = run_id.split("/", 1)
+                field.add(experiment_id=experiment, name=name)
+        for group in request["groups"]:
+            req.groups.add(
+                name=group["name"],
+                offset=group["offset"],
+                limit=group["limit"],
+            )
+        with _translate_grpc_error():
+            try:
+                res = self._stub.ListMetricsCatalog(req)
+            except grpc.RpcError as error:
+                if error.code() != grpc.StatusCode.UNIMPLEMENTED:
+                    raise
+                return super().list_metrics_catalog(ctx, request=request)
+        cards = []
+        for item in res.cards:
+            card = {"plugin": item.plugin, "tag": item.tag}
+            if item.plugin != "scalars":
+                card["runId"] = item.run_id
+            if item.plugin == "images":
+                card.update(sample=item.sample, numSample=item.num_sample)
+            cards.append(card)
+        return {
+            "groups": [
+                {"name": group.name, "totalCards": group.total_cards}
+                for group in res.groups
+            ],
+            "totalGroups": res.total_groups,
+            "groupOffset": res.group_offset,
+            "cards": cards,
+            "totalCards": res.total_cards,
+            "metadata": provider.metrics_catalog_metadata(
+                (
+                    series.plugin,
+                    series.tag,
+                    series.run_id,
+                    series.description,
+                    series.max_samples,
+                )
+                for series in res.series
+            ),
+        }
+
     def list_scalars(
         self, ctx, *, experiment_id, plugin_name, run_tag_filter=None
     ):
@@ -108,8 +264,17 @@ class GrpcDataProvider(provider.DataProvider):
             experiment_id, plugin_name, run_tag_filter, skip_statistics=True
         )
 
+    def list_scalars_tag_index(self, ctx, *, experiment_id, plugin_name):
+        res = self._list_scalars_response(
+            experiment_id,
+            plugin_name,
+            run_tag_filter=None,
+            skip_statistics=True,
+        )
+        return _build_tag_index(res)
+
     @timing.log_latency
-    def _list_scalars(
+    def _list_scalars_response(
         self, experiment_id, plugin_name, run_tag_filter, skip_statistics
     ):
         with timing.log_latency("build request"):
@@ -117,18 +282,47 @@ class GrpcDataProvider(provider.DataProvider):
             req.experiment_id = experiment_id
             req.plugin_filter.plugin_name = plugin_name
             req.skip_statistics = skip_statistics
+            # Servers that predate this field answer with names inline; both
+            # forms are handled below.
+            req.dedup_names = True
             _populate_rtf(run_tag_filter, req.run_tag_filter)
         with timing.log_latency("_stub.ListScalars"):
             with _translate_grpc_error():
-                res = self._stub.ListScalars(req)
+                return self._stub.ListScalars(req)
+
+    @timing.log_latency
+    def _list_scalars(
+        self, experiment_id, plugin_name, run_tag_filter, skip_statistics
+    ):
+        res = self._list_scalars_response(
+            experiment_id, plugin_name, run_tag_filter, skip_statistics
+        )
+        return self._scalar_mapping(res, skip_statistics)
+
+    @staticmethod
+    def _scalar_mapping(res, skip_statistics):
         with timing.log_latency("build result"):
+            tag_names = res.tag_names
+            metadata_table = res.summary_metadata_table
             result = {}
             for run_entry in res.runs:
                 tags = {}
                 result[run_entry.run_name] = tags
                 for tag_entry in run_entry.tags:
                     time_series = tag_entry.metadata
-                    tags[tag_entry.tag_name] = provider.ScalarTimeSeries(
+                    # Each submessage access allocates a wrapper; with tens of
+                    # thousands of tags, fetch it once per entry.
+                    summary_metadata = (
+                        metadata_table[time_series.summary_metadata_index]
+                        if metadata_table
+                        else time_series.summary_metadata
+                    )
+                    tag_name = (
+                        tag_names[tag_entry.tag_index]
+                        if tag_names
+                        else tag_entry.tag_name
+                    )
+                    tags[tag_name] = provider.ScalarTimeSeries(
                         max_step=(
                             None if skip_statistics else time_series.max_step
                         ),
@@ -137,9 +331,9 @@ class GrpcDataProvider(provider.DataProvider):
                             if skip_statistics
                             else time_series.max_wall_time
                         ),
-                        plugin_content=time_series.summary_metadata.plugin_data.content,
-                        description=time_series.summary_metadata.summary_description,
-                        display_name=time_series.summary_metadata.display_name,
+                        plugin_content=summary_metadata.plugin_data.content,
+                        description=summary_metadata.summary_description,
+                        display_name=summary_metadata.display_name,
                     )
             return result
 
@@ -231,12 +425,12 @@ class GrpcDataProvider(provider.DataProvider):
                     # There should be no more than one datum in
                     # `tag_entry.data` since downsample was set to 1.
                     for step, wt, value in zip(d.step, d.wall_time, d.value):
-                        result[run_name][tag_entry.tag_name] = (
-                            provider.ScalarDatum(
-                                step=step,
-                                wall_time=wt,
-                                value=value,
-                            )
+                        result[run_name][
+                            tag_entry.tag_name
+                        ] = provider.ScalarDatum(
+                            step=step,
+                            wall_time=wt,
+                            value=value,
                         )
             return result
 
@@ -267,6 +461,10 @@ class GrpcDataProvider(provider.DataProvider):
         with timing.log_latency("_stub.ListTensors"):
             with _translate_grpc_error():
                 res = self._stub.ListTensors(req)
+        return self._tensor_mapping(res, skip_statistics)
+
+    @staticmethod
+    def _tensor_mapping(res, skip_statistics):
         with timing.log_latency("build result"):
             result = {}
             for run_entry in res.runs:
@@ -274,6 +472,7 @@ class GrpcDataProvider(provider.DataProvider):
                 result[run_entry.run_name] = tags
                 for tag_entry in run_entry.tags:
                     time_series = tag_entry.metadata
+                    summary_metadata = time_series.summary_metadata
                     tags[tag_entry.tag_name] = provider.TensorTimeSeries(
                         max_step=(
                             None if skip_statistics else time_series.max_step
@@ -283,9 +482,9 @@ class GrpcDataProvider(provider.DataProvider):
                             if skip_statistics
                             else time_series.max_wall_time
                         ),
-                        plugin_content=time_series.summary_metadata.plugin_data.content,
-                        description=time_series.summary_metadata.summary_description,
-                        display_name=time_series.summary_metadata.display_name,
+                        plugin_content=summary_metadata.plugin_data.content,
+                        description=summary_metadata.summary_description,
+                        display_name=summary_metadata.display_name,
                     )
             return result
 
@@ -338,6 +537,10 @@ class GrpcDataProvider(provider.DataProvider):
         with timing.log_latency("_stub.ListBlobSequences"):
             with _translate_grpc_error():
                 res = self._stub.ListBlobSequences(req)
+        return self._blob_mapping(res)
+
+    @staticmethod
+    def _blob_mapping(res):
         with timing.log_latency("build result"):
             result = {}
             for run_entry in res.runs:
@@ -408,6 +611,71 @@ class GrpcDataProvider(provider.DataProvider):
                 responses = list(self._stub.ReadBlob(req))
         with timing.log_latency("build result"):
             return b"".join(res.data for res in responses)
+
+
+def _build_tag_index(res):
+    """Builds a `provider.TagIndex` from a `ListScalarsResponse`.
+
+    Servers honoring `dedup_names` supply the name and metadata tables, which
+    become the index spaces directly; older servers repeat names per entry, so
+    the tables are built here instead.
+    """
+    deduped = bool(res.tag_names)
+    if deduped:
+        tags = list(res.tag_names)
+        metadata = list(res.summary_metadata_table)
+    else:
+        tags = []
+        metadata = []
+    tag_indices = {}
+    metadata_indices = {}
+    contents = [md.plugin_data.content for md in metadata]
+    entry_descriptions = [md.summary_description for md in metadata]
+    runs = []
+    run_tags = []
+    run_contents = []
+    descriptions = {}
+    for run_entry in res.runs:
+        run_index = len(runs)
+        runs.append(run_entry.run_name)
+        entry_tags = []
+        entry_contents = []
+        for tag_entry in run_entry.tags:
+            if deduped:
+                tag_index = tag_entry.tag_index
+                content_index = tag_entry.metadata.summary_metadata_index
+            else:
+                tag_name = tag_entry.tag_name
+                tag_index = tag_indices.get(tag_name)
+                if tag_index is None:
+                    tag_index = len(tags)
+                    tag_indices[tag_name] = tag_index
+                    tags.append(tag_name)
+                summary_metadata = tag_entry.metadata.summary_metadata
+                content = summary_metadata.plugin_data.content
+                description = summary_metadata.summary_description
+                content_index = metadata_indices.get((content, description))
+                if content_index is None:
+                    content_index = len(contents)
+                    metadata_indices[(content, description)] = content_index
+                    contents.append(content)
+                    entry_descriptions.append(description)
+            entry_tags.append(tag_index)
+            entry_contents.append(content_index)
+            if entry_descriptions[content_index]:
+                descriptions[(run_index, tag_index)] = entry_descriptions[
+                    content_index
+                ]
+        run_tags.append(entry_tags)
+        run_contents.append(entry_contents)
+    return provider.TagIndex(
+        runs=runs,
+        tags=tags,
+        contents=contents,
+        run_tags=run_tags,
+        run_contents=run_contents,
+        descriptions=descriptions,
+    )
 
 
 @contextlib.contextmanager

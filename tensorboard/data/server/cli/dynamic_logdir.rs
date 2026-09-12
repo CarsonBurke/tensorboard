@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 use crate::disk_logdir::DiskLogdir;
 use crate::gcs;
-use crate::logdir::{EventFileBuf, Logdir};
+use crate::logdir::{EventFileBuf, FileFingerprint, Logdir};
 use crate::types::Run;
 
 /// A logdir dynamically dispatched over supported implementations.
@@ -136,10 +136,27 @@ impl crate::logdir::Logdir for DynLogdir {
         }
     }
 
+    fn visit(
+        &self,
+        visitor: &mut dyn FnMut(Run, EventFileBuf, Option<FileFingerprint>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        match self {
+            Self::Disk(x) => x.visit(visitor),
+            Self::Gcs(x) => x.visit(visitor),
+        }
+    }
+
     fn open(&self, path: &EventFileBuf) -> io::Result<Self::File> {
         match self {
             Self::Disk(x) => x.open(path).map(DynFile::Disk),
             Self::Gcs(x) => x.open(path).map(DynFile::Gcs),
+        }
+    }
+
+    fn open_at(&self, path: &EventFileBuf, offset: u64) -> io::Result<Self::File> {
+        match self {
+            Self::Disk(x) => x.open_at(path, offset).map(DynFile::Disk),
+            Self::Gcs(x) => x.open_at(path, offset).map(DynFile::Gcs),
         }
     }
 }

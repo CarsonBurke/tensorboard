@@ -153,6 +153,13 @@ export class MetricsLocalStorageDataSource {
   ): MetricsLocalStorageState {
     const currentTagGroupSet = new Set(currentTagGroups);
     const storedState = safeParse(this.getItem());
+    const stored = storedState.namespaces[namespaceId];
+    for (const group of Object.keys(stored?.tagGroupExpanded ?? {})) {
+      currentTagGroupSet.add(group);
+    }
+    for (const group of Object.keys(stored?.tagGroupPageIndex ?? {})) {
+      currentTagGroupSet.add(group);
+    }
     return sanitizeNamespace(
       storedState.namespaces[namespaceId],
       currentTagGroupSet
@@ -165,6 +172,10 @@ export class MetricsLocalStorageDataSource {
     state: MetricsLocalStorageState
   ) {
     const currentTagGroupSet = new Set(currentTagGroups);
+    for (const group of state.tagGroupExpanded.keys())
+      currentTagGroupSet.add(group);
+    for (const group of state.tagGroupPageIndex.keys())
+      currentTagGroupSet.add(group);
     if (currentTagGroupSet.size === 0) {
       this.removeItem();
       return;

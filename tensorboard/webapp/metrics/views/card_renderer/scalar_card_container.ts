@@ -134,11 +134,19 @@ import {
   maybeClipTimeSelectionView,
   transformScalarSeries,
   TimeSelectionView,
+  ViewBoxCoalescer,
 } from './utils';
 
 type ScalarCardMetadata = CardMetadata & {
   plugin: PluginType.SCALARS;
 };
+
+// Every card subscribes to the whole card state map, whose identity changes
+// on each view box change of any single card. A shared value for "no state"
+// keeps the emission distinct-checkable, so panning one chart does not mark
+// every other card dirty.
+const EMPTY_CARD_STATE: Partial<CardState> = {};
+const EMPTY_SCALAR_SERIES: RunToSeries<PluginType.SCALARS> = {};
 
 function areSeriesEqual(
   listA: PartitionedSeries[],
@@ -166,7 +174,6 @@ function areSeriesEqual(
       [ignoreOutliers]="ignoreOutliers$ | async"
       [isTooltipRowsLimitEnabled]="isTooltipRowsLimitEnabled$ | async"
       [tooltipRowsLimit]="tooltipRowsLimit$ | async"
-      [isCardVisible]="isVisible"
       [isPinned]="isPinned$ | async"
       [loadState]="loadState$ | async"
       [showFullWidth]="showFullWidth$ | async"
@@ -194,8 +201,6 @@ function areSeriesEqual(
       [numColumnsToLoad]="numColumnsToLoad$ | async"
       (onFullSizeToggle)="onFullSizeToggle()"
       (onPinClicked)="pinStateChanged.emit($event)"
-      observeIntersection
-      (onVisibilityChange)="onVisibilityChange($event)"
       (onTimeSelectionChanged)="onTimeSelectionChanged($event)"
       (onStepSelectorToggled)="onStepSelectorToggled($event)"
       (onDataTableSorting)="onDataTableSorting($event)"
@@ -261,9 +266,15 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
     this.smoothingEnabled$ = this.store
       .select(getMetricsScalarSmoothing)
       .pipe(map((smoothing) => smoothing > 0));
-    this.showFullWidth$ = this.store
-      .select(getCardStateMap)
-      .pipe(map((map) => map[this.cardId]?.fullWidth));
+    this.showFullWidth$ = this.store.select(getCardStateMap).pipe(
+      map((map) => map[this.cardId]?.fullWidth),
+      distinctUntilChanged()
+    );
+    this.viewBoxCoalescer = new ViewBoxCoalescer((userViewBox) => {
+      this.store.dispatch(
+        cardViewBoxChanged({userViewBox, cardId: this.cardId})
+      );
+    });
   }
 
   // Angular Component constructor for DataDownload dialog. It is customizable for
@@ -275,7 +286,6 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
   @Input() groupName!: string | null;
   @Output() pinStateChanged = new EventEmitter<boolean>();
 
-  isVisible: boolean = false;
   loadState$?: Observable<DataLoadState>;
   title$?: Observable<string>;
   tag$?: Observable<string>;
@@ -296,10 +306,6 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
   numColumnsLoaded$;
   numColumnsToLoad$;
 
-  onVisibilityChange({visible}: {visible: boolean}) {
-    this.isVisible = visible;
-  }
-
   readonly useDarkMode$;
   readonly ignoreOutliers$;
   readonly isTooltipRowsLimitEnabled$;
@@ -317,6 +323,7 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
   readonly showFullWidth$;
 
   private readonly ngUnsubscribe = new Subject<void>();
+  private readonly viewBoxCoalescer;
 
   private isScalarCardMetadata(
     cardMetadata: CardMetadata
@@ -343,12 +350,15 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
       })
     );
 
-    const nonNullRunsToScalarSeries$ = this.store
+    const runsToScalarSeries$ = this.store
       .select(getCardTimeSeries, this.cardId)
       .pipe(
         takeUntil(this.ngUnsubscribe),
-        filter((runToSeries) => Boolean(runToSeries)),
-        map((runToSeries) => runToSeries as RunToSeries<PluginType.SCALARS>),
+        map(
+          (runToSeries) =>
+            (runToSeries as RunToSeries<PluginType.SCALARS> | null) ??
+            EMPTY_SCALAR_SERIES
+        ),
         shareReplay(1)
       );
 
@@ -357,7 +367,7 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
     }
 
     const partitionedSeries$ = combineLatest([
-      nonNullRunsToScalarSeries$,
+      runsToScalarSeries$,
       this.store.select(getMetricsXAxisType),
       this.store.select(getMetricsScalarPartitionNonMonotonicX),
     ]).pipe(
@@ -375,9 +385,16 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
       getMetricsCardUserViewBox,
       this.cardId
     );
+    // The store stays the single source of truth for the rendered view box;
+    // the coalescer only needs it to recognize a pan that changed nothing.
+    this.userViewBox$
+      .pipe(takeUntil(this.ngUnsubscribe))
+      .subscribe((userViewBox) => {
+        this.viewBoxCoalescer.setStoreViewBox(userViewBox);
+      });
 
     this.minMaxSteps$ = combineLatest([
-      this.store.select(getMetricsCardMinMax, this.cardId),
+      this.store.select(getMetricsCardMinMax(this.cardId)),
       this.store.select(getMetricsCardDataMinMax, this.cardId),
     ]).pipe(
       map(([minMax, dataMinMax]) => {
@@ -475,6 +492,7 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
           >
         >
       >((partitioned) => {
+        if (!partitioned.length) return of([]);
         return combineLatest(
           partitioned.map((series) => {
             return this.getRunDisplayNameAndAlias(series.runId).pipe(
@@ -560,7 +578,7 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
       startWith({} as ScalarCardSeriesMetadataMap)
     );
 
-    this.loadState$ = this.store.select(getMultiRunCardLoadState, this.cardId);
+    this.loadState$ = this.store.select(getMultiRunCardLoadState(this.cardId));
 
     this.tag$ = cardMetadata$.pipe(
       map((cardMetadata) => {
@@ -569,9 +587,8 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
     );
 
     this.cardState$ = this.store.select(getCardStateMap).pipe(
-      map((cardStateMap) => {
-        return cardStateMap[this.cardId] || {};
-      })
+      map((cardStateMap) => cardStateMap[this.cardId] ?? EMPTY_CARD_STATE),
+      distinctUntilChanged()
     );
 
     this.title$ = this.tag$.pipe(
@@ -592,6 +609,9 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    // Flushes an extent still waiting for its frame so a card torn down
+    // mid-gesture still records where the user left it.
+    this.viewBoxCoalescer.dispose();
     this.ngUnsubscribe.next();
     this.ngUnsubscribe.complete();
   }
@@ -606,9 +626,9 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
     ]).pipe(
       map(([experimentId, idToAlias, run]) => {
         const alias =
-          experimentId !== null ? (idToAlias[experimentId] ?? null) : null;
+          experimentId !== null ? idToAlias[experimentId] ?? null : null;
         return {
-          displayName: !run && !alias ? runId : (run?.name ?? '...'),
+          displayName: !run && !alias ? runId : run?.name ?? '...',
           alias: alias,
         };
       })
@@ -644,12 +664,7 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
   }
 
   onLineChartZoom(lineChartViewBox: Extent | null) {
-    this.store.dispatch(
-      cardViewBoxChanged({
-        userViewBox: lineChartViewBox,
-        cardId: this.cardId,
-      })
-    );
+    this.viewBoxCoalescer.push(lineChartViewBox);
   }
 
   editColumnHeaders({

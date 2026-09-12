@@ -15,6 +15,8 @@
 """Unit tests for `tensorboard.data.provider`."""
 
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from tensorboard import test as tb_test
@@ -25,6 +27,234 @@ class DataProviderTest(tb_test.TestCase):
     def test_abstract(self):
         with self.assertRaisesRegex(TypeError, "abstract class"):
             provider.DataProvider()
+
+    def _catalog(self, data, **overrides):
+        calls = []
+
+        def listing(ctx, *, experiment_id, plugin_name, run_tag_filter):
+            calls.append((experiment_id, plugin_name, run_tag_filter))
+            return {
+                run: {
+                    tag: value
+                    for tag, value in tags.items()
+                    if run_tag_filter.tags is None or tag in run_tag_filter.tags
+                }
+                for run, tags in data.get(
+                    (experiment_id, plugin_name), {}
+                ).items()
+                if run in run_tag_filter.runs
+            }
+
+        legacy = SimpleNamespace(
+            list_scalars_metadata=listing,
+            list_tensors_metadata=listing,
+            list_blob_sequences=listing,
+        )
+        request = dict(
+            runIds=["e1/run", "e2/run"],
+            query="",
+            plugins=[],
+            groupOffset=0,
+            groupLimit=40,
+            groups=[],
+            filteredOffset=0,
+            filteredLimit=40,
+            pinnedTags=[],
+            pinnedRunIds=[],
+        )
+        request.update(overrides)
+        return (
+            provider.DataProvider.list_metrics_catalog(
+                legacy, object(), request=request
+            ),
+            calls,
+        )
+
+    def test_catalog_union_and_exact_sample_window(self):
+        value = SimpleNamespace(
+            description="shared", max_length=5, plugin_content=b""
+        )
+        data = {
+            (experiment, plugin): {"run": {"group/tag2": value}}
+            for experiment in ("e1", "e2")
+            for plugin in ("scalars", "histograms", "images")
+        }
+        data[("e1", "scalars")]["run"]["group/tag10"] = value
+        data[("e1", "scalars")]["other"] = {"private/tag": value}
+        result, _ = self._catalog(
+            data, groups=[dict(name="group", offset=0, limit=5)]
+        )
+        self.assertEqual(
+            result["groups"], [{"name": "group", "totalCards": 10}]
+        )
+        self.assertEqual(result["totalCards"], 10)
+        self.assertEqual(
+            result["cards"],
+            [
+                dict(plugin="scalars", tag="group/tag2"),
+                dict(plugin="histograms", tag="group/tag2", runId="e1/run"),
+                dict(plugin="histograms", tag="group/tag2", runId="e2/run"),
+                dict(
+                    plugin="images",
+                    tag="group/tag2",
+                    runId="e1/run",
+                    sample=0,
+                    numSample=3,
+                ),
+                dict(
+                    plugin="images",
+                    tag="group/tag2",
+                    runId="e1/run",
+                    sample=1,
+                    numSample=3,
+                ),
+            ],
+        )
+        self.assertEqual(
+            result["metadata"]["scalars"]["tagToRuns"],
+            {"group/tag2": ["e1/run", "e2/run"]},
+        )
+        self.assertEqual(
+            result["metadata"]["images"]["tagRunSampledInfo"],
+            {"group/tag2": {"e1/run": {"maxSamplesPerStep": 3}}},
+        )
+
+    def test_catalog_filter_pins_do_not_change_counts_or_broaden_scope(self):
+        value = SimpleNamespace(
+            description="", max_length=4, plugin_content=b""
+        )
+        result, calls = self._catalog(
+            {
+                ("e1", "scalars"): {
+                    "run": {"group/Tag2": value, "group/Tag10": value},
+                },
+                ("e3", "images"): {
+                    "pinned": {"pin": value, "unrelated": value},
+                    "private": {"pin": value},
+                },
+            },
+            query="TAG",
+            plugins=["scalars"],
+            filteredOffset=1,
+            filteredLimit=1,
+            pinnedTags=["pin"],
+            pinnedRunIds=["e3/pinned"],
+        )
+        self.assertEqual(result["groups"], [])
+        self.assertEqual(result["totalGroups"], 0)
+        self.assertEqual(result["totalCards"], 2)
+        self.assertEqual(
+            result["cards"], [dict(plugin="scalars", tag="group/Tag10")]
+        )
+        self.assertEqual(
+            result["metadata"]["images"]["tagRunSampledInfo"],
+            {"pin": {"e3/pinned": {"maxSamplesPerStep": 2}}},
+        )
+        for experiment, _, scope in calls:
+            self.assertTrue(scope.runs)
+            if experiment == "e3":
+                self.assertEqual(scope.runs, frozenset(["pinned"]))
+                self.assertEqual(scope.tags, frozenset(["pin"]))
+
+    def test_catalog_empty_selection_only_loads_exact_pins(self):
+        value = SimpleNamespace(
+            description="", max_length=3, plugin_content=b""
+        )
+        data = {
+            ("e1", "scalars"): {
+                "run": {"pin": value, "not-pinned": value},
+            }
+        }
+        empty, calls = self._catalog(data, runIds=[])
+        self.assertEqual(empty["totalCards"], 0)
+        self.assertEqual(calls, [])
+        pinned, calls = self._catalog(
+            data, runIds=[], pinnedTags=["pin"], pinnedRunIds=["e1/run"]
+        )
+        self.assertEqual(pinned["cards"], [])
+        self.assertEqual(pinned["totalCards"], 0)
+        self.assertEqual(
+            pinned["metadata"]["scalars"]["tagToRuns"], {"pin": ["e1/run"]}
+        )
+        for _, _, scope in calls:
+            self.assertEqual(scope.runs, frozenset(["run"]))
+            self.assertEqual(scope.tags, frozenset(["pin"]))
+
+    def test_catalog_pages_late_groups_and_large_image_sample_span(self):
+        value = SimpleNamespace(
+            description="", max_length=10**9 + 2, plugin_content=b""
+        )
+        data = {
+            ("e1", "images"): {"run": {"images/grid": value}},
+            ("e1", "scalars"): {
+                "run": {"group%d/tag" % i: value for i in range(2500)}
+            },
+        }
+        result, _ = self._catalog(
+            data,
+            groupOffset=2400,
+            groupLimit=2,
+            groups=[dict(name="images", offset=10**9 - 1, limit=1)],
+        )
+        self.assertEqual(result["totalGroups"], 2501)
+        self.assertEqual(
+            result["groups"],
+            [
+                {"name": "group2400", "totalCards": 1},
+                {"name": "group2401", "totalCards": 1},
+            ],
+        )
+        self.assertEqual(
+            result["cards"],
+            [
+                dict(
+                    plugin="images",
+                    tag="images/grid",
+                    runId="e1/run",
+                    sample=10**9 - 1,
+                    numSample=10**9,
+                )
+            ],
+        )
+
+    def test_catalog_excludes_future_versions_before_counts_and_pins(self):
+        future = SimpleNamespace(
+            description="unreadable", max_length=5, plugin_content=b"\x08\x01"
+        )
+        current = SimpleNamespace(
+            description="", max_length=3, plugin_content=b""
+        )
+        legacy_histogram = SimpleNamespace(description="", plugin_content=b"{}")
+        data = {
+            ("e1", plugin): {
+                "run": {"future/tag": future, "current/tag": current},
+            }
+            for plugin in ("scalars", "histograms", "images")
+        }
+        data[("e1", "histograms")]["run"]["legacy/tag"] = legacy_histogram
+        result, _ = self._catalog(
+            data,
+            pinnedTags=["future/tag"],
+            groups=[dict(name="current", offset=0, limit=10)],
+        )
+        self.assertEqual(result["totalCards"], 4)
+        self.assertEqual(
+            result["groups"],
+            [
+                {"name": "current", "totalCards": 3},
+                {"name": "legacy", "totalCards": 1},
+            ],
+        )
+        self.assertEqual(
+            [card["plugin"] for card in result["cards"]],
+            ["scalars", "histograms", "images"],
+        )
+        for metadata in result["metadata"].values():
+            self.assertNotIn("future/tag", metadata["tagDescriptions"])
+            self.assertNotIn(
+                "future/tag",
+                metadata.get("tagToRuns", metadata.get("tagRunSampledInfo")),
+            )
 
 
 class ExperimentMetadataTest(tb_test.TestCase):

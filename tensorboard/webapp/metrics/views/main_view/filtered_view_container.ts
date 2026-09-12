@@ -14,7 +14,7 @@ limitations under the License.
 ==============================================================================*/
 import {ChangeDetectionStrategy, Component, Input} from '@angular/core';
 import {Store} from '@ngrx/store';
-import {Observable} from 'rxjs';
+import {combineLatest, Observable} from 'rxjs';
 import {
   combineLatestWith,
   debounceTime,
@@ -26,10 +26,24 @@ import {
 } from 'rxjs/operators';
 import {State} from '../../../app_state';
 import {DeepReadonly} from '../../../util/types';
-import {getMetricsFilteredPluginTypes, getMetricsTagFilter} from '../../store';
+import {
+  getMetricsFilteredPluginTypes,
+  getMetricsTagFilter,
+  getMetricsCatalogEnabled,
+  getMetricsCatalogTotalCards,
+  getMetricsCatalogViewport,
+  getMetricsCatalogFilteredOffset,
+  getMetricsCardMinWidth,
+} from '../../store';
+import {metricsCatalogViewportChanged} from '../../actions';
+import {MetricsCatalogViewport} from '../../data_source';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
 import {CardIdWithMetadata} from '../metrics_view_types';
-import {getSortedRenderableCardIdsWithMetadata} from './common_selectors';
+import {
+  getSortedRenderableCardIdsWithMetadata,
+  getCatalogCardIdsWithMetadata,
+  getCatalogViewScope,
+} from './common_selectors';
 
 export const FILTER_VIEW_DEBOUNCE_IN_MS = 200;
 
@@ -44,6 +58,8 @@ export const FILTER_VIEW_DEBOUNCE_IN_MS = 200;
       [isEmptyMatch]="isEmptyMatch$ | async"
       [cardIdsWithMetadata]="cardIdsWithMetadata$ | async"
       [cardObserver]="cardObserver"
+      [catalog]="catalog$ | async"
+      (viewportChanged)="onViewportChanged($event)"
     ></metrics-filtered-view-component>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -52,7 +68,7 @@ export class FilteredViewContainer {
   @Input() cardObserver!: CardObserver;
 
   constructor(private readonly store: Store<State>) {
-    this.cardIdsWithMetadata$ = this.store
+    const fallbackCards$ = this.store
       .select(getSortedRenderableCardIdsWithMetadata)
       .pipe(
         combineLatestWith(this.store.select(getMetricsFilteredPluginTypes)),
@@ -88,6 +104,19 @@ export class FilteredViewContainer {
         share(),
         startWith([])
       ) as Observable<DeepReadonly<CardIdWithMetadata>[]>;
+    this.cardIdsWithMetadata$ = combineLatest([
+      fallbackCards$,
+      this.store.select(getMetricsCatalogEnabled),
+      this.store.select(getCatalogCardIdsWithMetadata),
+    ]).pipe(map(([fallback, enabled, cards]) => (enabled ? cards : fallback)));
+    this.catalog$ = combineLatest({
+      enabled: this.store.select(getMetricsCatalogEnabled),
+      totalCards: this.store.select(getMetricsCatalogTotalCards),
+      viewport: this.store.select(getMetricsCatalogViewport),
+      filteredOffset: this.store.select(getMetricsCatalogFilteredOffset),
+      cardMinWidth: this.store.select(getMetricsCardMinWidth),
+      scope: this.store.select(getCatalogViewScope),
+    }).pipe(map((view) => (view.enabled ? view : null)));
     this.isEmptyMatch$ = this.cardIdsWithMetadata$.pipe(
       combineLatestWith(
         this.store.select(getSortedRenderableCardIdsWithMetadata)
@@ -101,4 +130,9 @@ export class FilteredViewContainer {
   readonly cardIdsWithMetadata$: Observable<DeepReadonly<CardIdWithMetadata>[]>;
 
   readonly isEmptyMatch$: Observable<boolean>;
+  readonly catalog$;
+
+  onViewportChanged(viewport: MetricsCatalogViewport) {
+    this.store.dispatch(metricsCatalogViewportChanged(viewport));
+  }
 }

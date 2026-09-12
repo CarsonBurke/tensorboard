@@ -96,6 +96,64 @@ is:
 -   the `tensorboard_data_server` package is queried if it is installed; else
 -   the server bundled with `--define=link_data_server=true` is used.
 
+## Demand-driven index and catalog
+
+The production server streams event files into a persistent SQLite index instead
+of retaining every run, tag, and sampled series in process memory. The index
+preserves the existing deterministic reservoir sampling; selected RPCs read
+their data into request-owned memory. Unselected histories remain on disk.
+There is no catalog-size or selection-count budget.
+
+Indexes live in `$XDG_CACHE_HOME/tensorboard/<identity>/index.sqlite`, falling
+back to `$LOCALAPPDATA` or `$HOME/.cache`. The identity includes the canonical
+logdir, sampling configuration, checksum setting, and storage format version.
+The cache must be outside the logdir. It contains summary data and is stored
+in an owner-only directory. Stop servers using an index before deleting it;
+the next start rebuilds it from event files.
+
+The first load parses the logdir and uses additional disk space. Subsequent
+loads reuse file fingerprints and resume recorded offsets, including incomplete
+records. Source offsets, samples, and metadata publish atomically at the loader's
+existing commit cadence. WAL readers can query the previous committed prefix
+during ingestion. Replacements and truncations rebuild the affected run.
+
+Native Time Series clients automatically window run lists, category summaries,
+and filtered cards as the viewport scrolls. Closed categories require only their
+names and card counts; nearby expanded categories request metadata for their
+current category-local card page. Selected runs and exact pins retain the metadata
+needed to restore their views, not every visited catalog window.
+Charts and histories load one scroll-viewport height ahead and behind. Already
+prepared charts remain mounted until four viewport heights away, avoiding churn
+on scroll reversal. Offscreen completed histories for selected runs are reused
+from a least-recently-used cache capped at 64 MiB of estimated inactive payload
+and bookkeeping bytes. Active buffered histories are protected; this is not a
+total browser heap limit. Accounting includes histogram bins and image IDs, not
+decoded image pixels. Reload invalidates cached data, deselection drops unowned
+runs, and leaving the dashboard or experiment releases histories. Pins use the
+same buffered ownership rules as other cards.
+Collapsed categories and page changes unmount their cards; losing request
+ownership cancels pending batches, while adjacent card entry keeps existing work.
+Explicit unfiltered legacy API calls still return the full requested catalog;
+they are not implicitly capped. Regex searches and distinct-tag totals across
+multiple runs may scan the disk index, unlike exact selected-series reads.
+
+For a reproducible large-catalog check, build optimized targets:
+
+```sh
+npx -y @bazel/bazelisk build -c opt //tensorboard:tensorboard \
+  //tensorboard/data/server:server //tensorboard/tools:benchmark_catalog
+bazel-bin/tensorboard/tools/benchmark_catalog generate /tmp/catalog-bench \
+  --runs 1 --tags 1000000 --steps 2
+```
+
+Start TensorBoard on that logdir with the built data-server binary, then measure
+the paged catalog and a selected chart (optionally include server PIDs for memory):
+
+```sh
+bazel-bin/tensorboard/tools/benchmark_catalog measure http://localhost:6006 \
+  --run run00000000 --tag metric00999999 --pid SERVER_PID
+```
+
 ## Adding or updating third-party dependencies
 
 Rust dependencies are usually hosted on [crates.io]. We use [`cargo-raze`][raze]

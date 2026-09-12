@@ -14,22 +14,41 @@ limitations under the License.
 ==============================================================================*/
 import {ChangeDetectionStrategy, Component, Input} from '@angular/core';
 import {Store} from '@ngrx/store';
-import {Observable} from 'rxjs';
-import {combineLatestWith, map} from 'rxjs/operators';
+import {combineLatest} from 'rxjs';
+import {map} from 'rxjs/operators';
 import {State} from '../../../app_state';
-import {getMetricsFilteredPluginTypes} from '../../store';
+import {selectors as settingsSelectors} from '../../../settings';
+import {metricsCatalogViewportChanged} from '../../actions';
+import {
+  getMetricsFilteredPluginTypes,
+  getMetricsCatalogEnabled,
+  getMetricsCatalogGroups,
+  getMetricsCatalogTotalGroups,
+  getMetricsCatalogGroupOffset,
+  getMetricsCatalogViewport,
+  getMetricsTagGroupExpandedMap,
+  getMetricsTagGroupPageIndexMap,
+  getMetricsCardMinWidth,
+} from '../../store';
 import {groupCardIdWithMetdata} from '../../utils';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
-import {CardGroup} from '../metrics_view_types';
-import {getSortedRenderableCardIdsWithMetadata} from './common_selectors';
+import {MetricsCatalogViewport} from '../../data_source';
+import {
+  getSortedRenderableCardIdsWithMetadata,
+  getCatalogCardIdsWithMetadata,
+  getCatalogViewScope,
+} from './common_selectors';
 
 @Component({
   standalone: false,
   selector: 'metrics-card-groups',
   template: `
     <metrics-card-groups-component
-      [cardGroups]="cardGroups$ | async"
+      *ngIf="view$ | async as view"
+      [cardGroups]="view.groups"
+      [catalog]="view.catalog"
       [cardObserver]="cardObserver"
+      (viewportChanged)="onViewportChanged($event)"
     ></metrics-card-groups-component>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -37,20 +56,59 @@ import {getSortedRenderableCardIdsWithMetadata} from './common_selectors';
 export class CardGroupsContainer {
   @Input() cardObserver!: CardObserver;
 
+  readonly view$;
+
   constructor(private readonly store: Store<State>) {
-    this.cardGroups$ = this.store
-      .select(getSortedRenderableCardIdsWithMetadata)
-      .pipe(
-        combineLatestWith(this.store.select(getMetricsFilteredPluginTypes)),
-        map(([cardList, filteredPlugins]) => {
-          if (!filteredPlugins.size) return cardList;
-          return cardList.filter((card) => {
-            return filteredPlugins.has(card.plugin);
-          });
-        }),
-        map((cardList) => groupCardIdWithMetdata(cardList))
-      );
+    this.view$ = combineLatest({
+      cards: this.store.select(getSortedRenderableCardIdsWithMetadata),
+      catalogCards: this.store.select(getCatalogCardIdsWithMetadata),
+      plugins: this.store.select(getMetricsFilteredPluginTypes),
+      enabled: this.store.select(getMetricsCatalogEnabled),
+      summaries: this.store.select(getMetricsCatalogGroups),
+      groupOffset: this.store.select(getMetricsCatalogGroupOffset),
+      totalGroups: this.store.select(getMetricsCatalogTotalGroups),
+      viewport: this.store.select(getMetricsCatalogViewport),
+      expanded: this.store.select(getMetricsTagGroupExpandedMap),
+      pages: this.store.select(getMetricsTagGroupPageIndexMap),
+      pageSize: this.store.select(settingsSelectors.getPageSize),
+      cardMinWidth: this.store.select(getMetricsCardMinWidth),
+      scope: this.store.select(getCatalogViewScope),
+    }).pipe(
+      map((view) => {
+        if (!view.enabled) {
+          const cards = view.plugins.size
+            ? view.cards.filter((card) => view.plugins.has(card.plugin))
+            : view.cards;
+          return {groups: groupCardIdWithMetdata(cards), catalog: null};
+        }
+        const byGroup = new Map(
+          groupCardIdWithMetdata(view.catalogCards).map((group) => [
+            group.groupName,
+            group.items,
+          ])
+        );
+        return {
+          groups: view.summaries.map((group) => ({
+            groupName: group.name,
+            totalCards: group.totalCards,
+            items: byGroup.get(group.name) ?? [],
+          })),
+          catalog: {
+            groupOffset: view.groupOffset,
+            totalGroups: view.totalGroups,
+            viewport: view.viewport,
+            expanded: view.expanded,
+            pages: view.pages,
+            pageSize: view.pageSize,
+            cardMinWidth: view.cardMinWidth,
+            scope: view.scope,
+          },
+        };
+      })
+    );
   }
 
-  readonly cardGroups$: Observable<CardGroup[]>;
+  onViewportChanged(viewport: MetricsCatalogViewport) {
+    this.store.dispatch(metricsCatalogViewportChanged(viewport));
+  }
 }

@@ -41,7 +41,10 @@ prost-types = "0.9.0"
 rand = "0.7.3"
 rand_chacha = "0.2.2"
 rayon = "1.5.0"
+regex = "=1.5.6"
 reqwest = { version = "0.11.0", features = ["blocking", "json", "rustls-tls"], default-features = false }
+ring = "=0.16.20"
+rusqlite = { version = "=0.28.0", features = ["bundled", "collation", "functions"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.59"
 thiserror = "1.0.21"
@@ -84,10 +87,16 @@ targets = [
     "x86_64-unknown-linux-gnu",
 ]
 
+[package.metadata.raze.crates.ahash.'0.7.8']
+gen_buildrs = true
+
 [package.metadata.raze.crates.crc.'1.8.1']
 gen_buildrs = true
 
 [package.metadata.raze.crates.libc.'0.2.126']
+gen_buildrs = true
+
+[package.metadata.raze.crates.libsqlite3-sys.'0.25.2']
 gen_buildrs = true
 
 [package.metadata.raze.crates.log.'0.4.11']

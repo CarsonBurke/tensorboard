@@ -40,10 +40,36 @@ pub trait Logdir {
     /// absent.
     fn discover(&self) -> io::Result<HashMap<Run, Vec<EventFileBuf>>>;
 
+    /// Visits event files without retaining a catalog or imposing discovery order.
+    ///
+    /// An error means that the scan is incomplete: callers must not remove unseen files.
+    /// Production implementations stream discoveries; this default is for reference loaders.
+    fn visit(
+        &self,
+        visitor: &mut dyn FnMut(Run, EventFileBuf, Option<FileFingerprint>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        for (run, files) in self.discover()? {
+            for file in files {
+                visitor(run.clone(), file, None)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Attempts to open an event file for reading.
     ///
     /// The `path` should be one of the values returned by a previous call to [`Self::discover`].
     fn open(&self, path: &EventFileBuf) -> io::Result<Self::File>;
+
+    /// Opens an event file at an absolute byte offset.
+    ///
+    /// Production implementations seek or issue ranged reads. The reference implementation
+    /// discards the prefix, stopping at EOF if the file has been truncated.
+    fn open_at(&self, path: &EventFileBuf, offset: u64) -> io::Result<Self::File> {
+        let mut file = self.open(path)?;
+        io::copy(&mut file.by_ref().take(offset), &mut io::sink())?;
+        Ok(file)
+    }
 }
 
 /// An opaque reference to an event file within the context of a specific log directory.
@@ -55,6 +81,16 @@ pub trait Logdir {
 /// or modification.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub struct EventFileBuf(pub PathBuf);
+
+/// Metadata used to detect appends, rewrites, and replacement of an event file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileFingerprint {
+    pub len: u64,
+    /// Stable for local appends; changes on replacement. Immutable remote object versions may
+    /// change identity on every write, requiring replay rather than unsafe append assumptions.
+    pub identity: String,
+    pub modified: String,
+}
 
 /// A file is treated as an event file if its basename contains this substring.
 pub const EVENT_FILE_BASENAME_INFIX: &str = "tfevents";

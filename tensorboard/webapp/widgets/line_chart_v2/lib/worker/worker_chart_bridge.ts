@@ -106,6 +106,10 @@ function createPortHandler(port: MessagePort, initMessage: InitMessage) {
       }
       case HostToGuestEvent.DISPOSED: {
         lineChart.dispose();
+        // Workers are pooled and reused for other charts. Releasing the port
+        // drops this handler, and with it the chart and its canvas.
+        port.onmessage = null;
+        port.close();
         break;
       }
     }

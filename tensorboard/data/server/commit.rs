@@ -36,6 +36,8 @@ use crate::types::{Run, Step, Tag, WallTime};
 #[derive(Debug)]
 pub struct Commit {
     pub runs: RwLock<HashMap<Run, RwLock<RunData>>>,
+    /// Production storage; `runs` is used only by reference loaders and RPC snapshots.
+    pub disk: Option<crate::storage::DiskStore>,
     metadata_epoch: u128,
     metadata_revision: Arc<AtomicU64>,
 }
@@ -44,6 +46,7 @@ impl Default for Commit {
     fn default() -> Self {
         Self {
             runs: RwLock::default(),
+            disk: None,
             metadata_epoch: rand::random(),
             metadata_revision: Arc::new(AtomicU64::new(0)),
         }

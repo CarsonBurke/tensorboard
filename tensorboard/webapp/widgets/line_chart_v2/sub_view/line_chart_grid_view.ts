@@ -12,7 +12,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-import {ChangeDetectionStrategy, Component, Input} from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  Input,
+  OnChanges,
+} from '@angular/core';
 import {Extent, Scale} from '../lib/public_types';
 import {
   getDomSizeInformedTickCount,
@@ -24,7 +29,7 @@ import {
   selector: 'line-chart-grid-view',
   template: `<svg>
     <line
-      *ngFor="let tick of getXTicks()"
+      *ngFor="let tick of xTicks"
       [class.zero]="tick === 0"
       [attr.x1]="getDomX(tick)"
       y1="0"
@@ -32,7 +37,7 @@ import {
       [attr.y2]="domDim.height"
     ></line>
     <line
-      *ngFor="let tick of getYTicks()"
+      *ngFor="let tick of yTicks"
       [class.zero]="tick === 0"
       x1="0"
       [attr.y1]="getDomY(tick)"
@@ -65,7 +70,7 @@ import {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class LineChartGridView {
+export class LineChartGridView implements OnChanges {
   @Input()
   viewExtent!: Extent;
 
@@ -84,6 +89,23 @@ export class LineChartGridView {
   @Input()
   domDim!: {width: number; height: number};
 
+  xTicks: number[] = [];
+  yTicks: number[] = [];
+
+  // Every input feeds the tick computation, so recomputing on any input change
+  // is both necessary and sufficient; the template must not recompute them on
+  // each change detection since panning triggers one per frame.
+  ngOnChanges() {
+    this.xTicks = this.xScale.ticks(
+      this.viewExtent.x,
+      getDomSizeInformedTickCount(this.domDim.width, this.xGridCount)
+    );
+    this.yTicks = this.yScale.ticks(
+      this.viewExtent.y,
+      getDomSizeInformedTickCount(this.domDim.height, this.yGridCount)
+    );
+  }
+
   getDomX(dataX: number): number {
     return this.xScale.forward(
       this.viewExtent.x,
@@ -97,20 +119,6 @@ export class LineChartGridView {
       this.viewExtent.y,
       getScaleRangeFromDomDim(this.domDim, 'y'),
       dataY
-    );
-  }
-
-  getXTicks() {
-    return this.xScale.ticks(
-      this.viewExtent.x,
-      getDomSizeInformedTickCount(this.domDim.width, this.xGridCount)
-    );
-  }
-
-  getYTicks() {
-    return this.yScale.ticks(
-      this.viewExtent.y,
-      getDomSizeInformedTickCount(this.domDim.height, this.yGridCount)
     );
   }
 }

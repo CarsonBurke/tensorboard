@@ -33,6 +33,7 @@ import {
   generateScalarCardMinMaxStep,
   getCardId,
   getCardSelectionStateToBoolean,
+  getLoadableKey,
   getMinMaxStepFromCardState,
   getPinnedCardId,
   getRunIds,
@@ -145,7 +146,16 @@ describe('metrics store utils', () => {
         },
       },
     };
-    expect(retainTimeSeriesRuns(timeSeriesData, new Set(['run1']))).toEqual({
+    const {timeSeriesData: actual, changedLoadableKeys} = retainTimeSeriesRuns(
+      timeSeriesData,
+      new Set(['run1']),
+      [
+        {plugin: PluginType.SCALARS, tag: 'tagA', runId: null},
+        {plugin: PluginType.IMAGES, tag: 'tagC', runId: 'run1', sample: 0},
+      ]
+    );
+
+    expect(actual).toEqual({
       scalars: {
         tagA: {
           runToSeries: {run1: []},
@@ -162,6 +172,12 @@ describe('metrics store utils', () => {
         },
       },
     });
+    // Only the loadables that dropped runs are reported, so the reducer can
+    // leave every other card's step index and range alone.
+    expect([...changedLoadableKeys]).toEqual([
+      getLoadableKey(PluginType.SCALARS, 'tagA'),
+      getLoadableKey(PluginType.IMAGES, 'tagC', 0),
+    ]);
   });
 
   it('retainTimeSeriesRuns keeps object identity when nothing is dropped', () => {
@@ -181,15 +197,20 @@ describe('metrics store utils', () => {
 
     const actual = retainTimeSeriesRuns(
       timeSeriesData,
-      new Set(['run1', 'run2'])
+      new Set(['run1', 'run2']),
+      [
+        {plugin: PluginType.SCALARS, tag: 'tagA', runId: null},
+        {plugin: PluginType.IMAGES, tag: 'tagC', runId: 'run1', sample: 0},
+      ]
     );
 
-    expect(actual).toBe(timeSeriesData);
-    expect(actual.scalars['tagA']).toBe(scalarLoadable);
-    expect(actual.images['tagC'][0]).toBe(imageLoadable);
+    expect(actual.timeSeriesData).toBe(timeSeriesData);
+    expect(actual.timeSeriesData.scalars['tagA']).toBe(scalarLoadable);
+    expect(actual.timeSeriesData.images['tagC'][0]).toBe(imageLoadable);
+    expect(actual.changedLoadableKeys.size).toBe(0);
   });
 
-  it('retainTimeSeriesRuns keeps the load state of in-flight runs', () => {
+  it('retainTimeSeriesRuns drops deselected in-flight runs', () => {
     const timeSeriesData = {
       scalars: {
         tagA: {
@@ -204,21 +225,197 @@ describe('metrics store utils', () => {
       images: {},
     };
 
-    // A request for 'run2' is in flight and cannot be cancelled; dropping its
-    // load state would let the next trigger request it a second time.
-    expect(retainTimeSeriesRuns(timeSeriesData, new Set(['run1']))).toEqual({
+    expect(
+      retainTimeSeriesRuns(timeSeriesData, new Set(['run1']), [
+        {plugin: PluginType.SCALARS, tag: 'tagA', runId: null},
+      ]).timeSeriesData
+    ).toEqual({
       scalars: {
         tagA: {
           runToSeries: {run1: []},
           runToLoadState: {
             run1: DataLoadState.LOADED,
-            run2: DataLoadState.LOADING,
           },
         },
       },
       histograms: {},
       images: {},
     });
+  });
+
+  it('releases offscreen in-flight histories without caching incomplete data', () => {
+    const loadable = {
+      runToSeries: {run1: []},
+      runToLoadState: {run1: DataLoadState.LOADING},
+    };
+    const actual = retainTimeSeriesRuns(
+      {
+        scalars: {visible: loadable, offscreen: loadable},
+        histograms: {visible: loadable},
+        images: {},
+      },
+      new Set(['run1']),
+      [{plugin: PluginType.SCALARS, tag: 'visible', runId: null}]
+    );
+    expect(actual.timeSeriesData).toEqual({
+      scalars: {visible: loadable},
+      histograms: {},
+      images: {},
+    });
+  });
+
+  it('buffered image owners protect their sample and run even if deselected', () => {
+    const loadable = {
+      runToSeries: {run1: [], run2: [], run3: []},
+      runToLoadState: {
+        run1: DataLoadState.LOADED,
+        run2: DataLoadState.LOADING,
+        run3: DataLoadState.LOADED,
+      },
+    };
+    const actual = retainTimeSeriesRuns(
+      {
+        scalars: {},
+        histograms: {},
+        images: {tagA: {0: loadable, 1: loadable}},
+      },
+      new Set<string>(),
+      [
+        {plugin: PluginType.IMAGES, tag: 'tagA', runId: 'run1', sample: 0},
+        {plugin: PluginType.IMAGES, tag: 'tagA', runId: 'run2', sample: 0},
+      ]
+    );
+    expect(actual.timeSeriesData.images).toEqual({
+      tagA: {
+        0: {
+          runToSeries: {run1: [], run2: []},
+          runToLoadState: {
+            run1: DataLoadState.LOADED,
+            run2: DataLoadState.LOADING,
+          },
+        },
+      },
+    });
+  });
+
+  it('evicts the least recently used inactive history, never a buffered owner', () => {
+    const loadable = {
+      runToSeries: {run1: []},
+      runToLoadState: {run1: DataLoadState.LOADED},
+    };
+    const data = {
+      scalars: {tagA: loadable, tagB: loadable, tagC: loadable},
+      histograms: {},
+      images: {},
+    };
+    const selected = new Set(['run1']);
+    const card = (tag: string) => ({
+      plugin: PluginType.SCALARS,
+      tag,
+      runId: null,
+    });
+    let retained = retainTimeSeriesRuns(data, selected, [card('tagC')]);
+    const budget = [...retained.inactiveTimeSeries.values()].reduce(
+      (sum, bytes) => sum + bytes,
+      0
+    );
+    // Revisiting A promotes it more recently than B.
+    retained = retainTimeSeriesRuns(
+      retained.timeSeriesData,
+      selected,
+      [card('tagA'), card('tagC')],
+      retained.inactiveTimeSeries,
+      budget
+    );
+    retained = retainTimeSeriesRuns(
+      retained.timeSeriesData,
+      selected,
+      [card('tagC')],
+      retained.inactiveTimeSeries,
+      budget
+    );
+    retained = retainTimeSeriesRuns(
+      retained.timeSeriesData,
+      selected,
+      [],
+      retained.inactiveTimeSeries,
+      budget
+    );
+    expect(retained.timeSeriesData.scalars).toEqual({
+      tagA: loadable,
+      tagC: loadable,
+    });
+    retained = retainTimeSeriesRuns(
+      retained.timeSeriesData,
+      selected,
+      [card('tagA')],
+      retained.inactiveTimeSeries,
+      0
+    );
+    expect(retained.timeSeriesData.scalars).toEqual({tagA: loadable});
+  });
+
+  it('charges nested histogram bins and image identifiers to the inactive budget', () => {
+    const data = {
+      scalars: {},
+      histograms: {
+        histogram: {
+          runToSeries: {
+            run1: [
+              {
+                step: 1,
+                wallTime: 1,
+                bins: Array.from({length: 20}, () => ({
+                  min: 0,
+                  max: 1,
+                  count: 1,
+                })),
+              },
+            ],
+          },
+          runToLoadState: {run1: DataLoadState.LOADED},
+        },
+      },
+      images: {
+        image: {
+          0: {
+            runToSeries: {
+              run1: [{step: 1, wallTime: 1, imageId: 'x'.repeat(1024)}],
+            },
+            runToLoadState: {run1: DataLoadState.LOADED},
+          },
+        },
+      },
+    };
+    const retained = retainTimeSeriesRuns(
+      data,
+      new Set(['run1']),
+      [],
+      new Map(),
+      1024
+    );
+    expect(retained.timeSeriesData).toEqual({
+      scalars: {},
+      histograms: {},
+      images: {},
+    });
+  });
+
+  it('does not cache invalidated data but remembers real failures', () => {
+    const stale = {
+      runToSeries: {run1: []},
+      runToLoadState: {run1: DataLoadState.NOT_LOADED},
+    };
+    const failed = {
+      runToSeries: {},
+      runToLoadState: {run1: DataLoadState.FAILED},
+    };
+    const retained = retainTimeSeriesRuns(
+      {scalars: {stale, failed}, histograms: {}, images: {}},
+      new Set(['run1']),
+      []
+    );
+    expect(retained.timeSeriesData.scalars).toEqual({failed});
   });
 
   describe('createPluginDataWithLoadable', () => {

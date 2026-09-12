@@ -22,6 +22,24 @@ export interface RunMatchable {
   experimentAlias: ExperimentAlias;
 }
 
+// Selectors call `matchRunToRegex` once per run for the same regex string.
+// Compiling per call dominated the cost with thousands of runs.
+let cachedRegexString: string | null = null;
+let cachedRegex: RegExp | null = null;
+
+function compileRegex(regexString: string): RegExp | null {
+  if (regexString !== cachedRegexString) {
+    cachedRegexString = regexString;
+    try {
+      // Without the `g`/`y` flags, `test` is stateless and safe to share.
+      cachedRegex = new RegExp(regexString, 'i');
+    } catch {
+      cachedRegex = null;
+    }
+  }
+  return cachedRegex;
+}
+
 /**
  * Matches an entry based on regex and business logic.
  *
@@ -41,19 +59,13 @@ export function matchRunToRegex(
 ): boolean {
   if (!regexString) return true;
 
-  let regex: RegExp;
-  try {
-    regex = new RegExp(regexString, 'i');
-  } catch {
-    return false;
-  }
+  const regex = compileRegex(regexString);
+  if (!regex) return false;
 
-  const matchables = [runMatchable.runName];
-  if (shouldMatchExperiment) {
-    matchables.push(
-      runMatchable.experimentAlias.aliasText,
-      `${runMatchable.experimentAlias.aliasText}/${runMatchable.runName}`
-    );
-  }
-  return matchables.some((matchable) => regex!.test(matchable));
+  if (regex.test(runMatchable.runName)) return true;
+  if (!shouldMatchExperiment) return false;
+  const aliasText = runMatchable.experimentAlias.aliasText;
+  return (
+    regex.test(aliasText) || regex.test(`${aliasText}/${runMatchable.runName}`)
+  );
 }

@@ -52,7 +52,7 @@ describe('RunLocalStorageDataSource', () => {
     expect(state.colorOverrides).toEqual(new Map());
   });
 
-  it('prunes stored runs that are not in the current run directory', () => {
+  it('retains saved selections and explicit colors outside the visible page', () => {
     window.localStorage.setItem(
       TEST_ONLY.RUN_LOCAL_STORAGE_KEY,
       JSON.stringify({
@@ -71,12 +71,22 @@ describe('RunLocalStorageDataSource', () => {
 
     const state = dataSource.getState('namespace', [createRun('run1')]);
 
-    expect(state.selection).toEqual(new Map([['run1', true]]));
-    expect(state.colorOverrides).toEqual(new Map([['run1', '#fff']]));
-    expect(state.newestRunId).toBeUndefined();
+    expect(state.selection).toEqual(
+      new Map([
+        ['run1', true],
+        ['deleted', false],
+      ])
+    );
+    expect(state.colorOverrides).toEqual(
+      new Map([
+        ['run1', '#fff'],
+        ['deleted', '#000'],
+      ])
+    );
+    expect(state.newestRunId).toBe('deleted');
   });
 
-  it('writes only the active namespace and current runs', () => {
+  it('writes the active page and user-owned off-page selections and colors', () => {
     window.localStorage.setItem(
       TEST_ONLY.RUN_LOCAL_STORAGE_KEY,
       JSON.stringify({
@@ -112,9 +122,9 @@ describe('RunLocalStorageDataSource', () => {
       namespaces: {
         namespace: {
           updatedAtMs: jasmine.any(Number),
-          runIds: ['run1'],
-          selection: {run1: false},
-          colorOverrides: {run1: '#fff'},
+          runIds: ['run1', 'deleted'],
+          selection: {run1: false, deleted: true},
+          colorOverrides: {run1: '#fff', deleted: '#000'},
           newestRunId: 'run1',
         },
       },
@@ -164,17 +174,24 @@ describe('RunLocalStorageDataSource', () => {
     expect(setItemSpy).not.toHaveBeenCalled();
   });
 
-  it('removes storage when there are no current runs', () => {
-    window.localStorage.setItem(TEST_ONLY.RUN_LOCAL_STORAGE_KEY, '{}');
-
-    dataSource.setState('namespace', [], {
+  it('preserves user-owned state on an empty page until selection and colors are cleared', () => {
+    const ownedState = {
       selection: new Map([['run1', true]]),
       colorOverrides: new Map([['run1', '#fff']]),
-    });
-
-    expect(window.localStorage.getItem(TEST_ONLY.RUN_LOCAL_STORAGE_KEY)).toBe(
-      null
+    };
+    dataSource.setState('namespace', [], ownedState);
+    expect(new RunLocalStorageDataSource().getState('namespace', [])).toEqual(
+      ownedState
     );
+
+    dataSource.setState('namespace', [], {
+      selection: new Map(),
+      colorOverrides: new Map(),
+    });
+    expect(new RunLocalStorageDataSource().getState('namespace', [])).toEqual({
+      selection: new Map(),
+      colorOverrides: new Map(),
+    });
   });
 
   it('prefers the latest session state after a failed write', () => {

@@ -85,7 +85,7 @@ struct RunLoaderData {
 }
 
 #[derive(Debug)]
-struct StageTimeSeries {
+pub(crate) struct StageTimeSeries {
     data_class: pb::DataClass,
     metadata: Box<pb::SummaryMetadata>,
     rsv: StageReservoir<StageValue>,
@@ -108,7 +108,7 @@ impl StageTimeSeries {
     ) -> Self {
         let data_class =
             pb::DataClass::from_i32(metadata.data_class).unwrap_or(pb::DataClass::Unknown);
-        let capacity = StageTimeSeries::capacity(&metadata, plugin_sampling_hint);
+        let capacity = StageTimeSeries::capacity(&metadata, &plugin_sampling_hint);
         Self {
             data_class,
             metadata,
@@ -116,9 +116,9 @@ impl StageTimeSeries {
         }
     }
 
-    fn capacity(
+    pub(crate) fn capacity(
         metadata: &pb::SummaryMetadata,
-        plugin_sampling_hint: Arc<PluginSamplingHint>,
+        plugin_sampling_hint: &PluginSamplingHint,
     ) -> Capacity {
         let data_class =
             pb::DataClass::from_i32(metadata.data_class).unwrap_or(pb::DataClass::Unknown);
@@ -195,7 +195,7 @@ impl StageTimeSeries {
 }
 
 /// Minimum time to wait between committing while a run is still loading.
-const COMMIT_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const COMMIT_INTERVAL: Duration = Duration::from_secs(5);
 
 impl<R: Read> RunLoader<R> {
     pub fn new(run: Run, plugin_sampling_hint: Arc<PluginSamplingHint>) -> Self {
@@ -323,7 +323,7 @@ impl<R: Read> RunLoader<R> {
 
 // Tensor value assumed for summaries that only store metadata and have no actual value. A length-0
 // float vector is of minimal serialized length (6 bytes) among valid tensors.
-fn null_tensor_proto() -> pb::TensorProto {
+pub(crate) fn null_tensor_proto() -> pb::TensorProto {
     pb::TensorProto {
         dtype: pb::DataType::DtFloat.into(),
         tensor_shape: Some(pb::TensorShapeProto {

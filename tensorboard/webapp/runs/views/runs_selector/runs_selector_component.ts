@@ -13,10 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {
+  AfterViewInit,
+  ChangeDetectorRef,
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   HostListener,
   Input,
+  OnDestroy,
 } from '@angular/core';
 import {RunsTableColumn} from '../runs_table/types';
 
@@ -29,6 +33,7 @@ import {RunsTableColumn} from '../runs_table/types';
       [experimentIds]="experimentIds"
       [scrollTop]="scrollTop"
       [viewportHeight]="viewportHeight"
+      (scrollReset)="resetScroll()"
     ></runs-table>
   `,
   styles: [
@@ -47,12 +52,36 @@ import {RunsTableColumn} from '../runs_table/types';
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class RunsSelectorComponent {
+export class RunsSelectorComponent implements AfterViewInit, OnDestroy {
   @Input() experimentIds!: string[];
   @Input() columns!: RunsTableColumn[];
 
   scrollTop = 0;
   viewportHeight = 0;
+
+  private resizeObserver?: ResizeObserver;
+
+  constructor(
+    private readonly elementRef: ElementRef<HTMLElement>,
+    private readonly changeDetectorRef: ChangeDetectorRef
+  ) {}
+
+  ngAfterViewInit() {
+    this.resizeObserver = new ResizeObserver(() => {
+      this.viewportHeight = this.elementRef.nativeElement.clientHeight;
+      this.changeDetectorRef.markForCheck();
+    });
+    this.resizeObserver.observe(this.elementRef.nativeElement);
+  }
+
+  ngOnDestroy() {
+    this.resizeObserver?.disconnect();
+  }
+
+  resetScroll() {
+    this.elementRef.nativeElement.scrollTop = 0;
+    this.scrollTop = 0;
+  }
 
   @HostListener('scroll', ['$event'])
   onScroll(event: Event) {

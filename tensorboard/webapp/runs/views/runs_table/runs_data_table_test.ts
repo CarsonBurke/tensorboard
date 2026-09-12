@@ -18,9 +18,10 @@ import {
   Component,
   Input,
   NO_ERRORS_SCHEMA,
+  SimpleChange,
   ViewChild,
 } from '@angular/core';
-import {TestBed} from '@angular/core/testing';
+import {fakeAsync, TestBed, tick} from '@angular/core/testing';
 import {MatButtonModule} from '@angular/material/button';
 import {MatCheckboxModule} from '@angular/material/checkbox';
 import {MatMenuModule} from '@angular/material/menu';
@@ -499,4 +500,44 @@ describe('runs_data_table', () => {
     expect(renderedRunIds).not.toContain('run0');
     expect(renderedRunIds).toContain('run99');
   });
+  it('seeks unseen catalog windows by scrolling and renders the returned window', fakeAsync(() => {
+    const table = new RunsDataTable();
+    table.viewportHeight = 480;
+    table.data = [{id: 'exp/first', run: 'first'}];
+    table.catalog = {
+      runIds: ['exp/first'],
+      totals: {exp: 1_000_000},
+      offset: 0,
+    };
+    table.scrollTop = 5_000_000;
+    const requested: Array<{offset: number; limit: number}> = [];
+    table.windowChanged.subscribe((window) => requested.push(window));
+    table.ngOnChanges({scrollTop: new SimpleChange(0, table.scrollTop, false)});
+    tick();
+    expect(requested.length).toBe(1);
+    expect(requested[0].offset).toBeGreaterThan(400_000);
+    expect(requested[0].limit).toBeLessThan(200);
+    const window = requested[0];
+    table.data = Array.from({length: window.limit}, (_, index) => ({
+      id: `exp/${window.offset + index}`,
+      run: String(window.offset + index),
+    }));
+    table.catalog = {
+      runIds: table.data.map(({id}) => id),
+      totals: {exp: 1_000_000},
+      offset: window.offset,
+    };
+    table.ngOnChanges({catalog: new SimpleChange(null, table.catalog, false)});
+    tick();
+    expect(requested.length).toBe(1);
+    expect(table.visibleData.some(({id}) => id === 'exp/first')).toBeFalse();
+    expect(
+      table.visibleData.every(({id}) => table.catalog!.runIds.includes(id))
+    ).toBeTrue();
+    expect(table.visibleData.length).toBeGreaterThan(0);
+    table.scrollTop = 0;
+    table.ngOnChanges({scrollTop: new SimpleChange(5_000_000, 0, false)});
+    tick();
+    expect(requested[1].offset).toBe(0);
+  }));
 });

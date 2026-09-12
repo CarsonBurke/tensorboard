@@ -16,6 +16,7 @@ import {createFeatureSelector, createSelector} from '@ngrx/store';
 import {DataLoadState, LoadState} from '../../types/data';
 import {ElementId} from '../../util/dom';
 import {DeepReadonly} from '../../util/types';
+import {MetricsCatalogCard, MetricsCatalogGroup} from '../data_source';
 import {
   CardId,
   CardIdWithMetadata,
@@ -39,17 +40,20 @@ import {
 } from './metrics_store_internal_utils';
 import {
   CardMetadataMap,
+  CardState,
   CardStateMap,
   CardStepIndexMetaData,
   MetricsSettings,
+  DEFAULT_METRICS_CATALOG_VIEWPORT,
   MetricsState,
   METRICS_FEATURE_KEY,
   RunToSeries,
   TagMetadata,
+  TimeSeriesData,
 } from './metrics_types';
 import {ColumnHeader, DataTableMode} from '../../widgets/data_table/types';
 import {Extent} from '../../widgets/line_chart_v2/lib/public_types';
-import {memoize} from '../../util/memoize';
+import {hasOwn} from '../../util/lang';
 import {getDashboardDisplayedHparamColumns} from '../../hparams/_redux/hparams_selectors';
 import {dataTableUtils} from '../../widgets/data_table/utils';
 
@@ -59,6 +63,47 @@ const selectMetricsState =
 export const getMetricsTagMetadataLoadState = createSelector(
   selectMetricsState,
   (state: MetricsState): LoadState => state.tagMetadataLoadState
+);
+
+export const getMetricsCatalogViewport = createSelector(
+  selectMetricsState,
+  (state) => state.catalogViewport ?? DEFAULT_METRICS_CATALOG_VIEWPORT
+);
+
+const getMetricsCatalog = createSelector(
+  selectMetricsState,
+  (state) => state.tagMetadataSource?.catalog
+);
+const EMPTY_CATALOG_GROUPS: MetricsCatalogGroup[] = [];
+const EMPTY_CATALOG_CARDS: MetricsCatalogCard[] = [];
+
+export const getMetricsCatalogEnabled = createSelector(
+  getMetricsCatalog,
+  (catalog) => !!catalog
+);
+export const getMetricsCatalogGroups = createSelector(
+  getMetricsCatalog,
+  (catalog) => catalog?.groups ?? EMPTY_CATALOG_GROUPS
+);
+export const getMetricsCatalogGroupOffset = createSelector(
+  getMetricsCatalog,
+  (catalog) => catalog?.groupOffset ?? 0
+);
+export const getMetricsCatalogFilteredOffset = createSelector(
+  getMetricsCatalog,
+  (catalog) => catalog?.filteredOffset ?? 0
+);
+export const getMetricsCatalogTotalGroups = createSelector(
+  getMetricsCatalog,
+  (catalog) => catalog?.totalGroups ?? 0
+);
+export const getMetricsCatalogCards = createSelector(
+  getMetricsCatalog,
+  (catalog) => catalog?.cards ?? EMPTY_CATALOG_CARDS
+);
+export const getMetricsCatalogTotalCards = createSelector(
+  getMetricsCatalog,
+  (catalog) => catalog?.totalCards ?? 0
 );
 
 export const getMetricsTagMetadata = createSelector(
@@ -78,7 +123,7 @@ const getCardIds = createSelector(selectMetricsState, (state): CardId[] => {
 export const getCardLoadState = createSelector(
   selectMetricsState,
   (state: MetricsState, cardId: CardId): DataLoadState => {
-    if (!state.cardMetadataMap.hasOwnProperty(cardId)) {
+    if (!hasOwn(state.cardMetadataMap, cardId)) {
       return DataLoadState.NOT_LOADED;
     }
     const {plugin, tag, runId, sample} = state.cardMetadataMap[cardId];
@@ -93,7 +138,7 @@ export const getCardLoadState = createSelector(
     }
     const runToLoadState = loadable.runToLoadState;
     if (runId) {
-      return runToLoadState.hasOwnProperty(runId)
+      return hasOwn(runToLoadState, runId)
         ? runToLoadState[runId]
         : DataLoadState.NOT_LOADED;
     }
@@ -102,9 +147,7 @@ export const getCardLoadState = createSelector(
     // Only the runs that have actually been requested are tracked. The
     // dashboard requests the selected subset of a tag's runs, so requiring
     // every run of the tag to be loaded would keep cards loading forever.
-    const trackedRunIds = runIds.filter((id) =>
-      runToLoadState.hasOwnProperty(id)
-    );
+    const trackedRunIds = runIds.filter((id) => hasOwn(runToLoadState, id));
     if (!trackedRunIds.length) {
       return DataLoadState.NOT_LOADED;
     }
@@ -121,6 +164,23 @@ export const getCardLoadState = createSelector(
   }
 );
 
+const getCardMetadataMap = createSelector(
+  selectMetricsState,
+  (state: MetricsState): CardMetadataMap => {
+    return state.cardMetadataMap;
+  }
+);
+
+const selectTagMetadata = createSelector(
+  selectMetricsState,
+  (state: MetricsState): TagMetadata => state.tagMetadata
+);
+
+const selectTimeSeriesData = createSelector(
+  selectMetricsState,
+  (state: MetricsState): TimeSeriesData => state.timeSeriesData
+);
+
 /**
  * Per-run fetch bookkeeping for a card: the runs the card's tag is known to
  * have, and the load state of every run requested for the card so far.
@@ -130,57 +190,75 @@ export interface CardRunLoadStates {
   runToLoadState: {[runId: string]: DataLoadState};
 }
 
-export const getCardRunLoadStates = createSelector(
-  selectMetricsState,
-  (state: MetricsState, cardId: CardId): CardRunLoadStates => {
-    if (!state.cardMetadataMap.hasOwnProperty(cardId)) {
-      return {tagRunIds: [], runToLoadState: {}};
-    }
-    const {plugin, tag, sample} = state.cardMetadataMap[cardId];
-    const loadable = storeUtils.getTimeSeriesLoadable(
-      state.timeSeriesData,
-      plugin,
-      tag,
-      sample
-    );
-    return {
-      tagRunIds: storeUtils.getRunIds(state.tagMetadata, plugin, tag, sample),
-      runToLoadState: loadable ? loadable.runToLoadState : {},
-    };
-  }
-);
+const EMPTY_TAG_RUN_IDS: string[] = [];
+const EMPTY_RUN_TO_LOAD_STATE: {[runId: string]: DataLoadState} = {};
 
-export const getLoadableTimeSeries = memoize((cardMetadata: CardMetadata) => {
-  return createSelector(
-    (state: MetricsState): MetricsState => state,
-    (state: MetricsState): DeepReadonly<RunToSeries> | null => {
-      const {plugin, tag, sample} = cardMetadata;
+// Factories are intentionally not cached globally: the subscribing component
+// or request owns the selector and its last input state.
+const getCardTagRunIds = (cardId: CardId) =>
+  createSelector(
+    getCardMetadataMap,
+    selectTagMetadata,
+    (cardMetadataMap, tagMetadata): string[] => {
+      if (!hasOwn(cardMetadataMap, cardId)) {
+        return EMPTY_TAG_RUN_IDS;
+      }
+      const {plugin, tag, sample} = cardMetadataMap[cardId];
+      return storeUtils.getRunIds(tagMetadata, plugin, tag, sample);
+    }
+  );
+
+const getCardRunToLoadState = (cardId: CardId) =>
+  createSelector(
+    getCardMetadataMap,
+    selectTimeSeriesData,
+    (cardMetadataMap, timeSeriesData): {[runId: string]: DataLoadState} => {
+      if (!hasOwn(cardMetadataMap, cardId)) {
+        return EMPTY_RUN_TO_LOAD_STATE;
+      }
+      const {plugin, tag, sample} = cardMetadataMap[cardId];
       const loadable = storeUtils.getTimeSeriesLoadable(
-        state.timeSeriesData,
+        timeSeriesData,
         plugin,
         tag,
         sample
       );
-      return loadable ? loadable.runToSeries : null;
+      return loadable ? loadable.runToLoadState : EMPTY_RUN_TO_LOAD_STATE;
     }
   );
-});
+
+/**
+ * Per-card selector factory: each card owns its memo cell, so subscribing N
+ * cards no longer makes every store emission recompute all N. Both fields are
+ * references the store already holds, so the result only changes when the
+ * card's tag runs or its own runs' load states change.
+ */
+export const getCardRunLoadStates = (cardId: CardId) =>
+  createSelector(
+    getCardTagRunIds(cardId),
+    getCardRunToLoadState(cardId),
+    (tagRunIds, runToLoadState): CardRunLoadStates => ({
+      tagRunIds,
+      runToLoadState,
+    })
+  );
 
 export const getCardTimeSeries = createSelector(
   selectMetricsState,
   (state: MetricsState, cardId: CardId): DeepReadonly<RunToSeries> | null => {
-    if (!state.cardMetadataMap.hasOwnProperty(cardId)) {
+    if (!hasOwn(state.cardMetadataMap, cardId)) {
       return null;
     }
 
-    return getLoadableTimeSeries(state.cardMetadataMap[cardId])(state);
-  }
-);
-
-const getCardMetadataMap = createSelector(
-  selectMetricsState,
-  (state: MetricsState): CardMetadataMap => {
-    return state.cardMetadataMap;
+    const {plugin, tag, sample} = state.cardMetadataMap[cardId];
+    return (
+      storeUtils.getTimeSeriesLoadable(
+        state.timeSeriesData,
+        plugin,
+        tag,
+        sample
+      )?.runToSeries ?? null
+    );
   }
 );
 
@@ -190,7 +268,7 @@ export const getCardMetadata = createSelector(
     metadataMap: CardMetadataMap,
     cardId: CardId
   ): DeepReadonly<CardMetadata> | null => {
-    if (!metadataMap.hasOwnProperty(cardId)) {
+    if (!hasOwn(metadataMap, cardId)) {
       return null;
     }
     return metadataMap[cardId];
@@ -231,7 +309,7 @@ export const getNonEmptyCardIdsWithMetadata = createSelector(
   ): DeepReadonly<CardIdWithMetadata[]> => {
     return cardIds
       .filter((cardId) => {
-        return metadataMap.hasOwnProperty(cardId);
+        return hasOwn(metadataMap, cardId);
       })
       .map((cardId) => {
         return {cardId, ...metadataMap[cardId]};
@@ -246,7 +324,7 @@ export const getNonEmptyCardIdsWithMetadata = createSelector(
 export const getCardStepIndexMetaData = createSelector(
   selectMetricsState,
   (state: MetricsState, cardId: CardId): CardStepIndexMetaData | null => {
-    if (!state.cardStepIndex.hasOwnProperty(cardId)) {
+    if (!hasOwn(state.cardStepIndex, cardId)) {
       return null;
     }
     return state.cardStepIndex[cardId];
@@ -293,7 +371,7 @@ export const getPinnedCardsWithMetadata = createSelector(
   ): DeepReadonly<CardIdWithMetadata[]> => {
     return [...cardToPinnedCopy.values()]
       .filter((cardId) => {
-        return metadataMap.hasOwnProperty(cardId);
+        return hasOwn(metadataMap, cardId);
       })
       .map((cardId) => {
         return {cardId, ...metadataMap[cardId]};
@@ -566,7 +644,7 @@ export const getTableEditorSelectedTab = createSelector(
   (state): DataTableMode => state.tableEditorSelectedTab
 );
 
-export const getMetricsCardRangeSelectionEnabled = memoize((cardId) =>
+export const getMetricsCardRangeSelectionEnabled = (cardId: CardId) =>
   createSelector(
     getCardStateMap,
     getMetricsRangeSelectionEnabled,
@@ -582,8 +660,19 @@ export const getMetricsCardRangeSelectionEnabled = memoize((cardId) =>
         linkedTimeEnabled,
         cardId
       )
-  )
-);
+  );
+
+/**
+ * A single card's slice of the card state map. Card states are replaced
+ * individually by the reducers, so this lets a card's derived selectors ignore
+ * every action that only touches other cards.
+ */
+const getCardState = (cardId: CardId) =>
+  createSelector(
+    getCardStateMap,
+    (cardStateMap: CardStateMap): Partial<CardState> | undefined =>
+      cardStateMap[cardId]
+  );
 
 /**
  * Gets the min and max step visible in a metrics card.
@@ -592,13 +681,11 @@ export const getMetricsCardRangeSelectionEnabled = memoize((cardId) =>
  *
  * Note: min max within userViewBox is not necessarily a subset of dataMinMax.
  */
-export const getMetricsCardMinMax = createSelector(
-  getCardStateMap,
-  (cardStateMap: CardStateMap, cardId: CardId): MinMaxStep | undefined => {
-    if (!cardStateMap[cardId]) return;
-    return getMinMaxStepFromCardState(cardStateMap[cardId]);
-  }
-);
+export const getMetricsCardMinMax = (cardId: CardId) =>
+  createSelector(getCardState(cardId), (cardState): MinMaxStep | undefined => {
+    if (!cardState) return;
+    return getMinMaxStepFromCardState(cardState);
+  });
 
 /**
  * Returns the min and max step found in the cards data.
@@ -718,7 +805,7 @@ export const getRangeSelectionHeaders = createSelector(
   }
 );
 
-export const getColumnHeadersForCard = memoize((cardId: string) => {
+export const getColumnHeadersForCard = (cardId: string) => {
   return createSelector(
     getMetricsCardRangeSelectionEnabled(cardId),
     getSingleSelectionHeaders,
@@ -733,13 +820,12 @@ export const getColumnHeadersForCard = memoize((cardId: string) => {
         : singleSelectionHeaders;
     }
   );
-});
+};
 
-export const getGroupedHeadersForCard = memoize((cardId: string) =>
+export const getGroupedHeadersForCard = (cardId: string) =>
   createSelector(
     getColumnHeadersForCard(cardId),
     getDashboardDisplayedHparamColumns,
     (standardColumns, hparamColumns) =>
       dataTableUtils.groupColumns([...standardColumns, ...hparamColumns])
-  )
-);
+  );

@@ -12,13 +12,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-import {ScrollingModule} from '@angular/cdk/scrolling';
+import {CdkScrollable, ScrollingModule} from '@angular/cdk/scrolling';
 import {
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   DebugElement,
+  ElementRef,
   Input,
   NO_ERRORS_SCHEMA,
+  NgZone,
+  SimpleChange,
   Type,
 } from '@angular/core';
 import {
@@ -493,8 +497,10 @@ describe('metrics main view', () => {
           time: 0,
           isIntersecting: false,
           boundingClientRect: new DOMRectReadOnly(),
-          intersectionRatio: 0,
-          intersectionRect: new DOMRectReadOnly(),
+          intersectionRatio: override.isIntersecting ? 1 : 0,
+          intersectionRect: override.isIntersecting
+            ? new DOMRectReadOnly(0, 0, 100, 100)
+            : new DOMRectReadOnly(),
           rootBounds: new DOMRectReadOnly(),
           ...override,
         };
@@ -598,77 +604,6 @@ describe('metrics main view', () => {
                 cardId: directives[0].cardId,
               },
             ],
-          }),
-        ]);
-      });
-
-      it('respects the latest of competing observer entries', () => {
-        store.overrideSelector(
-          selectors.getNonEmptyCardIdsWithMetadata,
-          createScalarCardMetadata(1)
-        );
-        const fixture = TestBed.createComponent(MainViewContainer);
-        fixture.detectChanges();
-
-        const directives = getCardLazyLoaders(getCards(fixture.debugElement));
-        const cardObserver = directives[0].cardObserver!;
-        simulateIntersection(cardObserver, [
-          {
-            time: 10,
-            target: directives[0].hostForTest().nativeElement,
-            isIntersecting: true,
-          },
-          {
-            time: 20,
-            target: directives[0].hostForTest().nativeElement,
-            isIntersecting: false,
-          },
-        ]);
-
-        // The more recent entry does not intersect.
-        expect(dispatchedActions).toEqual([
-          actions.cardVisibilityChanged({
-            enteredCards: [],
-            exitedCards: [
-              {
-                elementId: jasmine.any(Symbol) as any,
-                cardId: directives[0].cardId,
-              },
-            ],
-          }),
-        ]);
-
-        simulateIntersection(cardObserver, [
-          {
-            time: 30,
-            target: directives[0].hostForTest().nativeElement,
-            isIntersecting: false,
-          },
-          {
-            time: 40,
-            target: directives[0].hostForTest().nativeElement,
-            isIntersecting: true,
-          },
-        ]);
-
-        expect(dispatchedActions).toEqual([
-          actions.cardVisibilityChanged({
-            enteredCards: [],
-            exitedCards: [
-              {
-                elementId: jasmine.any(Symbol) as any,
-                cardId: directives[0].cardId,
-              },
-            ],
-          }),
-          actions.cardVisibilityChanged({
-            enteredCards: [
-              {
-                elementId: jasmine.any(Symbol) as any,
-                cardId: directives[0].cardId,
-              },
-            ],
-            exitedCards: [],
           }),
         ]);
       });
@@ -1173,6 +1108,330 @@ describe('metrics main view', () => {
       );
     });
 
+    it('preloads expanded groups within one viewport of their actual DOM bounds', fakeAsync(() => {
+      const root = document.createElement('div');
+      const host = document.createElement('div');
+      root.appendChild(host);
+      Object.defineProperty(root, 'clientHeight', {value: 1148});
+      Object.defineProperty(host, 'clientWidth', {value: 1568});
+      spyOn(root, 'getBoundingClientRect').and.returnValue(
+        new DOMRect(0, 0, 1568, 1148)
+      );
+      spyOn(host, 'getBoundingClientRect').and.returnValue(
+        new DOMRect(0, 0, 1568, 3000)
+      );
+      const view = new CardGroupsComponent(
+        new ElementRef(host),
+        {markForCheck() {}} as ChangeDetectorRef,
+        TestBed.inject(NgZone),
+        {getElementRef: () => new ElementRef(root)} as unknown as CdkScrollable
+      );
+      view.cardGroups = [
+        'far-above',
+        'above',
+        'visible',
+        'below',
+        'far-below',
+      ].map((groupName) => ({
+        groupName,
+        totalCards: 100,
+        items: [],
+      }));
+      [-1748, -1000, 600, 1148, 2296].forEach((top) => {
+        const group = document.createElement('div');
+        group.className = 'card-group';
+        host.appendChild(group);
+        spyOn(group, 'getBoundingClientRect').and.returnValue(
+          new DOMRect(0, top, 1568, 600)
+        );
+      });
+      view.catalog = {
+        groupOffset: 0,
+        totalGroups: 5,
+        expanded: new Map(
+          view.cardGroups.map(({groupName}) => [groupName, true])
+        ),
+        pages: new Map(),
+        pageSize: 12,
+        cardMinWidth: 335,
+        scope: 'selected-run',
+        viewport: {
+          groupOffset: 0,
+          groupLimit: 40,
+          visibleGroups: [],
+          filteredOffset: 0,
+          filteredLimit: 40,
+        },
+      };
+      const requested = jasmine.createSpy('viewport requested');
+      view.viewportChanged.subscribe(requested);
+      view.ngAfterViewInit();
+      tick(16);
+      expect(requested).toHaveBeenCalledWith(
+        jasmine.objectContaining({visibleGroups: ['above', 'visible', 'below']})
+      );
+      view.ngOnDestroy();
+    }));
+
+    it('retains unloaded category height but allows intrinsic loaded content to shrink', fakeAsync(() => {
+      const root = document.createElement('div');
+      const host = document.createElement('div');
+      const group = document.createElement('div');
+      group.className = 'card-group';
+      const grid = document.createElement('div');
+      grid.className = 'card-grid';
+      group.appendChild(grid);
+      const gridRect = spyOn(grid, 'getBoundingClientRect').and.returnValue(
+        new DOMRect(0, 42, 400, 1558)
+      );
+      host.appendChild(group);
+      root.appendChild(host);
+      Object.defineProperty(root, 'clientHeight', {value: 600});
+      Object.defineProperty(root, 'scrollTop', {value: 0, writable: true});
+      Object.defineProperty(root, 'scrollHeight', {value: 1600});
+      Object.defineProperty(host, 'clientWidth', {value: 400});
+      spyOn(root, 'getBoundingClientRect').and.returnValue(
+        new DOMRect(0, 0, 400, 600)
+      );
+      spyOn(host, 'getBoundingClientRect').and.callFake(
+        () => new DOMRect(0, -root.scrollTop, 400, 1600)
+      );
+      const groupRect = spyOn(group, 'getBoundingClientRect').and.callFake(
+        () => {
+          expect(NgZone.isInAngularZone()).toBeFalse();
+          return new DOMRect(0, 0, 400, 1600);
+        }
+      );
+      const markForCheck = jasmine.createSpy('markForCheck');
+      const zone = TestBed.inject(NgZone);
+      const view = new CardGroupsComponent(
+        new ElementRef(host),
+        {markForCheck} as unknown as ChangeDetectorRef,
+        zone,
+        {getElementRef: () => new ElementRef(root)} as unknown as CdkScrollable
+      );
+      view.cardGroups = [
+        {groupName: 'table', totalCards: 1, items: createNScalarCards(1)},
+      ];
+      view.catalog = {
+        groupOffset: 0,
+        totalGroups: 1,
+        expanded: new Map([['table', true]]),
+        pages: new Map(),
+        pageSize: 12,
+        cardMinWidth: 335,
+        scope: 'selected-run',
+        viewport: {
+          groupOffset: 0,
+          groupLimit: 40,
+          visibleGroups: [],
+          filteredOffset: 0,
+          filteredLimit: 40,
+        },
+      };
+      view.ngOnChanges({
+        catalog: new SimpleChange(null, view.catalog, true),
+      });
+      zone.run(() => view.ngAfterViewInit());
+      tick(32);
+      expect(view.reservedHeight(view.cardGroups[0])).toBe(1600);
+
+      const previousGroups = view.cardGroups;
+      view.cardGroups = [{groupName: 'table', totalCards: 1, items: []}];
+      // An unloaded grid's natural height is smaller than its loaded run table.
+      gridRect.and.returnValue(new DOMRect(0, 42, 400, 352));
+      view.ngOnChanges({
+        cardGroups: new SimpleChange(previousGroups, view.cardGroups, false),
+      });
+      tick(16);
+      expect(view.reservedHeight(view.cardGroups[0])).toBe(1600);
+
+      const enterAngular = spyOn(zone, 'run').and.callThrough();
+      markForCheck.calls.reset();
+      root.scrollTop = 10;
+      groupRect.calls.reset();
+      root.dispatchEvent(new Event('scroll'));
+      tick(16);
+      expect(enterAngular).not.toHaveBeenCalled();
+      expect(markForCheck).not.toHaveBeenCalled();
+      expect(groupRect).not.toHaveBeenCalled();
+
+      // The outer group still has its old reservation when loaded content
+      // shrinks; measuring that box would permanently retain 1600px.
+      const unloadedGroups = view.cardGroups;
+      view.cardGroups = [
+        {groupName: 'table', totalCards: 1, items: createNScalarCards(1)},
+      ];
+      view.ngOnChanges({
+        cardGroups: new SimpleChange(unloadedGroups, view.cardGroups, false),
+      });
+      tick(16);
+      expect(view.reservedHeight(view.cardGroups[0])).toBe(394);
+      view.ngOnDestroy();
+    }));
+
+    it('keeps the final categories visible after applying a compressed end window', fakeAsync(() => {
+      const root = document.createElement('div');
+      const host = document.createElement('div');
+      root.appendChild(host);
+      let scrollHeight = 8_000_000;
+      let scrollTop = scrollHeight - 655;
+      Object.defineProperties(root, {
+        clientHeight: {value: 655},
+        scrollHeight: {get: () => scrollHeight},
+        scrollTop: {
+          get: () => scrollTop,
+          set: (value: number) => {
+            scrollTop = Math.max(0, Math.min(value, scrollHeight - 655));
+          },
+        },
+      });
+      Object.defineProperty(host, 'clientWidth', {value: 837});
+      spyOn(root, 'getBoundingClientRect').and.returnValue(
+        new DOMRect(0, 0, 837, 655)
+      );
+      spyOn(host, 'getBoundingClientRect').and.callFake(
+        () => new DOMRect(0, -root.scrollTop, 837, scrollHeight)
+      );
+      const view = new CardGroupsComponent(
+        new ElementRef(host),
+        {markForCheck() {}} as ChangeDetectorRef,
+        TestBed.inject(NgZone),
+        {getElementRef: () => new ElementRef(root)} as unknown as CdkScrollable
+      );
+      view.catalog = {
+        groupOffset: 0,
+        totalGroups: 1_000_003,
+        expanded: new Map(),
+        pages: new Map(),
+        pageSize: 12,
+        cardMinWidth: 335,
+        scope: 'selected-run',
+        viewport: {
+          groupOffset: 0,
+          groupLimit: 40,
+          visibleGroups: [],
+          filteredOffset: 0,
+          filteredLimit: 40,
+        },
+      };
+      const requested = jasmine.createSpy('viewport requested');
+      view.viewportChanged.subscribe(requested);
+      view.ngAfterViewInit();
+      tick(16);
+      const {groupOffset, groupLimit} = requested.calls.mostRecent().args[0];
+      expect(groupOffset).toBeLessThan(view.catalog.totalGroups);
+      expect(groupOffset + groupLimit).toBeGreaterThanOrEqual(
+        view.catalog.totalGroups
+      );
+      const previousCatalog = view.catalog;
+      view.catalog = {
+        ...previousCatalog,
+        groupOffset,
+        viewport: requested.calls.mostRecent().args[0],
+      };
+      view.cardGroups = Array.from(
+        {length: view.catalog.totalGroups - groupOffset},
+        (_, index) => ({
+          groupName: `category-${groupOffset + index}`,
+          items: [],
+        })
+      );
+      const elements = view.cardGroups.map((unused, index) => {
+        const group = document.createElement('div');
+        group.className = 'card-group';
+        host.appendChild(group);
+        spyOn(group, 'getBoundingClientRect').and.callFake(
+          () =>
+            new DOMRect(
+              0,
+              view.beforeHeight + index * 42 - root.scrollTop,
+              837,
+              42
+            )
+        );
+        return group;
+      });
+      view.ngOnChanges({
+        catalog: new SimpleChange(previousCatalog, view.catalog, false),
+        cardGroups: new SimpleChange([], view.cardGroups, false),
+      });
+      // Apply spacer bindings as the view renders the server response.
+      scrollHeight =
+        view.beforeHeight + view.cardGroups.length * 42 + view.afterHeight;
+      tick(32);
+      expect(root.scrollTop + root.clientHeight).toBeCloseTo(scrollHeight, 5);
+      const finalBounds = elements[elements.length - 1].getBoundingClientRect();
+      expect(finalBounds.top).toBeLessThan(root.clientHeight);
+      expect(finalBounds.bottom).toBeCloseTo(root.clientHeight, 5);
+      view.ngOnDestroy();
+    }));
+
+    it('reaches the final cards when scrolling to a compressed catalog end', fakeAsync(() => {
+      const root = document.createElement('div');
+      const host = document.createElement('div');
+      root.appendChild(host);
+      Object.defineProperties(root, {
+        clientHeight: {value: 655},
+        scrollHeight: {value: 8_000_000},
+        scrollTop: {value: 7_999_345, writable: true},
+      });
+      Object.defineProperty(host, 'clientWidth', {value: 837});
+      spyOn(root, 'getBoundingClientRect').and.returnValue(
+        new DOMRect(0, 0, 837, 655)
+      );
+      spyOn(host, 'getBoundingClientRect').and.callFake(
+        () => new DOMRect(0, -root.scrollTop, 837, 8_000_000)
+      );
+      const view = new FilteredViewComponent(
+        new ElementRef(host),
+        {markForCheck() {}} as ChangeDetectorRef,
+        TestBed.inject(NgZone),
+        {getElementRef: () => new ElementRef(root)} as unknown as CdkScrollable
+      );
+      view.catalog = {
+        totalCards: 1_000_000,
+        filteredOffset: 0,
+        cardMinWidth: 300,
+        scope: 'selected-run',
+        viewport: {
+          groupOffset: 0,
+          groupLimit: 40,
+          visibleGroups: [],
+          filteredOffset: 0,
+          filteredLimit: 40,
+        },
+      };
+      const requested = jasmine.createSpy('viewport requested');
+      view.viewportChanged.subscribe(requested);
+      view.ngAfterViewInit();
+      tick(16);
+      expect(requested).toHaveBeenCalledWith(
+        jasmine.objectContaining({filteredOffset: 999_960, filteredLimit: 40})
+      );
+      const enterAngular = spyOn(
+        TestBed.inject(NgZone),
+        'run'
+      ).and.callThrough();
+      requested.calls.reset();
+      tick(16);
+      root.dispatchEvent(new Event('scroll'));
+      tick(16);
+      expect(requested).not.toHaveBeenCalled();
+      expect(enterAngular).not.toHaveBeenCalled();
+      // Buffer logical rows, not physical spacer pixels: a physical viewport
+      // in the compressed middle can represent more cards than a whole window.
+      root.scrollTop = 4_000_000;
+      root.dispatchEvent(new Event('scroll'));
+      tick(16);
+      const {filteredOffset, filteredLimit} =
+        requested.calls.mostRecent().args[0];
+      const firstCard = 499_994;
+      expect(filteredOffset).toBeLessThanOrEqual(firstCard);
+      expect(filteredOffset + filteredLimit).toBeGreaterThan(firstCard);
+      view.ngOnDestroy();
+    }));
+
     function getFilterViewContainer(
       fixture: ComponentFixture<MainViewContainer>
     ): DebugElement {
@@ -1231,23 +1490,57 @@ describe('metrics main view', () => {
       expect(getFilterviewCardContents(fixture)).toEqual(['images: card2']);
     }));
 
-    it('hides the main and pinned views while the filter view is active', fakeAsync(() => {
+    it('removes the main view and hides pinned cards while filtering, then restores them', fakeAsync(() => {
       store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
         {cardId: 'card1', ...createCardMetadata(PluginType.SCALARS)},
         {cardId: 'card2', ...createCardMetadata(PluginType.IMAGES)},
       ]);
-      const fixture = createComponent('tagA');
+      const fixture = createComponent('');
+
+      expect(
+        fixture.debugElement.query(By.css('.main metrics-card-groups'))
+      ).not.toBeNull();
+      expect(
+        getCardContents(
+          getCards(
+            fixture.debugElement.query(By.css('.main metrics-pinned-view'))
+          )
+        )
+      ).toEqual(['scalars: card1', 'images: card2']);
+
+      store.overrideSelector(selectors.getMetricsTagFilter, 'tagA');
+      store.refreshState();
+      fixture.detectChanges();
+      updateComponent(fixture);
 
       const mainView = fixture.debugElement.query(
         By.css('.main metrics-card-groups')
       );
-      expect(mainView.styles['display']).toBe('none');
+      expect(mainView).toBeNull();
       const pinnedViewDebugEl = fixture.debugElement.query(
         By.css('.main metrics-pinned-view')
       );
       expect(pinnedViewDebugEl.styles['display']).toBe('none');
       const cardContents = getCardContents(getCards(pinnedViewDebugEl));
       expect(cardContents).toEqual(['scalars: card1', 'images: card2']);
+      expect(getFilterviewCardContents(fixture)).toEqual([
+        'scalars: card1',
+        'images: card2',
+      ]);
+
+      store.overrideSelector(selectors.getMetricsTagFilter, '');
+      store.refreshState();
+      updateComponent(fixture);
+
+      expect(getFilterViewContainer(fixture)).toBeNull();
+      expect(
+        fixture.debugElement.query(By.css('.main metrics-card-groups'))
+      ).not.toBeNull();
+      expect(pinnedViewDebugEl.styles['display']).toBe('');
+      expect(getCardContents(getCards(pinnedViewDebugEl))).toEqual([
+        'scalars: card1',
+        'images: card2',
+      ]);
     }));
 
     it('updates the list on tagFilter change', fakeAsync(() => {
@@ -1807,7 +2100,9 @@ describe('customizable share button ', () => {
           useValue: TestShareButtonContainer,
         },
         provideMockStore({
-          initialState: appStateFromMetricsState(buildMetricsState()),
+          initialState: buildMockState(
+            appStateFromMetricsState(buildMetricsState())
+          ),
         }),
       ],
     }).compileComponents();
@@ -1825,7 +2120,9 @@ describe('customizable share button ', () => {
       declarations: [MainViewComponent, MainViewContainer],
       providers: [
         provideMockStore({
-          initialState: appStateFromMetricsState(buildMetricsState()),
+          initialState: buildMockState(
+            appStateFromMetricsState(buildMetricsState())
+          ),
         }),
       ],
     }).compileComponents();

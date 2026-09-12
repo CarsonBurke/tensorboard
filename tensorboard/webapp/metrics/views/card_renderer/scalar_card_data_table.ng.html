@@ -41,7 +41,9 @@ limitations under the License.
   ></ng-container>
 
   <ng-container content>
-    <ng-container *ngFor="let dataRow of getTimeSelectionTableData()">
+    <ng-container
+      *ngFor="let dataRow of getTimeSelectionTableData(); trackBy: trackByRow"
+    >
       <tb-data-table-content-row>
         <ng-container *ngFor="let header of extendHeaders(columnHeaders)">
           <tb-data-table-content-cell

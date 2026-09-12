@@ -71,4 +71,9 @@ export type Polyline = Float32Array;
 export interface DataInternalSeries {
   id: string;
   polyline: Polyline;
+  /**
+   * Whether `polyline` holds a NaN coordinate. Recorded while transforming
+   * the series so views that partition around NaNs need no extra pass.
+   */
+  hasNaN: boolean;
 }

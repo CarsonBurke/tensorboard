@@ -20,6 +20,7 @@ import {
 } from '../../widgets/card_fob/card_fob_types';
 import {
   TagMetadata,
+  MetricsCatalogViewport,
   TimeSeriesRequest,
   TimeSeriesResponse,
 } from '../data_source';
@@ -74,6 +75,11 @@ export const metricsTagMetadataLoaded = createAction(
 
 export const metricsTagMetadataFailed = createAction(
   '[Metrics] Metrics Tag Metadata Failed'
+);
+
+export const metricsCatalogViewportChanged = createAction(
+  '[Metrics] Catalog Viewport Changed',
+  props<MetricsCatalogViewport>()
 );
 
 export const metricsCardStateUpdated = createAction(
@@ -165,6 +171,11 @@ export const metricsChangeHistogramMode = createAction(
 
 export const multipleTimeSeriesRequested = createAction(
   '[Metrics] Multiple Time Series Requested',
+  props<{requests: TimeSeriesRequest[]}>()
+);
+
+export const timeSeriesRequestsCancelled = createAction(
+  '[Metrics] Time Series Requests Cancelled',
   props<{requests: TimeSeriesRequest[]}>()
 );
 

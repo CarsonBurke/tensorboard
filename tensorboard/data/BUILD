@@ -11,7 +11,12 @@ licenses(["notice"])
 py_library(
     name = "provider",
     srcs = ["provider.py"],
-    deps = ["//tensorboard:expect_numpy_installed"],
+    deps = [
+        "//tensorboard:expect_numpy_installed",
+        "//tensorboard/plugins/histogram:metadata",
+        "//tensorboard/plugins/image:metadata",
+        "//tensorboard/plugins/scalar:metadata",
+    ],
 )
 
 py_test(

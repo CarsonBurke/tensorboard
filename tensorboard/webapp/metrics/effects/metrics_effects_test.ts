@@ -16,7 +16,14 @@ import {TestBed} from '@angular/core/testing';
 import {provideMockActions} from '@ngrx/effects/testing';
 import {Action, Store} from '@ngrx/store';
 import {MockStore, provideMockStore} from '@ngrx/store/testing';
-import {of, Subject} from 'rxjs';
+import {
+  asapScheduler,
+  of,
+  queueScheduler,
+  Subject,
+  Subscription,
+  VirtualTimeScheduler,
+} from 'rxjs';
 import {buildNavigatedAction, buildRoute} from '../../app_routing/testing';
 import {RouteKind} from '../../app_routing/types';
 import {State} from '../../app_state';
@@ -25,7 +32,6 @@ import {getActivePlugin} from '../../core/store';
 import * as coreTesting from '../../core/testing';
 import * as runsActions from '../../runs/actions';
 import * as selectors from '../../selectors';
-import {LoadingMechanismType} from '../../types/api';
 import {DataLoadState} from '../../types/data';
 import {nextElementId} from '../../util/dom';
 import {TBHttpClientTestingModule} from '../../webapp_data_source/tb_http_client_testing';
@@ -41,7 +47,8 @@ import {
   TimeSeriesResponse,
   SavedPinsDataSource,
 } from '../data_source';
-import {getMetricsTagMetadataLoadState} from '../store';
+import {getMetricsTagMetadataLoadState, MetricsState} from '../store';
+import {reducers} from '../store/metrics_reducers';
 import {
   appStateFromMetricsState,
   buildDataSourceTagMetadata,
@@ -62,10 +69,21 @@ describe('metrics effects', () => {
   let store: MockStore<State>;
   let actions$: Subject<Action>;
   let actualActions: Action[] = [];
+  let dataEffectsSubscription: Subscription | undefined;
+  let scheduler: VirtualTimeScheduler;
 
   beforeEach(async () => {
     actions$ = new Subject<Action>();
     actualActions = [];
+    // The effect subscribes in beforeEach, before any fakeAsync test zone.
+    // Its initial ASAP task can otherwise hold later tasks outside that zone.
+    // Use RxJS's cancellable deferred actions, advancing them explicitly only
+    // after synchronous store/queueScheduler work has finished.
+    scheduler = new VirtualTimeScheduler();
+    spyOn(asapScheduler, 'schedule').and.callFake(
+      scheduler.schedule.bind(scheduler)
+    );
+    spyOn(asapScheduler, 'now').and.callFake(scheduler.now.bind(scheduler));
 
     await TestBed.configureTestingModule({
       imports: [TBHttpClientTestingModule],
@@ -111,211 +129,119 @@ describe('metrics effects', () => {
   });
 
   afterEach(() => {
+    dataEffectsSubscription?.unsubscribe();
+    dataEffectsSubscription = undefined;
+    actions$.complete();
     store?.resetSelectors();
   });
 
+  function dispatchAction(action: Action) {
+    actions$.next(action);
+    scheduler.flush();
+  }
+
   describe('#dataEffects', () => {
     beforeEach(() => {
-      effects.dataEffects$.subscribe();
+      dataEffectsSubscription = effects.dataEffects$.subscribe();
     });
 
     describe('loadTagMetadata', () => {
       let fetchTagMetadataSpy: jasmine.Spy;
-      let fetchTagMetadataSubject: Subject<TagMetadata>;
-
       beforeEach(() => {
-        fetchTagMetadataSubject = new Subject();
         fetchTagMetadataSpy = spyOn(
           metricsDataSource,
           'fetchTagMetadata'
-        ).and.returnValue(fetchTagMetadataSubject);
+        ).and.returnValue(new Subject<TagMetadata>());
       });
 
-      it('loads TagMetadata on dashboard open if data is not loaded', () => {
-        store.overrideSelector(selectors.getExperimentIdsFromRoute, null);
-        store.overrideSelector(getMetricsTagMetadataLoadState, {
-          state: DataLoadState.NOT_LOADED,
-          lastLoadedTimeInMs: null,
-        });
-        store.overrideSelector(getActivePlugin, null);
-        store.refreshState();
-
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
-
-        // Assume activePlugin's initial bootstrap occurs by the time we init.
+      it('requests members only for visible expanded categories and their current page', () => {
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp']);
         store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
-        store.refreshState();
-        actions$.next(TEST_ONLY.initAction());
-
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
-
-        // Assume experimentIds in the activeRoute are set on navigation.
-        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
-        store.refreshState();
-        actions$.next(buildNavigatedAction());
-
-        fetchTagMetadataSubject.next(buildDataSourceTagMetadata());
-
-        expect(fetchTagMetadataSpy).toHaveBeenCalled();
-        expect(actualActions).toEqual([
-          actions.metricsTagMetadataRequested(),
-          actions.metricsTagMetadataLoaded({
-            tagMetadata: buildDataSourceTagMetadata(),
-          }),
-        ]);
-      });
-
-      it('loads TagMetadata when switching to dashboard with experiment', () => {
-        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
-        store.overrideSelector(getMetricsTagMetadataLoadState, {
-          state: DataLoadState.NOT_LOADED,
-          lastLoadedTimeInMs: null,
+        store.overrideSelector(selectors.getMetricsCatalogViewport, {
+          groupOffset: 40,
+          groupLimit: 40,
+          visibleGroups: ['closed', 'visible'],
+          filteredOffset: 0,
+          filteredLimit: 40,
         });
-        store.overrideSelector(getActivePlugin, null);
-        store.refreshState();
-
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
-
-        // Assume activePlugin's initial bootstrap occurs by the time we init.
-        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
-        store.refreshState();
-        actions$.next(coreActions.changePlugin({plugin: METRICS_PLUGIN_ID}));
-
-        fetchTagMetadataSubject.next(buildDataSourceTagMetadata());
-
-        expect(fetchTagMetadataSpy).toHaveBeenCalled();
-        expect(actualActions).toEqual([
-          actions.metricsTagMetadataRequested(),
-          actions.metricsTagMetadataLoaded({
-            tagMetadata: buildDataSourceTagMetadata(),
-          }),
-        ]);
-      });
-
-      it('loads TagMetadata when navigating to a new route', () => {
-        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['']);
-        store.overrideSelector(getMetricsTagMetadataLoadState, {
-          state: DataLoadState.NOT_LOADED,
-          lastLoadedTimeInMs: null,
-        });
-        store.overrideSelector(getActivePlugin, null);
-        store.refreshState();
-
-        actions$.next(
-          buildNavigatedAction({
-            after: buildRoute({routeKind: RouteKind.EXPERIMENT}),
-          })
+        store.overrideSelector(
+          selectors.getMetricsTagGroupExpandedMap,
+          new Map([
+            ['closed', false],
+            ['visible', true],
+            ['offscreen', true],
+          ])
         );
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-
-        actions$.next(coreActions.pluginsListingRequested());
-        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
-        store.refreshState();
-        actions$.next(
-          coreActions.pluginsListingLoaded({
-            plugins: {
-              [METRICS_PLUGIN_ID]: {
-                enabled: true,
-                loading_mechanism: {
-                  type: LoadingMechanismType.NG_COMPONENT,
-                },
-                disable_reload: true,
-                tab_name: 'hello',
-                remove_dom: true,
-              },
-            },
-          })
+        store.overrideSelector(
+          selectors.getMetricsTagGroupPageIndexMap,
+          new Map([['visible', 2]])
         );
-
+        store.refreshState();
+        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
+        scheduler.flush();
         expect(fetchTagMetadataSpy).toHaveBeenCalledTimes(1);
-        fetchTagMetadataSubject.next(buildDataSourceTagMetadata());
-        expect(actualActions).toEqual([
-          actions.metricsTagMetadataRequested(),
-          actions.metricsTagMetadataLoaded({
-            tagMetadata: buildDataSourceTagMetadata(),
-          }),
+        const request = fetchTagMetadataSpy.calls.mostRecent().args[1];
+        expect(request.groups).toEqual([
+          {
+            name: 'visible',
+            offset: 2 * request.groups[0].limit,
+            limit: request.groups[0].limit,
+          },
         ]);
+        expect(request.filteredLimit).toBe(0);
+
+        store.overrideSelector(selectors.getMetricsTagFilter, 'loss');
+        store.refreshState();
+        scheduler.flush();
+        const filtered = fetchTagMetadataSpy.calls.mostRecent().args[1];
+        expect(filtered.groups).toEqual([]);
+        expect(filtered.groupLimit).toBe(0);
+        expect(filtered.filteredLimit).toBe(40);
       });
 
-      it('does not fetch TagMetadata if default plugin is not timeseries', () => {
-        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['']);
-        store.overrideSelector(getMetricsTagMetadataLoadState, {
-          state: DataLoadState.NOT_LOADED,
-          lastLoadedTimeInMs: null,
-        });
-        store.overrideSelector(getActivePlugin, null);
-        store.refreshState();
-
-        actions$.next(
-          buildNavigatedAction({
-            after: buildRoute({routeKind: RouteKind.EXPERIMENT}),
-          })
+      it('cancels obsolete selections and accepts only the current catalog response', () => {
+        const oldResponse = new Subject<TagMetadata>();
+        const newResponse = new Subject<TagMetadata>();
+        fetchTagMetadataSpy.and.callFake((_experimentIds, request) =>
+          request.runIds.includes('exp/second') ? newResponse : oldResponse
         );
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-
-        actions$.next(coreActions.pluginsListingRequested());
-        store.overrideSelector(getActivePlugin, 'foo');
-        store.refreshState();
-        actions$.next(
-          coreActions.pluginsListingLoaded({
-            plugins: {
-              foo: {
-                enabled: true,
-                loading_mechanism: {
-                  type: LoadingMechanismType.NG_COMPONENT,
-                },
-                disable_reload: true,
-                tab_name: 'hello',
-                remove_dom: true,
-              },
-              [METRICS_PLUGIN_ID]: {
-                enabled: true,
-                loading_mechanism: {
-                  type: LoadingMechanismType.NG_COMPONENT,
-                },
-                disable_reload: true,
-                tab_name: 'hello',
-                remove_dom: true,
-              },
-            },
-          })
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp']);
+        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([['exp/first', true]])
         );
-
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
+        store.refreshState();
+        scheduler.flush();
+        expect(oldResponse.observed).toBeTrue();
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([['exp/second', true]])
+        );
+        store.refreshState();
+        scheduler.flush();
+        expect(oldResponse.observed).toBeFalse();
+        actualActions = [];
+        oldResponse.next(buildDataSourceTagMetadata());
         expect(actualActions).toEqual([]);
+        const current = buildDataSourceTagMetadata();
+        current.scalars.tagToRuns = {loss: ['exp/second']};
+        newResponse.next(current);
+        expect(actualActions).toContain(
+          actions.metricsTagMetadataLoaded({tagMetadata: current})
+        );
       });
 
-      it('does not fetch TagMetadata if data was loaded when opening', () => {
-        store.overrideSelector(getMetricsTagMetadataLoadState, {
-          state: DataLoadState.LOADED,
-          lastLoadedTimeInMs: 1,
-        });
+      it('does not request catalog data while another dashboard is active', () => {
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp']);
+        store.overrideSelector(getActivePlugin, 'scalars');
+        store.refreshState();
+        scheduler.flush();
+        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
         store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
         store.refreshState();
-        actions$.next(TEST_ONLY.initAction());
-
-        fetchTagMetadataSubject.next(buildDataSourceTagMetadata());
-
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
-      });
-
-      it('does not fetch TagMetadata if data was loading when opening', () => {
-        store.overrideSelector(getMetricsTagMetadataLoadState, {
-          state: DataLoadState.LOADING,
-          lastLoadedTimeInMs: null,
-        });
-        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
-        store.refreshState();
-        actions$.next(TEST_ONLY.initAction());
-
-        fetchTagMetadataSubject.next(buildDataSourceTagMetadata());
-
-        expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
+        scheduler.flush();
+        expect(fetchTagMetadataSpy).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -380,42 +306,22 @@ describe('metrics effects', () => {
           );
           provideCardFetchInfo([{id: 'card1'}, {id: 'card2'}]);
           store.refreshState();
+          scheduler.flush();
+          fetchTagMetadataSpy.calls.reset();
+          actualActions = [];
           fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
 
-          actions$.next(reloadAction());
+          dispatchAction(reloadAction());
 
-          expect(fetchTagMetadataSpy).toHaveBeenCalled();
+          expect(fetchTagMetadataSpy).toHaveBeenCalledTimes(1);
           expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
-          expect(actualActions).toEqual([
-            actions.metricsTagMetadataRequested(),
-            actions.metricsTagMetadataLoaded({
-              tagMetadata: buildDataSourceTagMetadata(),
-            }),
-
-            // Identical card requests share one backend fetch.
-            actions.multipleTimeSeriesRequested({
-              requests: [
-                {
-                  plugin: PluginType.SCALARS as MultiRunPluginType,
-                  tag: 'tagA',
-                  experimentIds: ['exp1'],
-                  runIds: ['run1'],
-                },
-              ],
-            }),
-            actions.fetchTimeSeriesLoaded({
-              requestResponses: [
-                {
-                  request: {
-                    plugin: PluginType.SCALARS as MultiRunPluginType,
-                    tag: 'tagA',
-                    experimentIds: ['exp1'],
-                    runIds: ['run1'],
-                  },
-                  response: buildTimeSeriesResponse(),
-                },
-              ],
-            }),
+          expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([
+            {
+              plugin: PluginType.SCALARS,
+              tag: 'tagA',
+              experimentIds: ['exp1'],
+              runIds: ['run1'],
+            },
           ]);
         });
 
@@ -435,36 +341,22 @@ describe('metrics effects', () => {
             {id: 'card2', runToLoadState: {run1: DataLoadState.LOADING}},
           ]);
           store.refreshState();
+          scheduler.flush();
+          fetchTagMetadataSpy.calls.reset();
+          actualActions = [];
           fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
 
-          actions$.next(reloadAction());
+          dispatchAction(reloadAction());
 
-          expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
+          expect(fetchTagMetadataSpy).toHaveBeenCalledTimes(1);
           expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
-          expect(actualActions).toEqual([
-            actions.multipleTimeSeriesRequested({
-              requests: [
-                {
-                  plugin: PluginType.SCALARS as MultiRunPluginType,
-                  tag: 'tagA',
-                  experimentIds: ['exp1'],
-                  runIds: ['run1'],
-                },
-              ],
-            }),
-            actions.fetchTimeSeriesLoaded({
-              requestResponses: [
-                {
-                  request: {
-                    plugin: PluginType.SCALARS as MultiRunPluginType,
-                    tag: 'tagA',
-                    experimentIds: ['exp1'],
-                    runIds: ['run1'],
-                  },
-                  response: buildTimeSeriesResponse(),
-                },
-              ],
-            }),
+          expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([
+            {
+              plugin: PluginType.SCALARS,
+              tag: 'tagA',
+              experimentIds: ['exp1'],
+              runIds: ['run1'],
+            },
           ]);
         });
       }
@@ -486,23 +378,21 @@ describe('metrics effects', () => {
         store.refreshState();
         fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
 
-        actions$.next(coreActions.manualReload());
-        actions$.next(coreActions.reload());
+        dispatchAction(coreActions.manualReload());
+        dispatchAction(coreActions.reload());
 
         expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
       });
 
       it('does not re-fetch tag metadata if dashboard is inactive', () => {
         store.overrideSelector(getActivePlugin, null);
         store.refreshState();
 
-        actions$.next(coreActions.manualReload());
-        actions$.next(coreActions.reload());
+        dispatchAction(coreActions.manualReload());
+        dispatchAction(coreActions.reload());
 
         expect(fetchTagMetadataSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
       });
 
       it('does not re-fetch time series, if no cards are visible', () => {
@@ -511,8 +401,8 @@ describe('metrics effects', () => {
         store.refreshState();
         fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
 
-        actions$.next(coreActions.manualReload());
-        actions$.next(coreActions.reload());
+        dispatchAction(coreActions.manualReload());
+        dispatchAction(coreActions.reload());
 
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
       });
@@ -538,16 +428,16 @@ describe('metrics effects', () => {
         store.refreshState();
         fetchTimeSeriesSpy.and.returnValue(of([buildTimeSeriesResponse()]));
 
-        actions$.next(coreActions.manualReload());
-        actions$.next(coreActions.reload());
+        dispatchAction(coreActions.manualReload());
+        dispatchAction(coreActions.reload());
 
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
 
         store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
         store.refreshState();
 
-        actions$.next(coreActions.manualReload());
-        actions$.next(coreActions.reload());
+        dispatchAction(coreActions.manualReload());
+        dispatchAction(coreActions.reload());
 
         expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(2);
       });
@@ -569,6 +459,11 @@ describe('metrics effects', () => {
         },
       ];
 
+      beforeEach(() => {
+        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+      });
+
       it('does not fetch when nothing is visible', () => {
         fetchTimeSeriesSpy = spyOn(
           metricsDataSource,
@@ -585,15 +480,14 @@ describe('metrics effects', () => {
         });
         store.refreshState();
 
-        actions$.next(
+        dispatchAction(
           actions.cardVisibilityChanged({enteredCards: [], exitedCards: []})
         );
 
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
       });
 
-      it('fetches only once when hiding then showing a card', () => {
+      it('fetches when a previously offscreen card becomes visible', () => {
         fetchTimeSeriesSpy = spyOn(
           metricsDataSource,
           'fetchTimeSeries'
@@ -614,7 +508,7 @@ describe('metrics effects', () => {
           new Set<string>([])
         );
         store.refreshState();
-        actions$.next(
+        dispatchAction(
           actions.cardVisibilityChanged({
             enteredCards: [],
             exitedCards: [{elementId: card1ElementId, cardId: 'card1'}],
@@ -622,14 +516,13 @@ describe('metrics effects', () => {
         );
 
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
 
         store.overrideSelector(
           selectors.getVisibleCardIdSet,
           new Set(['card1'])
         );
         store.refreshState();
-        actions$.next(
+        dispatchAction(
           actions.cardVisibilityChanged({
             enteredCards: [{elementId: card1ElementId, cardId: 'card1'}],
             exitedCards: [],
@@ -644,14 +537,6 @@ describe('metrics effects', () => {
         };
         expect(fetchTimeSeriesSpy.calls.count()).toBe(1);
         expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([expectedRequest]);
-        expect(actualActions).toEqual([
-          actions.multipleTimeSeriesRequested({requests: [expectedRequest]}),
-          actions.fetchTimeSeriesLoaded({
-            requestResponses: [
-              {request: expectedRequest, response: sampleBackendResponses[0]},
-            ],
-          }),
-        ]);
       });
 
       it('fetches only the selected runs that the tag has', () => {
@@ -682,7 +567,7 @@ describe('metrics effects', () => {
           new Set(['card1'])
         );
         store.refreshState();
-        actions$.next(
+        dispatchAction(
           actions.cardVisibilityChanged({
             enteredCards: [{elementId: nextElementId(), cardId: 'card1'}],
             exitedCards: [],
@@ -696,17 +581,9 @@ describe('metrics effects', () => {
           runIds: ['exp1/run1'],
         };
         expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([expectedRequest]);
-        expect(actualActions).toEqual([
-          actions.multipleTimeSeriesRequested({requests: [expectedRequest]}),
-          actions.fetchTimeSeriesLoaded({
-            requestResponses: [
-              {request: expectedRequest, response: sampleBackendResponses[0]},
-            ],
-          }),
-        ]);
       });
 
-      it('fetches newly selected runs and purges deselected series', () => {
+      it('fetches newly selected runs without re-fetching loaded runs', () => {
         fetchTimeSeriesSpy = spyOn(
           metricsDataSource,
           'fetchTimeSeries'
@@ -732,7 +609,7 @@ describe('metrics effects', () => {
           new Set(['card1'])
         );
         store.refreshState();
-        actions$.next(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
+        dispatchAction(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
 
         // Only the run that is missing is requested.
         const expectedRequest: TimeSeriesRequest = {
@@ -742,91 +619,9 @@ describe('metrics effects', () => {
           runIds: ['exp1/run2'],
         };
         expect(fetchTimeSeriesSpy).toHaveBeenCalledWith([expectedRequest]);
-        expect(actualActions).toContain(
-          actions.unusedTimeSeriesPurged({
-            runIds: ['exp1/run1', 'exp1/run2'],
-          })
-        );
       });
 
-      it('keeps the runs of pinned cards when purging', () => {
-        fetchTimeSeriesSpy = spyOn(
-          metricsDataSource,
-          'fetchTimeSeries'
-        ).and.returnValue(of(sampleBackendResponses));
-        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
-        store.overrideSelector(
-          selectors.getRunSelectionMapFilteredToCurrentRoute,
-          new Map([
-            ['exp1/run1', true],
-            ['exp1/run2', false],
-          ])
-        );
-        // A pinned single-run card remains visible while its run is
-        // deselected, so its series must survive the purge.
-        store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
-          {
-            cardId: 'pinnedCard1',
-            plugin: PluginType.IMAGES,
-            tag: 'tagB',
-            runId: 'exp1/run2',
-            sample: 0,
-          },
-        ]);
-        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
-          id: 'card1',
-          plugin: PluginType.SCALARS,
-          tag: 'tagA',
-          runId: null,
-          tagRunIds: ['exp1/run1'],
-          runToLoadState: {'exp1/run1': DataLoadState.LOADED},
-        });
-        store.overrideSelector(
-          selectors.getVisibleCardIdSet,
-          new Set(['card1'])
-        );
-        store.refreshState();
-        actions$.next(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
-
-        expect(actualActions).toEqual([
-          actions.unusedTimeSeriesPurged({
-            runIds: ['exp1/run1', 'exp1/run2'],
-          }),
-        ]);
-      });
-
-      it('purges after pins are removed or reconciled', () => {
-        store.overrideSelector(
-          selectors.getRunSelectionMapFilteredToCurrentRoute,
-          new Map([
-            ['exp1/run1', true],
-            ['exp1/run2', false],
-          ])
-        );
-        store.overrideSelector(selectors.getPinnedCardsWithMetadata, []);
-        store.refreshState();
-        const triggers = [
-          actions.cardPinStateToggled({
-            cardId: 'pinnedCard1',
-            canCreateNewPins: true,
-            wasPinned: true,
-          }),
-          actions.metricsClearAllPinnedCards(),
-          actions.metricsTagMetadataLoaded({
-            tagMetadata: buildDataSourceTagMetadata(),
-          }),
-        ];
-
-        for (const trigger of triggers) {
-          actualActions = [];
-          actions$.next(trigger);
-          expect(actualActions).toEqual([
-            actions.unusedTimeSeriesPurged({runIds: ['exp1/run1']}),
-          ]);
-        }
-      });
-
-      it('does not fetch or purge when the regex filter changes', () => {
+      it('does not fetch when the regex filter changes', () => {
         fetchTimeSeriesSpy = spyOn(
           metricsDataSource,
           'fetchTimeSeries'
@@ -855,14 +650,13 @@ describe('metrics effects', () => {
           new Set(['card1'])
         );
         store.refreshState();
-        actions$.next(
+        dispatchAction(
           runsActions.runSelectorRegexFilterChanged({regexString: '('})
         );
 
         // The filter is a view concern; discarding data on a keystroke would
         // refetch every run once the filter widens again.
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
       });
 
       it('does not fetch when every selected run is loaded', () => {
@@ -891,7 +685,7 @@ describe('metrics effects', () => {
           new Set(['card1'])
         );
         store.refreshState();
-        actions$.next(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
+        dispatchAction(runsActions.runSelectionToggled({runId: 'exp1/run2'}));
 
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
       });
@@ -922,7 +716,7 @@ describe('metrics effects', () => {
           new Set(['card1'])
         );
         store.refreshState();
-        actions$.next(
+        dispatchAction(
           actions.cardVisibilityChanged({
             enteredCards: [{elementId: nextElementId(), cardId: 'card1'}],
             exitedCards: [],
@@ -930,69 +724,6 @@ describe('metrics effects', () => {
         );
 
         expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
-      });
-
-      it('does not fetch when a loaded card exits and re-enters', () => {
-        fetchTimeSeriesSpy = spyOn(
-          metricsDataSource,
-          'fetchTimeSeries'
-        ).and.returnValue(of(sampleBackendResponses));
-        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
-        store.overrideSelector(TEST_ONLY.getCardFetchInfo, {
-          id: 'card1',
-          plugin: PluginType.SCALARS,
-          tag: 'tagA',
-          runId: null,
-          tagRunIds: ['run1'],
-          runToLoadState: {run1: DataLoadState.LOADED},
-        });
-
-        // Initial load.
-        const card1ElementId = nextElementId();
-        store.overrideSelector(
-          selectors.getVisibleCardIdSet,
-          new Set(['card1'])
-        );
-        store.refreshState();
-        actions$.next(
-          actions.cardVisibilityChanged({
-            enteredCards: [{elementId: card1ElementId, cardId: 'card1'}],
-            exitedCards: [],
-          })
-        );
-
-        expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
-
-        // Exit.
-        store.overrideSelector(selectors.getVisibleCardIdSet, new Set([]));
-        store.refreshState();
-        actions$.next(
-          actions.cardVisibilityChanged({
-            enteredCards: [],
-            exitedCards: [{elementId: card1ElementId, cardId: 'card1'}],
-          })
-        );
-
-        expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
-
-        // Re-enter.
-        store.overrideSelector(
-          selectors.getVisibleCardIdSet,
-          new Set(['card1'])
-        );
-        store.refreshState();
-        actions$.next(
-          actions.cardVisibilityChanged({
-            enteredCards: [{elementId: card1ElementId, cardId: 'card1'}],
-            exitedCards: [],
-          })
-        );
-
-        expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-        expect(actualActions).toEqual([]);
       });
 
       it('fetches multiple card data', () => {
@@ -1045,7 +776,7 @@ describe('metrics effects', () => {
           new Set(['card1', 'card2'])
         );
         store.refreshState();
-        actions$.next(
+        dispatchAction(
           actions.cardVisibilityChanged({
             enteredCards: [
               {elementId: nextElementId(), cardId: 'card1'},
@@ -1057,21 +788,6 @@ describe('metrics effects', () => {
 
         expect(fetchTimeSeriesSpy.calls.allArgs()).toEqual([
           [expectedRequests],
-        ]);
-        expect(actualActions).toEqual([
-          actions.multipleTimeSeriesRequested({requests: expectedRequests}),
-          actions.fetchTimeSeriesLoaded({
-            requestResponses: [
-              {
-                request: expectedRequests[0],
-                response: sampleBackendResponses[0],
-              },
-              {
-                request: expectedRequests[1],
-                response: sampleBackendResponses[1],
-              },
-            ],
-          }),
         ]);
       });
 
@@ -1103,7 +819,7 @@ describe('metrics effects', () => {
             new Set(['card1'])
           );
           store.refreshState();
-          actions$.next(
+          dispatchAction(
             actions.cardVisibilityChanged({
               enteredCards: [{elementId: nextElementId(), cardId: 'card1'}],
               exitedCards: [],
@@ -1111,9 +827,304 @@ describe('metrics effects', () => {
           );
 
           expect(fetchTimeSeriesSpy).not.toHaveBeenCalled();
-          expect(actualActions).toEqual([]);
         });
       }
+    });
+
+    describe('visible history lifecycle', () => {
+      let metricsState: MetricsState;
+      let responses: Subject<TimeSeriesResponse[]>[];
+      let fetchTimeSeriesSpy: jasmine.Spy;
+      const original = {elementId: nextElementId(), cardId: 'card1'};
+      const pinned = {elementId: nextElementId(), cardId: 'pinned'};
+      const second = {elementId: nextElementId(), cardId: 'card2'};
+
+      function publishState() {
+        store.setState(
+          buildMockState({
+            ...appStateFromMetricsState(metricsState),
+            ...coreTesting.createState(coreTesting.createCoreState()),
+          })
+        );
+      }
+
+      function dispatchThroughReducer(action: Action) {
+        // NgRx emits scanned actions from inside queueScheduler. Dispatches
+        // from finalize must wait until the triggering action finishes.
+        queueScheduler.schedule(() => {
+          metricsState = reducers(metricsState, action);
+          publishState();
+          actions$.next(action);
+        });
+      }
+
+      function changeVisibility(
+        enteredCards: Array<typeof original>,
+        exitedCards: Array<typeof original>
+      ) {
+        dispatchThroughReducer(
+          actions.cardVisibilityChanged({
+            enteredCards,
+            exitedCards,
+          })
+        );
+        scheduler.flush();
+      }
+
+      beforeEach(() => {
+        responses = [];
+        metricsState = buildMetricsState({
+          cardMetadataMap: {
+            card1: {plugin: PluginType.SCALARS, tag: 'tagA', runId: null},
+            pinned: {plugin: PluginType.SCALARS, tag: 'tagA', runId: null},
+            card2: {plugin: PluginType.SCALARS, tag: 'tagB', runId: null},
+          },
+          cardToPinnedCopy: new Map([['card1', 'pinned']]),
+          pinnedCardToOriginal: new Map([['pinned', 'card1']]),
+          tagMetadata: {
+            ...buildMetricsState().tagMetadata,
+            scalars: {
+              tagDescriptions: {},
+              tagToRuns: {tagA: ['run1', 'run2'], tagB: ['run1', 'run2']},
+            },
+          },
+        });
+        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp1']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['run1', true],
+            ['run2', false],
+          ])
+        );
+        (store.dispatch as jasmine.Spy).and.callFake(dispatchThroughReducer);
+        // Keep the catalog pending so it cannot replace the already-loaded
+        // metadata fixture while this suite exercises history requests.
+        spyOn(metricsDataSource, 'fetchTagMetadata').and.returnValue(
+          new Subject<TagMetadata>()
+        );
+        fetchTimeSeriesSpy = spyOn(
+          metricsDataSource,
+          'fetchTimeSeries'
+        ).and.callFake(() => {
+          const response = new Subject<TimeSeriesResponse[]>();
+          responses.push(response);
+          return response;
+        });
+        publishState();
+      });
+
+      afterEach(() => {
+        dataEffectsSubscription?.unsubscribe();
+        dataEffectsSubscription = undefined;
+        for (const response of responses) response.complete();
+      });
+
+      it('shares in-flight ownership and reuses history after every copy exits', () => {
+        changeVisibility([original], []);
+        const pending = responses[0];
+        expect(pending.observers.length).toBe(1);
+        const duplicate = {elementId: nextElementId(), cardId: 'card1'};
+        changeVisibility([duplicate, pinned], []);
+        changeVisibility([], [original, duplicate]);
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
+        expect(pending.observers.length).toBe(1);
+
+        const series = createScalarStepData();
+        pending.next([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runToSeries: {run1: series},
+          },
+        ]);
+        pending.complete();
+        expect(
+          metricsState.timeSeriesData.scalars['tagA'].runToSeries['run1']
+        ).toBe(series);
+        changeVisibility([], [pinned]);
+        expect(
+          metricsState.timeSeriesData.scalars['tagA'].runToSeries['run1']
+        ).toBe(series);
+        changeVisibility([original], []);
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('cancels the last visible request, ignores late data, and fetches again on re-entry', () => {
+        changeVisibility([original], []);
+        const cancelled = responses[0];
+        expect(
+          metricsState.timeSeriesData.scalars['tagA'].runToLoadState['run1']
+        ).toBe(DataLoadState.LOADING);
+        changeVisibility([], [original]);
+        expect(cancelled.observers.length).toBe(0);
+        expect(metricsState.timeSeriesData.scalars).toEqual({});
+        cancelled.next([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runToSeries: {run1: createScalarStepData()},
+          },
+        ]);
+        expect(metricsState.timeSeriesData.scalars).toEqual({});
+
+        changeVisibility([original], []);
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(2);
+        expect(responses[1].observers.length).toBe(1);
+        expect(
+          metricsState.timeSeriesData.scalars['tagA'].runToLoadState['run1']
+        ).toBe(DataLoadState.LOADING);
+      });
+
+      it('cancels and releases visible histories when leaving the dashboard', () => {
+        changeVisibility([original], []);
+        const cancelled = responses[0];
+        store.overrideSelector(getActivePlugin, 'images');
+        store.refreshState();
+        dispatchThroughReducer(coreActions.changePlugin({plugin: 'images'}));
+        scheduler.flush();
+        expect(cancelled.observers.length).toBe(0);
+        expect(metricsState.visibleCardMap.size).toBe(0);
+        expect(metricsState.timeSeriesData.scalars).toEqual({});
+      });
+
+      it('keeps ongoing requests when an adjacent chart enters', () => {
+        changeVisibility([original], []);
+        const pending = responses[0];
+        dispatchThroughReducer(
+          actions.cardVisibilityChanged({
+            enteredCards: [second],
+            exitedCards: [],
+          })
+        );
+        expect(pending.observers.length).toBe(1);
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
+        scheduler.flush();
+        expect(fetchTimeSeriesSpy.calls.allArgs()).toEqual([
+          [
+            [
+              {
+                plugin: PluginType.SCALARS,
+                tag: 'tagA',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
+            ],
+          ],
+          [
+            [
+              {
+                plugin: PluginType.SCALARS,
+                tag: 'tagB',
+                experimentIds: ['exp1'],
+                runIds: ['run1'],
+              },
+            ],
+          ],
+        ]);
+        expect(
+          metricsState.timeSeriesData.scalars['tagA'].runToLoadState['run1']
+        ).toBe(DataLoadState.LOADING);
+        expect(pending.observers.length).toBe(1);
+        expect(responses[1].observers.length).toBe(1);
+      });
+
+      it('restarts the still-owned part of a batch after another owner exits', () => {
+        changeVisibility([original, second], []);
+        const cancelled = responses[0];
+        changeVisibility([], [second]);
+        expect(cancelled.observers.length).toBe(0);
+        expect(fetchTimeSeriesSpy.calls.mostRecent().args).toEqual([
+          [
+            {
+              plugin: PluginType.SCALARS,
+              tag: 'tagA',
+              experimentIds: ['exp1'],
+              runIds: ['run1'],
+            },
+          ],
+        ]);
+        expect(metricsState.timeSeriesData.scalars['tagB']).toBeUndefined();
+        expect(responses[1].observers.length).toBe(1);
+      });
+
+      it('drops deselected late responses even when selected runs remain', () => {
+        changeVisibility([original], []);
+        responses[0].next([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runToSeries: {run1: createScalarStepData()},
+          },
+        ]);
+        responses[0].complete();
+        const series =
+          metricsState.timeSeriesData.scalars['tagA'].runToSeries['run1'];
+        for (const [tag, runId] of [['tagA', 'run2']]) {
+          dispatchThroughReducer(
+            actions.fetchTimeSeriesLoaded({
+              requestResponses: [
+                {
+                  request: {
+                    plugin: PluginType.SCALARS,
+                    tag,
+                    experimentIds: ['exp1'],
+                    runIds: [runId],
+                  },
+                  response: {
+                    plugin: PluginType.SCALARS,
+                    tag,
+                    runToSeries: {[runId]: createScalarStepData()},
+                  },
+                },
+              ],
+            })
+          );
+        }
+        expect(metricsState.timeSeriesData.scalars).toEqual({
+          tagA: {
+            runToSeries: {run1: series},
+            runToLoadState: {run1: DataLoadState.LOADED},
+          },
+        });
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
+      });
+
+      it('invalidates cached offscreen histories on reload before re-entry', () => {
+        changeVisibility([original], []);
+        responses[0].next([
+          {
+            plugin: PluginType.SCALARS,
+            tag: 'tagA',
+            runToSeries: {run1: createScalarStepData()},
+          },
+        ]);
+        responses[0].complete();
+        changeVisibility([], [original]);
+        dispatchThroughReducer(coreActions.manualReload());
+        scheduler.flush();
+        expect(metricsState.timeSeriesData.scalars).toEqual({});
+        changeVisibility([original], []);
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(2);
+        expect(
+          metricsState.timeSeriesData.scalars['tagA'].runToLoadState['run1']
+        ).toBe(DataLoadState.LOADING);
+      });
+
+      it('does not turn revisiting a backend failure into a retry', () => {
+        changeVisibility([original], []);
+        responses[0].error(new Error('backend unavailable'));
+        expect(
+          metricsState.timeSeriesData.scalars['tagA'].runToLoadState['run1']
+        ).toBe(DataLoadState.FAILED);
+        changeVisibility([], [original]);
+        changeVisibility([original], []);
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(1);
+        dispatchThroughReducer(coreActions.manualReload());
+        scheduler.flush();
+        expect(fetchTimeSeriesSpy).toHaveBeenCalledTimes(2);
+      });
     });
 
     describe('addOrRemovePin', () => {

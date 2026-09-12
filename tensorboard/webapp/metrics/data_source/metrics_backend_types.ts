@@ -22,14 +22,18 @@ import {
   HistogramStepDatum,
   ImageStepDatum,
   PluginType,
-  RunToTags,
-  ScalarStepDatum,
   TagToDescription,
   TagToRunSampledInfo,
 } from './types';
 
+/**
+ * Tag-major tag metadata for a non-sampled plugin. `runs` is the index space
+ * for the numbers in `tagToRuns`: it holds run names in ascending order, and
+ * each `number[]` is an ascending list of indices into `runs`.
+ */
 export interface BackendNonSampledTagMetadata {
-  runTagInfo: RunToTags;
+  runs: string[];
+  tagToRuns: {[tag: string]: number[]};
   tagDescriptions: TagToDescription;
 }
 
@@ -52,10 +56,22 @@ export interface BackendTimeSeriesRequest {
   sample?: number;
 }
 
+/**
+ * A run's scalar series, held as parallel columns; see `ScalarColumns` in
+ * http_api.md. Columns keep repeated property names out of responses that
+ * can carry hundreds of thousands of points.
+ *
+ * As with the previous per-point encoding, nonfinite values arrive as the
+ * strings "NaN", "Infinity", and "-Infinity" inside `values`.
+ */
+export interface BackendScalarColumns {
+  steps: number[];
+  wallTimes: number[];
+  values: number[];
+}
+
 export type BackendRunToSeries =
-  | {
-      [run: string]: ScalarStepDatum[];
-    }
+  | {[run: string]: BackendScalarColumns}
   | {[run: string]: HistogramStepDatum[]}
   | {[run: string]: ImageStepDatum[]};
 

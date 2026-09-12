@@ -23,6 +23,7 @@ import {areSameRouteKindAndExperiments} from '../../app_routing';
 import {stateRehydratedFromUrl} from '../../app_routing/actions';
 import {createNamespaceContextedState} from '../../app_routing/namespaced_state_reducer_helper';
 import {RouteKind} from '../../app_routing/types';
+import * as hparamsActions from '../../hparams/_redux/hparams_actions';
 import {DataLoadState} from '../../types/data';
 import {composeReducers} from '../../util/ngrx';
 import * as runsActions from '../actions';
@@ -39,6 +40,15 @@ import {
 } from './runs_types';
 import {createGroupBy, groupRuns} from './utils';
 import {ColumnHeaderType, SortingOrder} from '../../widgets/data_table/types';
+
+/** Assign a stable palette index without keeping a visited-group catalog. */
+function catalogColorId(groupId: string): number {
+  let hash = 0;
+  for (let i = 0; i < groupId.length; i++) {
+    hash = (Math.imul(hash, 31) + groupId.charCodeAt(i)) | 0;
+  }
+  return hash >>> 0;
+}
 
 const {
   initialState: dataInitialState,
@@ -111,7 +121,7 @@ const dataReducer: ActionReducer<RunsDataState, Action> = createReducer(
     const groupBy = dehydratedState.runs.groupBy;
     const regexFilter = dehydratedState.runs.regexFilter ?? '';
 
-    if (!groupBy && !regexFilter) {
+    if (!groupBy && dehydratedState.runs.regexFilter === null) {
       return state;
     }
 
@@ -151,10 +161,16 @@ const dataReducer: ActionReducer<RunsDataState, Action> = createReducer(
 
     return {...state, runsLoadState: nextRunsLoadState};
   }),
-  on(runsActions.fetchRunsSucceeded, (state, action) => {
-    const nextRunIds = {...state.runIds};
-    const nextRunMetadata = {...state.runMetadata};
-    const nextRunIdToExpId = {...state.runIdToExpId};
+  on(runsActions.fetchRunsSucceeded, (state, action): RunsDataState => {
+    const nextRunIds: RunsDataState['runIds'] = action.catalog
+      ? {}
+      : {...state.runIds};
+    const nextRunMetadata: RunsDataState['runMetadata'] = action.catalog
+      ? {}
+      : {...state.runMetadata};
+    const nextRunIdToExpId: RunsDataState['runIdToExpId'] = action.catalog
+      ? {}
+      : {...state.runIdToExpId};
     const nextRunsLoadState = {...state.runsLoadState};
 
     for (const eid of Object.keys(action.newRuns)) {
@@ -179,13 +195,19 @@ const dataReducer: ActionReducer<RunsDataState, Action> = createReducer(
       }
     }
 
-    return {
+    const next: RunsDataState = {
       ...state,
       runIds: nextRunIds,
       runIdToExpId: nextRunIdToExpId,
       runMetadata: nextRunMetadata,
       runsLoadState: nextRunsLoadState,
     };
+    if (action.catalog) {
+      next.catalog = action.catalog;
+    } else {
+      delete next.catalog;
+    }
+    return next;
   }),
   on(runsActions.fetchRunsFailed, (state, action) => {
     const nextRunsLoadState = {...state.runsLoadState};
@@ -206,12 +228,13 @@ const dataReducer: ActionReducer<RunsDataState, Action> = createReducer(
   }),
   on(
     runsActions.fetchRunsSucceeded,
-    (state, {runsForAllExperiments, expNameByExpId}) => {
-      const groupKeyToColorId = new Map(state.groupKeyToColorId);
-      const defaultRunColorIdForGroupBy = new Map(
-        state.defaultRunColorIdForGroupBy
-      );
-
+    (state, {runsForAllExperiments, expNameByExpId, catalog}) => {
+      const groupKeyToColorId = catalog
+        ? new Map<string, number>()
+        : new Map(state.groupKeyToColorId);
+      const defaultRunColorIdForGroupBy = catalog
+        ? new Map<string, number>()
+        : new Map(state.defaultRunColorIdForGroupBy);
       let groupBy = state.initialGroupBy;
       if (state.userSetGroupByKey !== null) {
         groupBy = createGroupBy(
@@ -227,8 +250,9 @@ const dataReducer: ActionReducer<RunsDataState, Action> = createReducer(
       );
 
       Object.entries(groups.matches).forEach(([groupId, runs]) => {
-        const colorId =
-          groupKeyToColorId.get(groupId) ?? groupKeyToColorId.size;
+        const colorId = catalog
+          ? catalogColorId(groupId)
+          : groupKeyToColorId.get(groupId) ?? groupKeyToColorId.size;
         groupKeyToColorId.set(groupId, colorId);
 
         for (const run of runs) {
@@ -272,8 +296,9 @@ const dataReducer: ActionReducer<RunsDataState, Action> = createReducer(
       );
 
       Object.entries(groups.matches).forEach(([groupId, runs]) => {
-        const colorId =
-          groupKeyToColorId.get(groupId) ?? groupKeyToColorId.size;
+        const colorId = state.catalog
+          ? catalogColorId(groupId)
+          : groupKeyToColorId.get(groupId) ?? groupKeyToColorId.size;
         groupKeyToColorId.set(groupId, colorId);
 
         for (const run of runs) {
@@ -405,12 +430,39 @@ const {initialState: uiInitialState, reducers: uiNamespaceContextedReducers} =
 
 const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
   uiInitialState,
+  on(runsActions.runCatalogWindowChanged, (state, {offset, limit}) => ({
+    ...state,
+    catalogWindow: {offset, limit},
+  })),
+  on(
+    runsActions.runSelectorRegexFilterChanged,
+    runsActions.runsTableSortingInfoChanged,
+    stateRehydratedFromUrl,
+    hparamsActions.dashboardHparamFilterAdded,
+    hparamsActions.dashboardHparamFilterRemoved,
+    hparamsActions.dashboardMetricFilterAdded,
+    hparamsActions.dashboardMetricFilterRemoved,
+    (state) => ({
+      ...state,
+      catalogWindow: {...(state.catalogWindow ?? {limit: 100}), offset: 0},
+    })
+  ),
   on(runsActions.fetchRunsSucceeded, (state, action) => {
-    const nextSelectionState = new Map(state.selectionState);
+    const retained = new Set(action.runsForAllExperiments.map(({id}) => id));
+    const nextSelectionState = new Map(
+      [...state.selectionState].filter(
+        ([id, selected]) => !action.catalog || selected || retained.has(id)
+      )
+    );
 
     // Populate selection states for previously unseen runs.
-    const runSelected =
-      action.runsForAllExperiments.length <= MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT;
+    const runSelected = action.catalog
+      ? state.selectionState.size === 0 &&
+        action.catalog.runIds.length <= MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT &&
+        Object.values(action.catalog.totals).reduce((a, b) => a + b, 0) <=
+          action.catalog.runIds.length
+      : action.runsForAllExperiments.length <=
+        MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT;
     for (const run of action.runsForAllExperiments) {
       if (!nextSelectionState.has(run.id)) {
         nextSelectionState.set(run.id, runSelected);
@@ -438,6 +490,7 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
     for (const stateRunId of state.selectionState.keys()) {
       nextSelectionState.set(stateRunId, runId === stateRunId);
     }
+    nextSelectionState.set(runId, true);
 
     return {
       ...state,

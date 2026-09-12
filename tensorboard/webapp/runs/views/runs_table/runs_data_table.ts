@@ -39,6 +39,9 @@ import {RUN_START_TIME_SORT_KEY} from './sorting_utils';
 const ROW_HEIGHT_IN_PX = 48;
 const OVERSCAN_ROWS = 10;
 const INITIAL_RENDERED_ROWS = 50;
+// Browser layout engines cannot represent arbitrarily tall scroll elements.
+// Compress only the empty scroll canvas, never the rendered row height.
+const MAX_SCROLL_HEIGHT_IN_PX = 10_000_000;
 
 @Component({
   standalone: false,
@@ -60,6 +63,16 @@ export class RunsDataTable implements OnChanges {
   @Input() columnFilters!: Map<string, DiscreteFilter | IntervalFilter>;
   @Input() scrollTop = 0;
   @Input() viewportHeight = 0;
+  @Input() catalog: {
+    runIds: string[];
+    totals: Record<string, number>;
+    offset: number;
+  } | null = null;
+  @Output() windowChanged = new EventEmitter<{offset: number; limit: number}>(
+    true
+  );
+
+  private requestedWindow: {offset: number; limit: number} | null = null;
 
   ColumnHeaderType = ColumnHeaderType;
   SortingOrder = SortingOrder;
@@ -116,12 +129,21 @@ export class RunsDataTable implements OnChanges {
   }
 
   ngOnChanges(changes: SimpleChanges) {
-    if (changes['data'] || changes['scrollTop'] || changes['viewportHeight']) {
+    if (
+      changes['data'] ||
+      changes['scrollTop'] ||
+      changes['viewportHeight'] ||
+      changes['catalog']
+    ) {
       this.updateVisibleData();
     }
   }
 
   private updateVisibleData() {
+    if (this.catalog) {
+      this.updateCatalogWindow();
+      return;
+    }
     if (!this.data?.length) {
       this.visibleData = [];
       this.topSpacerHeightInPx = 0;
@@ -154,6 +176,65 @@ export class RunsDataTable implements OnChanges {
     this.visibleData = this.data.slice(start, end);
     this.topSpacerHeightInPx = start * ROW_HEIGHT_IN_PX;
     this.bottomSpacerHeightInPx = (this.data.length - end) * ROW_HEIGHT_IN_PX;
+  }
+
+  private updateCatalogWindow() {
+    const catalog = this.catalog!;
+    const total = Object.values(catalog.totals).reduce((sum, n) => sum + n, 0);
+    const viewportRows = this.viewportHeight
+      ? Math.ceil(this.viewportHeight / ROW_HEIGHT_IN_PX)
+      : INITIAL_RENDERED_ROWS;
+    const height = Math.min(total * ROW_HEIGHT_IN_PX, MAX_SCROLL_HEIGHT_IN_PX);
+    const scrollRange = Math.max(1, height - viewportRows * ROW_HEIGHT_IN_PX);
+    const first = Math.floor(
+      Math.min(1, this.scrollTop / scrollRange) *
+        Math.max(0, total - viewportRows)
+    );
+    const start = Math.max(0, first - OVERSCAN_ROWS);
+    const end = Math.min(total, first + viewportRows + OVERSCAN_ROWS);
+    if (
+      start < catalog.offset ||
+      end > catalog.offset + catalog.runIds.length
+    ) {
+      const offset =
+        Math.floor(start / INITIAL_RENDERED_ROWS) * INITIAL_RENDERED_ROWS;
+      const limit = Math.max(
+        100,
+        Math.ceil((viewportRows + 2 * OVERSCAN_ROWS) / INITIAL_RENDERED_ROWS) *
+          INITIAL_RENDERED_ROWS +
+          INITIAL_RENDERED_ROWS
+      );
+      if (
+        this.requestedWindow?.offset !== offset ||
+        this.requestedWindow?.limit !== limit
+      ) {
+        this.requestedWindow = {offset, limit};
+        this.windowChanged.emit(this.requestedWindow);
+      }
+    } else {
+      this.requestedWindow = null;
+    }
+    const visibleStart = Math.max(start, catalog.offset);
+    const visibleEnd = Math.min(end, catalog.offset + (this.data?.length ?? 0));
+    this.visibleData =
+      visibleStart < visibleEnd
+        ? this.data.slice(
+            visibleStart - catalog.offset,
+            visibleEnd - catalog.offset
+          )
+        : [];
+    const spacerStart = this.visibleData.length ? visibleStart : start;
+    this.topSpacerHeightInPx = Math.max(
+      0,
+      (first / Math.max(1, total - viewportRows)) * scrollRange -
+        (first - spacerStart) * ROW_HEIGHT_IN_PX
+    );
+    this.bottomSpacerHeightInPx = Math.max(
+      0,
+      height -
+        this.topSpacerHeightInPx -
+        this.visibleData.length * ROW_HEIGHT_IN_PX
+    );
   }
 
   selectionClick(event: MouseEvent, runId: string) {

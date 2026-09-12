@@ -14,12 +14,13 @@
 # ==============================================================================
 """The TensorBoard metrics plugin."""
 
-
 import collections
 import hashlib
 import json
-import threading
+import math
+import re
 
+from werkzeug import exceptions
 from werkzeug import wrappers
 
 from tensorboard import errors
@@ -33,7 +34,6 @@ from tensorboard.plugins.image import metadata as image_metadata
 from tensorboard.plugins.metrics import metadata
 from tensorboard.plugins.scalar import metadata as scalar_metadata
 from tensorboard.util import img_mime_type_detector
-
 
 _SINGLE_RUN_PLUGINS = frozenset(
     [histogram_metadata.PLUGIN_NAME, image_metadata.PLUGIN_NAME]
@@ -57,6 +57,31 @@ def _requested_runs(series_request):
     return None
 
 
+def _scalar_columns_for_json(steps, wall_times, values):
+    """Builds a JSON-ready `ScalarColumns` dict from provider columns.
+
+    A wide scalar tag yields hundreds of thousands of points per response, so
+    the columns are emitted as three arrays instead of one object per point:
+    that removes about 46% of the response bytes, which are otherwise repeated
+    `wallTime`/`step`/`value` keys.
+
+    The columns may be protobuf repeated fields, which `json.dumps` cannot
+    serialize, so each is materialized into a list; the copy happens in C.
+    Nonfinite floats are cleansed to their string forms, and the finite case is
+    detected in bulk with `map(math.isfinite, ...)` so that the common path
+    costs no per-point Python calls. Steps are integers, which `Cleanse`
+    returns unchanged.
+    """
+    steps = list(steps)
+    wall_times = list(wall_times)
+    values = list(values)
+    if not all(map(math.isfinite, wall_times)):
+        wall_times = [json_util.Cleanse(wt) for wt in wall_times]
+    if not all(map(math.isfinite, values)):
+        values = [json_util.Cleanse(value) for value in values]
+    return {"steps": steps, "wallTimes": wall_times, "values": values}
+
+
 def _get_tag_description_info(mapping):
     """Gets maps from tags to descriptions, and descriptions to runs.
 
@@ -68,38 +93,40 @@ def _get_tag_description_info(mapping):
         A tuple containing
             tag_to_descriptions: A map from tag strings to a set of description
                 strings.
-            description_to_runs: A map from description strings to a set of run
-                strings.
+            tag_description_to_runs: A map from (tag, description) pairs to a
+                set of run strings. Keyed by the pair because unrelated tags
+                may carry the same description text.
     """
     tag_to_descriptions = collections.defaultdict(set)
-    description_to_runs = collections.defaultdict(set)
+    tag_description_to_runs = collections.defaultdict(set)
     for run, tag_to_content in mapping.items():
         for tag, metadatum in tag_to_content.items():
             description = metadatum.description
             if len(description):
                 tag_to_descriptions[tag].add(description)
-                description_to_runs[description].add(run)
+                tag_description_to_runs[(tag, description)].add(run)
 
-    return tag_to_descriptions, description_to_runs
+    return tag_to_descriptions, tag_description_to_runs
 
 
-def _build_combined_description(descriptions, description_to_runs):
+def _build_combined_description(tag, descriptions, tag_description_to_runs):
     """Creates a single description from a set of descriptions.
 
     Descriptions may be composites when a single tag has different descriptions
     across multiple runs.
 
     Args:
+        tag: The tag string that `descriptions` belong to.
         descriptions: A list of description strings.
-        description_to_runs: A map from description strings to a set of run
-            strings.
+        tag_description_to_runs: A map from (tag, description) pairs to a set
+            of run strings.
 
     Returns:
         The combined description string.
     """
     prefixed_descriptions = []
     for description in descriptions:
-        runs = sorted(description_to_runs[description])
+        runs = sorted(tag_description_to_runs[(tag, description)])
         run_or_runs = "runs" if len(runs) > 1 else "run"
         run_header = "## For " + run_or_runs + ": " + ", ".join(runs)
         description_html = run_header + "\n" + description
@@ -107,6 +134,36 @@ def _build_combined_description(descriptions, description_to_runs):
 
     header = "# Multiple descriptions\n"
     return header + "\n".join(prefixed_descriptions)
+
+
+def _merge_tag_descriptions(tag_to_descriptions, tag_description_to_runs):
+    """Renders one description HTML string per tag.
+
+    Args:
+        tag_to_descriptions: A map from tag strings to a set of description
+            strings.
+        tag_description_to_runs: A map from (tag, description) pairs to a set
+            of run strings.
+
+    Returns:
+        A map from tag strings to description HTML strings. E.g.
+        {
+            "loss": "<h1>Multiple descriptions</h1><h2>For runs: test, train
+            </h2><p>...</p>",
+            "loss2": "<p>The lossy details</p>",
+        }
+    """
+    result = {}
+    for tag, descriptions in tag_to_descriptions.items():
+        descriptions = sorted(descriptions)
+        if len(descriptions) == 1:
+            description = descriptions[0]
+        else:
+            description = _build_combined_description(
+                tag, descriptions, tag_description_to_runs
+            )
+        result[tag] = plugin_util.markdown_to_safe_html(description)
+    return result
 
 
 def _get_tag_to_description(mapping):
@@ -117,43 +174,9 @@ def _get_tag_to_description(mapping):
           produced by DataProvider's `list_*` methods.
 
     Returns:
-        A map from tag strings to description HTML strings. E.g.
-        {
-            "loss": "<h1>Multiple descriptions</h1><h2>For runs: test, train
-            </h2><p>...</p>",
-            "loss2": "<p>The lossy details</p>",
-        }
+        The return type of `_merge_tag_descriptions`.
     """
-    tag_to_descriptions, description_to_runs = _get_tag_description_info(
-        mapping
-    )
-
-    result = {}
-    for tag in tag_to_descriptions:
-        descriptions = sorted(tag_to_descriptions[tag])
-        if len(descriptions) == 1:
-            description = descriptions[0]
-        else:
-            description = _build_combined_description(
-                descriptions, description_to_runs
-            )
-        result[tag] = plugin_util.markdown_to_safe_html(description)
-
-    return result
-
-
-def _get_run_tag_info(mapping):
-    """Returns a map of run names to a list of tag names.
-
-    Args:
-        mapping: a nested map `d` such that `d[run][tag]` is a time series
-          produced by DataProvider's `list_*` methods.
-
-    Returns:
-        A map from run strings to a list of tag strings. E.g.
-            {"loss001a": ["actor/loss", "critic/loss"], ...}
-    """
-    return {run: sorted(mapping[run]) for run in mapping}
+    return _merge_tag_descriptions(*_get_tag_description_info(mapping))
 
 
 def _format_basic_mapping(mapping):
@@ -165,11 +188,21 @@ def _format_basic_mapping(mapping):
 
     Returns:
         A dict with the following fields:
-            runTagInfo: the return type of `_get_run_tag_info`
+            runs: a list of run names, the index space of `tagToRuns`
+            tagToRuns: a map from tag strings to lists of indices into `runs`
             tagDescriptions: the return type of `_get_tag_to_description`
     """
+    # A wide experiment has one (run, tag) pair per run per tag, so naming the
+    # runs once and referring to them by index keeps the response from
+    # repeating every tag name once per run.
+    runs = sorted(mapping)
+    tag_to_runs = {}
+    for run_index, run in enumerate(runs):
+        for tag in sorted(mapping[run]):
+            tag_to_runs.setdefault(tag, []).append(run_index)
     return {
-        "runTagInfo": _get_run_tag_info(mapping),
+        "runs": runs,
+        "tagToRuns": tag_to_runs,
         "tagDescriptions": _get_tag_to_description(mapping),
     }
 
@@ -262,9 +295,6 @@ class MetricsPlugin(base_plugin.TBPlugin):
                 it contains a valid `data_provider`.
         """
         self._data_provider = context.data_provider
-        self._tag_cache = collections.OrderedDict()
-        self._tag_cache_lock = threading.Lock()
-        self._tag_cache_bytes = 0
 
         # For histograms, use a round number + 1 since sampling includes both start
         # and end steps, so N+1 samples corresponds to dividing the step sequence
@@ -297,6 +327,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
 
     def get_plugin_apps(self):
         return {
+            "/catalog": self._serve_catalog,
             "/tags": self._serve_tags,
             "/timeSeries": self._serve_time_series,
             "/imageData": self._serve_image_data,
@@ -313,18 +344,124 @@ class MetricsPlugin(base_plugin.TBPlugin):
         return False  # 'data_plugin_names' suffices.
 
     @wrappers.Request.application
+    def _serve_catalog(self, request):
+        if request.method not in ("POST", "GET"):
+            raise exceptions.MethodNotAllowed(valid_methods=["POST", "GET"])
+        try:
+            body = json.loads(
+                request.get_data()
+                if request.method == "POST"
+                else request.args.get("request", "")
+            )
+            fields = {
+                "runIds",
+                "query",
+                "plugins",
+                "groupOffset",
+                "groupLimit",
+                "groups",
+                "filteredOffset",
+                "filteredLimit",
+                "pinnedTags",
+                "pinnedRunIds",
+            }
+            if not isinstance(body, dict) or set(body) != fields:
+                raise ValueError("Expected a metrics catalog request")
+
+            def page_number(value):
+                if type(value) is not int or not 0 <= value < 2**64:
+                    raise ValueError("Catalog pages require unsigned integers")
+
+            for field in (
+                "groupOffset",
+                "groupLimit",
+                "filteredOffset",
+                "filteredLimit",
+            ):
+                page_number(body[field])
+            for field in ("runIds", "plugins", "pinnedTags", "pinnedRunIds"):
+                if not isinstance(body[field], list) or any(
+                    not isinstance(value, str) for value in body[field]
+                ):
+                    raise ValueError("%s must be a list of strings" % field)
+            for run_id in body["runIds"] + body["pinnedRunIds"]:
+                if "/" not in run_id or not run_id.split("/", 1)[1]:
+                    raise ValueError("Run IDs must be experimentId/runName")
+            if set(body["plugins"]) - {"scalars", "histograms", "images"}:
+                raise ValueError("Unknown metrics catalog plugin")
+            if not isinstance(body["query"], str):
+                raise ValueError("query must be a regular expression string")
+            re.compile(body["query"], re.IGNORECASE)
+            if not isinstance(body["groups"], list):
+                raise ValueError("groups must be a list")
+            for group in body["groups"]:
+                if (
+                    not isinstance(group, dict)
+                    or set(group) != {"name", "offset", "limit"}
+                    or not isinstance(group["name"], str)
+                ):
+                    raise ValueError("Invalid metrics catalog group")
+                page_number(group["offset"])
+                page_number(group["limit"])
+        except (ValueError, UnicodeError, re.error) as error:
+            raise exceptions.BadRequest(str(error)) from error
+        result = self._data_provider.list_metrics_catalog(
+            plugin_util.context(request.environ), request=body
+        )
+        for plugin_metadata in result["metadata"].values():
+            plugin_metadata["tagDescriptions"] = {
+                tag: plugin_util.markdown_to_safe_html(description)
+                for tag, description in plugin_metadata[
+                    "tagDescriptions"
+                ].items()
+            }
+        response = http_util.Respond(request, result, "application/json")
+        response.headers["Cache-Control"] = "private, no-cache, must-revalidate"
+        return response
+
+    @wrappers.Request.application
     def _serve_tags(self, request):
         ctx = plugin_util.context(request.environ)
         experiment = plugin_util.experiment_id(request.environ)
+        try:
+            query = request.args.get("tag_query", "")
+            re.compile(query)
+            offset = int(request.args.get("tag_offset", "0"))
+            limit = int(request.args.get("tag_limit", "0"))
+            if not 0 <= offset < 2**64 or not 0 <= limit < 2**64:
+                raise ValueError("Invalid tag catalog page")
+        except (ValueError, re.error) as error:
+            raise exceptions.BadRequest(str(error)) from error
+        runs = (
+            sorted(set(request.args.getlist("run")))
+            if "run" in request.args or request.args.get("run_filter") == "true"
+            else None
+        )
+        tags = (
+            sorted(set(request.args.getlist("tag")))
+            if "tag" in request.args or request.args.get("tag_filter") == "true"
+            else None
+        )
+        paged = "tag_limit" in request.args or "tag_offset" in request.args
+        scoped = runs is not None or tags is not None or query or paged
         revision = self._data_provider.metadata_revision(
             ctx, experiment_id=experiment
         )
-        # Reject unsupported/malformed capability responses (including legacy
-        # mock providers). Never infer a cache scope from RequestContext fields.
         revision = revision if isinstance(revision, str) and revision else None
         token = (
             hashlib.sha256(
-                json.dumps([experiment, revision]).encode()
+                json.dumps(
+                    [
+                        experiment,
+                        revision,
+                        runs,
+                        tags,
+                        query,
+                        offset,
+                        limit,
+                        paged,
+                    ]
+                ).encode()
             ).hexdigest()
             if revision
             else None
@@ -350,54 +487,91 @@ class MetricsPlugin(base_plugin.TBPlugin):
                 request, b"", "application/json", code=304, headers=headers
             )
         else:
-            with self._tag_cache_lock:
-                payload = self._tag_cache.get(token) if token else None
-                if payload is not None:
-                    self._tag_cache.move_to_end(token)
-            if payload is None:
-                index = self._tags_impl(ctx, experiment=experiment)
-                payload = json.dumps(json_util.Cleanse(index)).encode("utf-8")
-                # A reload can commit between the three listings. Such a
-                # response is usable, but must never be cached under a revision.
-                if (
-                    token
-                    and self._data_provider.metadata_revision(
-                        ctx, experiment_id=experiment
-                    )
-                    != revision
-                ):
-                    token = None
-                    headers = [
-                        (
-                            "Vary",
-                            "Accept-Encoding, X-TensorBoard-Metadata-Revision",
-                        )
-                    ]
-                if token and len(payload) <= 16 * 1024 * 1024:
-                    with self._tag_cache_lock:
-                        previous = self._tag_cache.pop(token, b"")
-                        self._tag_cache_bytes -= len(previous)
-                        self._tag_cache[token] = payload
-                        self._tag_cache_bytes += len(payload)
-                        while (
-                            len(self._tag_cache) > 8
-                            or self._tag_cache_bytes > 16 * 1024 * 1024
-                        ):
-                            _, evicted = self._tag_cache.popitem(last=False)
-                            self._tag_cache_bytes -= len(evicted)
-            if versioned:
-                payload = (
-                    b'{"revision":'
-                    + json.dumps(token).encode()
-                    + b',"metadata":'
-                    + payload
-                    + b"}"
+            if scoped:
+                index, total = self._tags_page_impl(
+                    ctx,
+                    experiment=experiment,
+                    run_tag_filter=provider.RunTagFilter(runs=runs, tags=tags),
+                    query=query,
+                    offset=offset,
+                    limit=limit,
                 )
+            else:
+                index = self._tags_impl(ctx, experiment=experiment)
+                total = None
+            # Query results are request-owned. Browsers can validate their own
+            # selected page; the server does not retain previously visited pages.
+            if (
+                token
+                and self._data_provider.metadata_revision(
+                    ctx, experiment_id=experiment
+                )
+                != revision
+            ):
+                token = None
+                headers = [
+                    ("Vary", "Accept-Encoding, X-TensorBoard-Metadata-Revision")
+                ]
+            if versioned:
+                body = {"revision": token, "metadata": index}
+                if paged:
+                    body["totalTags"] = total
+            else:
+                body = index
+                if paged:
+                    body = dict(body, totalTags=total)
             response = http_util.Respond(
-                request, payload, "application/json", headers=headers
+                request, body, "application/json", headers=headers
             )
         response.headers["Cache-Control"] = "private, no-cache, must-revalidate"
         return response
+
+    def _tags_page_impl(
+        self, ctx, *, experiment, run_tag_filter, query, offset, limit
+    ):
+        result = {}
+        total = 0
+        for name, data_class, plugin, checker, formatter in (
+            (
+                "scalars",
+                "scalars",
+                scalar_metadata,
+                self._scalar_version_checker,
+                _format_basic_mapping,
+            ),
+            (
+                "histograms",
+                "tensors",
+                histogram_metadata,
+                self._histogram_version_checker,
+                _format_basic_mapping,
+            ),
+            (
+                "images",
+                "blob_sequences",
+                image_metadata,
+                self._image_version_checker,
+                _format_image_mapping,
+            ),
+        ):
+            page = self._data_provider.list_tags_page(
+                ctx,
+                experiment_id=experiment,
+                plugin_name=plugin.PLUGIN_NAME,
+                data_class=data_class,
+                run_tag_filter=run_tag_filter,
+                query=query,
+                offset=offset,
+                limit=limit,
+            )
+            mapping = self._filter_by_version(
+                page.mapping, plugin.parse_plugin_metadata, checker
+            )
+            result[name] = formatter(mapping)
+            # Each plugin is independently paged. The last page of the largest
+            # catalog is the last page needed to browse all three.
+            total = max(total, page.total)
+        return result, total
 
     def _tags_impl(self, ctx, experiment=None):
         """Returns tag metadata for a given experiment's logged metrics.
@@ -410,16 +584,30 @@ class MetricsPlugin(base_plugin.TBPlugin):
             A nested dict 'd' with keys in ("scalars", "histograms", "images")
                 and values being the return type of _format_*mapping.
         """
-        scalar_mapping = self._data_provider.list_scalars_metadata(
+        scalar_tag_index = self._data_provider.list_scalars_tag_index(
             ctx,
             experiment_id=experiment,
             plugin_name=scalar_metadata.PLUGIN_NAME,
         )
-        scalar_mapping = self._filter_by_version(
-            scalar_mapping,
-            scalar_metadata.parse_plugin_metadata,
-            self._scalar_version_checker,
-        )
+        if scalar_tag_index is None:
+            scalar_mapping = self._data_provider.list_scalars_metadata(
+                ctx,
+                experiment_id=experiment,
+                plugin_name=scalar_metadata.PLUGIN_NAME,
+            )
+            scalar_result = _format_basic_mapping(
+                self._filter_by_version(
+                    scalar_mapping,
+                    scalar_metadata.parse_plugin_metadata,
+                    self._scalar_version_checker,
+                )
+            )
+        else:
+            scalar_result = self._format_tag_index(
+                scalar_tag_index,
+                scalar_metadata.parse_plugin_metadata,
+                self._scalar_version_checker,
+            )
 
         histogram_mapping = self._data_provider.list_tensors_metadata(
             ctx,
@@ -448,20 +636,87 @@ class MetricsPlugin(base_plugin.TBPlugin):
         )
 
         result = {}
-        result["scalars"] = _format_basic_mapping(scalar_mapping)
+        result["scalars"] = scalar_result
         result["histograms"] = _format_basic_mapping(histogram_mapping)
         result["images"] = _format_image_mapping(image_mapping)
         return result
 
+    def _format_tag_index(self, tag_index, parse_metadata, version_checker):
+        """Prepares a columnar provider listing for client consumption.
+
+        Args:
+            tag_index: A `DataProvider.TagIndex` value.
+            parse_metadata: The owning plugin's metadata parser.
+            version_checker: The owning plugin's version checker.
+
+        Returns:
+            The return type of `_format_basic_mapping`.
+        """
+        tags = tag_index.tags
+        provider_runs = tag_index.runs
+        descriptions = tag_index.descriptions
+        # Version admission depends only on the metadata content, of which a
+        # whole experiment holds a handful, so decide once per content instead
+        # of once per (run, tag). The rejection warning names the first
+        # offending pair, as it does when filtering pair by pair.
+        versions = [parse_metadata(c).version for c in tag_index.contents]
+        allowed = [None] * len(versions)
+        # Providers list runs in storage order; emitting them sorted keeps the
+        # response identical for identical metadata.
+        runs = sorted(provider_runs)
+        order = sorted(range(len(provider_runs)), key=provider_runs.__getitem__)
+        tag_to_runs = {}
+        tag_to_descriptions = collections.defaultdict(set)
+        tag_description_to_runs = collections.defaultdict(set)
+        for run_index, provider_index in enumerate(order):
+            run = provider_runs[provider_index]
+            content_indices = tag_index.run_contents[provider_index]
+            for offset, tag_id in enumerate(tag_index.run_tags[provider_index]):
+                content_index = content_indices[offset]
+                ok = allowed[content_index]
+                if ok is None:
+                    ok = version_checker.ok(
+                        versions[content_index], run, tags[tag_id]
+                    )
+                    allowed[content_index] = ok
+                if not ok:
+                    continue
+                tag = tags[tag_id]
+                runs_for_tag = tag_to_runs.get(tag)
+                if runs_for_tag is None:
+                    tag_to_runs[tag] = [run_index]
+                else:
+                    runs_for_tag.append(run_index)
+                if descriptions:
+                    description = descriptions.get((provider_index, tag_id))
+                    if description:
+                        tag_to_descriptions[tag].add(description)
+                        tag_description_to_runs[(tag, description)].add(run)
+        return {
+            "runs": runs,
+            "tagToRuns": tag_to_runs,
+            "tagDescriptions": _merge_tag_descriptions(
+                tag_to_descriptions, tag_description_to_runs
+            ),
+        }
+
     def _filter_by_version(self, mapping, parse_metadata, version_checker):
         """Filter `DataProvider.list_*` output by summary metadata version."""
+        # Plugin content is nearly always one of a handful of byte strings, so
+        # parse each distinct value once rather than once per (run, tag).
+        versions = {}
         result = {run: {} for run in mapping}
         for run, tag_to_content in mapping.items():
+            filtered = result[run]
             for tag, metadatum in tag_to_content.items():
-                md = parse_metadata(metadatum.plugin_content)
-                if not version_checker.ok(md.version, run, tag):
+                content = metadatum.plugin_content
+                version = versions.get(content)
+                if version is None:
+                    version = parse_metadata(content).version
+                    versions[content] = version
+                if not version_checker.ok(version, run, tag):
                     continue
-                result[run][tag] = metadatum
+                filtered[tag] = metadatum
         return result
 
     @wrappers.Request.application
@@ -481,18 +736,18 @@ class MetricsPlugin(base_plugin.TBPlugin):
                 "Unable to parse 'requests' as JSON"
             )
 
-        response = self._time_series_impl(
-            ctx, experiment, series_requests, for_json=True
-        )
-        # Numeric scalar fields are cleansed while constructing their dicts;
-        # passing serialized JSON avoids a second recursive copy of every point.
+        response = self._time_series_impl(ctx, experiment, series_requests)
+        # `_time_series_impl` already returns JSON-ready values, so serializing
+        # here avoids a second recursive copy of every point. Compact
+        # separators drop two bytes per number from a response that can hold
+        # hundreds of thousands of them.
         return http_util.Respond(
-            request, json.dumps(response, allow_nan=False), "application/json"
+            request,
+            json.dumps(response, allow_nan=False, separators=(",", ":")),
+            "application/json",
         )
 
-    def _time_series_impl(
-        self, ctx, experiment, series_requests, for_json=False
-    ):
+    def _time_series_impl(self, ctx, experiment, series_requests):
         """Constructs a list of responses from a list of series requests.
 
         Args:
@@ -501,12 +756,83 @@ class MetricsPlugin(base_plugin.TBPlugin):
             series_requests: a list of `TimeSeriesRequest` dicts (see http_api.md).
 
         Returns:
-            A list of `TimeSeriesResponse` dicts (see http_api.md).
+            A list of JSON-ready `TimeSeriesResponse` dicts (see http_api.md).
         """
-        responses = [
-            self._get_time_series(ctx, experiment, request, for_json=for_json)
-            for request in series_requests
-        ]
+        responses = [None] * len(series_requests)
+        # A refresh asks for every visible card in one HTTP request, and one
+        # provider read serves many tags. Reading tag by tag instead costs a
+        # round trip per card - for the gRPC data server, one RPC per card,
+        # each resending a run filter that can name hundreds of runs. Two
+        # requests share a read when they agree on the read method and
+        # downsample count (both implied by the plugin) and on the run filter.
+        groups = collections.defaultdict(list)
+        for index, series_request in enumerate(series_requests):
+            response = json_util.Cleanse(
+                self._create_base_response(series_request)
+            )
+            responses[index] = response
+            request_error = self._get_invalid_request_error(series_request)
+            if request_error:
+                # Malformed requests never reach the provider, so they cannot
+                # disturb the read shared by their well-formed neighbors.
+                response["error"] = request_error
+                continue
+            runs = _requested_runs(series_request)
+            # `RunTagFilter` treats `runs` as a set, so equal run sets read
+            # alike however the client ordered them; `None` admits every run.
+            groups[
+                (
+                    series_request.get("plugin"),
+                    None if runs is None else frozenset(runs),
+                )
+            ].append(index)
+
+        for (plugin, runs), indices in groups.items():
+            tags = {series_requests[index].get("tag") for index in indices}
+            if plugin == scalar_metadata.PLUGIN_NAME:
+                mapping, columnar = self._read_scalar_mapping(
+                    ctx, experiment, tags, runs
+                )
+                for index in indices:
+                    tag = series_requests[index].get("tag")
+                    # Scalars are cleansed column-wise while being built.
+                    run_to_series = self._run_to_scalar_series(
+                        mapping, columnar, tag
+                    )
+                    responses[index]["runToSeries"] = run_to_series
+            elif plugin == histogram_metadata.PLUGIN_NAME:
+                mapping = self._data_provider.read_tensors(
+                    ctx,
+                    experiment_id=experiment,
+                    plugin_name=histogram_metadata.PLUGIN_NAME,
+                    downsample=self._plugin_downsampling["histograms"],
+                    run_tag_filter=provider.RunTagFilter(runs=runs, tags=tags),
+                )
+                for index in indices:
+                    tag = series_requests[index].get("tag")
+                    run_to_series = json_util.Cleanse(
+                        self._run_to_histogram_series(mapping, tag)
+                    )
+                    responses[index]["runToSeries"] = run_to_series
+            else:
+                # `_get_invalid_request_error` admits no other plugin.
+                mapping = self._data_provider.read_blob_sequences(
+                    ctx,
+                    experiment_id=experiment,
+                    plugin_name=image_metadata.PLUGIN_NAME,
+                    downsample=self._plugin_downsampling["images"],
+                    run_tag_filter=provider.RunTagFilter(runs=runs, tags=tags),
+                )
+                for index in indices:
+                    series_request = series_requests[index]
+                    run_to_series = json_util.Cleanse(
+                        self._run_to_image_series(
+                            mapping,
+                            series_request.get("tag"),
+                            series_request.get("sample"),
+                        )
+                    )
+                    responses[index]["runToSeries"] = run_to_series
         return responses
 
     def _create_base_response(self, series_request):
@@ -555,77 +881,48 @@ class MetricsPlugin(base_plugin.TBPlugin):
 
         return None
 
-    def _get_time_series(self, ctx, experiment, series_request, for_json=False):
-        """Returns time series data for a given tag, plugin.
-
-        Args:
-            ctx: A `tensorboard.context.RequestContext` value.
-            experiment: string ID of the request's experiment.
-            series_request: a `TimeSeriesRequest` (see http_api.md).
-
-        Returns:
-            A `TimeSeriesResponse` dict (see http_api.md).
-        """
-        tag = series_request.get("tag")
-        run = series_request.get("run")
-        plugin = series_request.get("plugin")
-        sample = series_request.get("sample")
-        response = self._create_base_response(series_request)
-        request_error = self._get_invalid_request_error(series_request)
-        if request_error:
-            response["error"] = request_error
-            return json_util.Cleanse(response) if for_json else response
-
-        runs = _requested_runs(series_request)
-        run_to_series = None
-        if plugin == scalar_metadata.PLUGIN_NAME:
-            run_to_series = self._get_run_to_scalar_series(
-                ctx, experiment, tag, runs, for_json=for_json
-            )
-
-        if plugin == histogram_metadata.PLUGIN_NAME:
-            run_to_series = self._get_run_to_histogram_series(
-                ctx, experiment, tag, runs
-            )
-
-        if plugin == image_metadata.PLUGIN_NAME:
-            run_to_series = self._get_run_to_image_series(
-                ctx, experiment, tag, sample, runs
-            )
-
-        if for_json:
-            response = json_util.Cleanse(response)
-            if plugin != scalar_metadata.PLUGIN_NAME:
-                run_to_series = json_util.Cleanse(run_to_series)
-        response["runToSeries"] = run_to_series
-        return response
-
-    def _get_run_to_scalar_series(
-        self, ctx, experiment, tag, runs, for_json=False
-    ):
-        """Builds a run-to-scalar-series dict for client consumption.
+    def _read_scalar_mapping(self, ctx, experiment, tags, runs):
+        """Reads the scalar data of several tags in one provider call.
 
         Args:
             ctx: A `tensorboard.context.RequestContext` value.
             experiment: a string experiment id.
-            tag: string of the requested tag.
-            runs: optional list of run names as strings.
+            tags: collection of requested tag name strings.
+            runs: optional collection of run names as strings.
 
         Returns:
-            A map from string run names to `ScalarStepDatum` (see http_api.md).
+            A tuple containing:
+              mapping: the provider's `run -> tag -> data` mapping.
+              columnar: whether the data are `ScalarColumnData` values rather
+                  than lists of `ScalarDatum`.
         """
         kwargs = dict(
             experiment_id=experiment,
             plugin_name=scalar_metadata.PLUGIN_NAME,
             downsample=self._plugin_downsampling["scalars"],
-            run_tag_filter=provider.RunTagFilter(runs=runs, tags=[tag]),
+            run_tag_filter=provider.RunTagFilter(runs=runs, tags=tags),
         )
 
         columns = self._data_provider.read_scalar_columns(ctx, **kwargs)
-        if columns is None:
-            mapping = self._data_provider.read_scalars(ctx, **kwargs)
+        if columns is not None:
+            return (columns, True)
+        return (self._data_provider.read_scalars(ctx, **kwargs), False)
+
+    def _run_to_scalar_series(self, mapping, columnar, tag):
+        """Builds a run-to-scalar-columns dict for client consumption.
+
+        Args:
+            mapping: a `_read_scalar_mapping` mapping, which may also hold
+                tags read on behalf of other requests.
+            columnar: the `columnar` flag of that same read.
+            tag: string of the requested tag.
+
+        Returns:
+            A map from string run names to `ScalarColumns` (see http_api.md).
+        """
+        if columnar:
             series = (
-                (run, ((d.step, d.wall_time, d.value) for d in tags[tag]))
+                (run, tags[tag].steps, tags[tag].wall_times, tags[tag].values)
                 for run, tags in mapping.items()
                 if tag in tags
             )
@@ -633,34 +930,20 @@ class MetricsPlugin(base_plugin.TBPlugin):
             series = (
                 (
                     run,
-                    zip(
-                        tags[tag].steps, tags[tag].wall_times, tags[tag].values
-                    ),
+                    [d.step for d in tags[tag]],
+                    [d.wall_time for d in tags[tag]],
+                    [d.value for d in tags[tag]],
                 )
-                for run, tags in columns.items()
+                for run, tags in mapping.items()
                 if tag in tags
             )
 
-        run_to_series = {}
-        for result_run, points in series:
-            if for_json:
-                values = [
-                    {
-                        "wallTime": json_util.Cleanse(wt),
-                        "step": json_util.Cleanse(step),
-                        "value": json_util.Cleanse(value),
-                    }
-                    for step, wt, value in points
-                ]
-                result_run = json_util.Cleanse(result_run)
-            else:
-                values = [
-                    {"wallTime": wt, "step": step, "value": value}
-                    for step, wt, value in points
-                ]
-            run_to_series[result_run] = values
-
-        return run_to_series
+        return {
+            json_util.Cleanse(result_run): _scalar_columns_for_json(
+                steps, wall_times, values
+            )
+            for result_run, steps, wall_times, values in series
+        }
 
     def _format_histogram_datum_bins(self, datum):
         """Formats a histogram datum's bins for client consumption.
@@ -675,26 +958,17 @@ class MetricsPlugin(base_plugin.TBPlugin):
         bins = [{"min": x[0], "max": x[1], "count": x[2]} for x in numpy_list]
         return bins
 
-    def _get_run_to_histogram_series(self, ctx, experiment, tag, runs):
+    def _run_to_histogram_series(self, mapping, tag):
         """Builds a run-to-histogram-series dict for client consumption.
 
         Args:
-            ctx: A `tensorboard.context.RequestContext` value.
-            experiment: a string experiment id.
+            mapping: a `read_tensors` mapping, which may also hold tags read
+                on behalf of other requests.
             tag: string of the requested tag.
-            runs: optional list of run names as strings.
 
         Returns:
             A map from string run names to `HistogramStepDatum` (see http_api.md).
         """
-        mapping = self._data_provider.read_tensors(
-            ctx,
-            experiment_id=experiment,
-            plugin_name=histogram_metadata.PLUGIN_NAME,
-            downsample=self._plugin_downsampling["histograms"],
-            run_tag_filter=provider.RunTagFilter(runs=runs, tags=[tag]),
-        )
-
         run_to_series = {}
         for result_run, tag_data in mapping.items():
             if tag not in tag_data:
@@ -711,27 +985,18 @@ class MetricsPlugin(base_plugin.TBPlugin):
 
         return run_to_series
 
-    def _get_run_to_image_series(self, ctx, experiment, tag, sample, runs):
+    def _run_to_image_series(self, mapping, tag, sample):
         """Builds a run-to-image-series dict for client consumption.
 
         Args:
-            ctx: A `tensorboard.context.RequestContext` value.
-            experiment: a string experiment id.
+            mapping: a `read_blob_sequences` mapping, which may also hold tags
+                read on behalf of other requests.
             tag: string of the requested tag.
             sample: zero-indexed integer for the requested sample.
-            runs: optional list of run names as strings.
 
         Returns:
             A `RunToSeries` dict (see http_api.md).
         """
-        mapping = self._data_provider.read_blob_sequences(
-            ctx,
-            experiment_id=experiment,
-            plugin_name=image_metadata.PLUGIN_NAME,
-            downsample=self._plugin_downsampling["images"],
-            run_tag_filter=provider.RunTagFilter(runs, tags=[tag]),
-        )
-
         run_to_series = {}
         for result_run, tag_data in mapping.items():
             if tag not in tag_data:
@@ -753,7 +1018,7 @@ class MetricsPlugin(base_plugin.TBPlugin):
         if not blob_key:
             raise errors.InvalidArgumentError("Missing 'imageId' field")
 
-        (data, mime_type) = self._image_data_impl(ctx, blob_key)
+        data, mime_type = self._image_data_impl(ctx, blob_key)
         return http_util.Respond(request, data, mime_type)
 
     def _image_data_impl(self, ctx, blob_key):

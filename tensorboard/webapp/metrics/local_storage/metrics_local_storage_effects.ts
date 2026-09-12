@@ -48,19 +48,6 @@ function getTagGroups(cards: DeepReadonly<CardIdWithMetadata[]>): string[] {
   return groupCardIdWithMetdata(cards).map((group) => group.groupName);
 }
 
-function pickMap<T>(
-  values: Map<string, T>,
-  currentTagGroups: Set<string>
-): Map<string, T> {
-  const result = new Map<string, T>();
-  for (const [tagGroup, value] of values.entries()) {
-    if (currentTagGroups.has(tagGroup)) {
-      result.set(tagGroup, value);
-    }
-  }
-  return result;
-}
-
 function mapToRecord<T>(values: Map<string, T>): Record<string, T> {
   return Object.fromEntries(values.entries());
 }
@@ -101,8 +88,7 @@ export class MetricsLocalStorageEffects {
                 experimentIds,
                 getTagGroups(currentCards),
                 currentExpanded,
-                currentPageIndex,
-                true
+                currentPageIndex
               );
             }
           )
@@ -134,8 +120,7 @@ export class MetricsLocalStorageEffects {
                 experimentIds,
                 getTagGroups(currentCards),
                 currentExpanded,
-                currentPageIndex,
-                false
+                currentPageIndex
               );
             }
           )
@@ -193,33 +178,28 @@ export class MetricsLocalStorageEffects {
     experimentIds: string[] | null,
     tagGroups: string[],
     currentExpanded: Map<string, boolean>,
-    currentPageIndex: Map<string, number>,
-    removeWhenEmpty: boolean
+    currentPageIndex: Map<string, number>
   ) {
     const namespace = getNamespace(dataLocation, experimentIds);
     if (!namespace) {
       return;
     }
-    if (!tagGroups.length) {
-      if (removeWhenEmpty) {
-        this.dataSource.setState(namespace, [], {
-          tagGroupExpanded: new Map(),
-          tagGroupPageIndex: new Map(),
-        });
-      }
-      return;
-    }
-
-    const currentTagGroups = new Set(tagGroups);
     const storedState = this.dataSource.getState(namespace, tagGroups);
     const tagGroupExpanded = new Map([
-      ...pickMap(currentExpanded, currentTagGroups),
+      ...currentExpanded,
       ...storedState.tagGroupExpanded,
     ]);
     const tagGroupPageIndex = new Map([
-      ...pickMap(currentPageIndex, currentTagGroups),
+      ...currentPageIndex,
       ...storedState.tagGroupPageIndex,
     ]);
+    tagGroups = [
+      ...new Set([
+        ...tagGroups,
+        ...tagGroupExpanded.keys(),
+        ...tagGroupPageIndex.keys(),
+      ]),
+    ];
 
     this.store.dispatch(
       metricsActions.metricsLocalStorageHydrated({

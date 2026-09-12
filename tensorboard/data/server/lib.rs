@@ -34,6 +34,7 @@ pub mod masked_crc;
 pub mod reservoir;
 pub mod run;
 pub mod server;
+pub mod storage;
 pub mod tf_record;
 pub mod types;
 

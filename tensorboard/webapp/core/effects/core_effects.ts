@@ -38,6 +38,7 @@ import {
 } from '../../app_routing/store/app_routing_selectors';
 import {RouteKind} from '../../app_routing/types';
 import {getEnabledExperimentalPlugins} from '../../feature_flag/store/feature_flag_selectors';
+import {LoadingMechanismType} from '../../types/api';
 import {DataLoadState} from '../../types/data';
 import {
   TBServerDataSource,
@@ -60,6 +61,7 @@ import {State} from '../state';
 import {
   getActivePlugin,
   getPluginsListLoaded,
+  getPlugins,
   getPolymerRunsLoadState,
 } from '../store';
 import {PluginsListFailureCode} from '../types';
@@ -196,8 +198,14 @@ export class CoreEffects {
           })
         );
 
-        const runsReload$ = this.onDashboardLoad$.pipe(
-          map(([, routeKind]) => routeKind),
+        const runsReload$ = merge(
+          this.onDashboardLoad$.pipe(map(([, routeKind]) => routeKind)),
+          this.actions$.pipe(
+            ofType(changePlugin),
+            withLatestFrom(this.store.select(getRouteKind)),
+            map(([, routeKind]) => routeKind)
+          )
+        ).pipe(
           switchMap((routeKind) => {
             if (routeKind !== RouteKind.COMPARE_EXPERIMENT) {
               return of([]);
@@ -265,16 +273,23 @@ export class CoreEffects {
           }),
           withLatestFrom(
             this.store.select(getRouteKind),
-            this.store.select(getPolymerRunsLoadState)
+            this.store.select(getPolymerRunsLoadState),
+            this.store.select(getActivePlugin),
+            this.store.select(getPlugins)
           ),
-          filter(([, routeKind, loadState]) => {
+          filter(([, routeKind, loadState, activePlugin, plugins]) => {
+            const loadingType = activePlugin
+              ? plugins[activePlugin]?.loading_mechanism.type
+              : undefined;
             // While the same check was applied earlier, `delay` + `throttleTime`
             // makes it unpredictable and we can sometimes make requests for the
             // wrong route. This check prevents making the request in wrong
             // hostname in a fool proof way.
             return (
               DASHBOARD_ROUTE_KIND.has(routeKind) &&
-              loadState.state !== DataLoadState.LOADING
+              loadState.state !== DataLoadState.LOADING &&
+              (loadingType === LoadingMechanismType.CUSTOM_ELEMENT ||
+                loadingType === LoadingMechanismType.IFRAME)
             );
           }),
           tap(() => {

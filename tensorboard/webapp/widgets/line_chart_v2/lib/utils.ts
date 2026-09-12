@@ -43,16 +43,27 @@ function isWebGl2Supported(): boolean {
   return cachedIsWebGl2Supported;
 }
 
+let cachedIsWebGl2OffscreenCanvasSupported: boolean | null = null;
+
 function isWebGl2OffscreenCanvasSupported(): boolean {
-  if (!self.hasOwnProperty('OffscreenCanvas')) {
-    return false;
+  // Each probe creates a real WebGL2 context, and browsers evict the oldest
+  // live context past a small limit. Charts call this on construction, so the
+  // answer has to be computed once.
+  if (cachedIsWebGl2OffscreenCanvasSupported === null) {
+    cachedIsWebGl2OffscreenCanvasSupported =
+      self.hasOwnProperty('OffscreenCanvas') &&
+      // Safari 16.4 rolled out OffscreenCanvas support but without webgl2 support.
+      Boolean(new OffscreenCanvas(0, 0).getContext('webgl2'));
   }
-  // Safari 16.4 rolled out OffscreenCanvas support but without webgl2 support.
-  const context = new OffscreenCanvas(0, 0).getContext('webgl2');
-  return Boolean(context);
+  return cachedIsWebGl2OffscreenCanvasSupported;
 }
 
 function arePolylinesEqual(lineA: Polyline, lineB: Polyline) {
+  // A series the drawable did not re-transform keeps the buffer the renderer
+  // already drew, so the common "nothing changed" case costs no scan.
+  if (lineA === lineB) {
+    return true;
+  }
   if (lineA.length !== lineB.length) {
     return false;
   }

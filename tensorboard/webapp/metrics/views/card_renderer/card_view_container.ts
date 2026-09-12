@@ -21,10 +21,17 @@ import {
 } from '@angular/core';
 import {Store} from '@ngrx/store';
 import {Observable} from 'rxjs';
-import {map, take, throttleTime, withLatestFrom} from 'rxjs/operators';
+import {
+  distinctUntilChanged,
+  map,
+  take,
+  throttleTime,
+  withLatestFrom,
+} from 'rxjs/operators';
 import {State} from '../../../app_state';
 import * as selectors from '../../../selectors';
 import {RunColorScale} from '../../../types/ui';
+import {hasOwn} from '../../../util/lang';
 import * as actions from '../../actions';
 import {PluginType} from '../../data_source';
 import {CardId} from '../../types';
@@ -40,7 +47,7 @@ const RUN_COLOR_UPDATE_THROTTLE_TIME_IN_MS = 350;
   selector: 'card-view',
   template: `
     <card-view-component
-      [isEverVisible]="isEverVisible"
+      [isInRenderBuffer]="(isInRenderBuffer$ | async) ?? false"
       [cardId]="cardId"
       [groupName]="groupName"
       [pluginType]="pluginType"
@@ -48,9 +55,6 @@ const RUN_COLOR_UPDATE_THROTTLE_TIME_IN_MS = 350;
       (fullWidthChanged)="onFullWidthChanged($event)"
       (fullHeightChanged)="onFullHeightChanged($event)"
       (pinStateChanged)="onPinStateChanged()"
-      observeIntersection
-      intersectionObserverMargin="200px 200px 200px 200px"
-      (onVisibilityChange)="onVisibilityChange($event)"
     >
     </card-view-component>
   `,
@@ -59,6 +63,12 @@ const RUN_COLOR_UPDATE_THROTTLE_TIME_IN_MS = 350;
 })
 export class CardViewContainer {
   constructor(private readonly store: Store<State>) {
+    this.isInRenderBuffer$ = this.store
+      .select(selectors.getVisibleCardIdSet)
+      .pipe(
+        map((cardIds) => cardIds.has(this.cardId)),
+        distinctUntilChanged()
+      );
     this.runColorScale$ = this.store.select(selectors.getRunColorMap).pipe(
       throttleTime(RUN_COLOR_UPDATE_THROTTLE_TIME_IN_MS, undefined, {
         leading: true,
@@ -66,7 +76,7 @@ export class CardViewContainer {
       }),
       map((colorMap) => {
         return (runId: string) => {
-          if (!colorMap.hasOwnProperty(runId)) {
+          if (!hasOwn(colorMap, runId)) {
             // Assign white when no colors are assigned to a run by user or
             // by color grouping scheme.
             return '#fff';
@@ -77,7 +87,7 @@ export class CardViewContainer {
     );
   }
 
-  isEverVisible = false;
+  readonly isInRenderBuffer$: Observable<boolean>;
 
   @Input() cardId!: CardId;
   @Input() groupName!: string | null;
@@ -85,10 +95,6 @@ export class CardViewContainer {
 
   @Output() fullWidthChanged = new EventEmitter<boolean>();
   @Output() fullHeightChanged = new EventEmitter<boolean>();
-
-  onVisibilityChange({visible}: {visible: boolean}) {
-    this.isEverVisible = this.isEverVisible || visible;
-  }
 
   readonly runColorScale$: Observable<RunColorScale>;
 

@@ -69,13 +69,17 @@ struct ListResponse {
     next_page_token: Option<String>,
     /// List of objects, sorted by name.
     #[serde(default)] // `items` omitted entirely when there are no results
-    items: Vec<ListResponseItem>,
+    items: Vec<Object>,
 }
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ListResponseItem {
+pub struct Object {
     /// Full GCS object name, possibly including slashes, but not including the bucket.
-    name: String,
+    pub name: String,
+    /// GCS encodes sizes and generation numbers as decimal strings.
+    pub size: String,
+    pub generation: String,
+    pub updated: String,
 }
 
 impl Client {
@@ -85,6 +89,26 @@ impl Client {
 
     /// Lists all objects in a bucket matching the given prefix.
     pub fn list(&self, bucket: &str, prefix: &str) -> reqwest::Result<Vec<String>> {
+        let mut results = Vec::new();
+        self.visit(bucket, prefix, &mut |object| {
+            results.push(object.name);
+            Ok::<(), reqwest::Error>(())
+        })?;
+        Ok(results)
+    }
+
+    /// Visits objects page by page, retaining at most one API response at a time.
+    ///
+    /// Listing and visitor errors abort the scan; a caller must not treat it as complete.
+    pub fn visit<E>(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        visitor: &mut dyn FnMut(Object) -> Result<(), E>,
+    ) -> Result<(), E>
+    where
+        E: From<reqwest::Error>,
+    {
         let mut base_url = Url::parse(API_BASE).unwrap();
         base_url
             .path_segments_mut()
@@ -94,8 +118,10 @@ impl Client {
             .query_pairs_mut()
             .append_pair("prefix", prefix)
             .append_pair("prettyPrint", "false")
-            .append_pair("fields", "nextPageToken,items/name");
-        let mut results = Vec::new();
+            .append_pair(
+                "fields",
+                "nextPageToken,items(name,size,generation,updated)",
+            );
         let mut page_token: Option<String> = None;
         for page in 1.. {
             let mut url = base_url.clone();
@@ -110,13 +136,15 @@ impl Client {
                 .send_authenticated(self.http.get(url))?
                 .error_for_status()?
                 .json()?;
-            results.extend(res.items.into_iter().map(|i| i.name));
+            for object in res.items {
+                visitor(object)?;
+            }
             if res.next_page_token.is_none() {
                 break;
             }
             page_token = res.next_page_token;
         }
-        Ok(results)
+        Ok(())
     }
 
     /// Reads partial content of an object. (To read the whole thing, pass `0..=u64::MAX`.)

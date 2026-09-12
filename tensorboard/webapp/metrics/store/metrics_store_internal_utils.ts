@@ -17,6 +17,7 @@ limitations under the License.
  */
 
 import {DataLoadState} from '../../types/data';
+import {hasOwn} from '../../util/lang';
 import {isSampledPlugin, PluginType, SampledPluginType} from '../data_source';
 import {
   CardId,
@@ -67,11 +68,11 @@ export function getTimeSeriesLoadable(
   sample?: number
 ): TimeSeriesLoadables[typeof plugin] | null {
   const pluginData = timeSeriesData[plugin];
-  if (!pluginData.hasOwnProperty(tag)) {
+  if (!hasOwn(pluginData, tag)) {
     return null;
   }
   if (isSampledPlugin(plugin)) {
-    if (!timeSeriesData[plugin][tag].hasOwnProperty(sample!)) {
+    if (!hasOwn(timeSeriesData[plugin][tag], sample!)) {
       return null;
     }
     return timeSeriesData[plugin][tag][sample!];
@@ -102,7 +103,7 @@ export function createPluginDataWithLoadable(
   }
 
   const pluginData = {...timeSeriesData[plugin]};
-  const hasTag = pluginData.hasOwnProperty(tag);
+  const hasTag = hasOwn(pluginData, tag);
   pluginData[tag] = hasTag
     ? {...pluginData[tag]}
     : buildTimeSeriesLoadable<typeof plugin>();
@@ -114,10 +115,10 @@ function createSampledTagDataWithLoadable<P extends SampledPluginType>(
   tag: string,
   sample: number
 ) {
-  const hasTag = pluginData.hasOwnProperty(tag);
+  const hasTag = hasOwn(pluginData, tag);
   const tagData = hasTag ? {...pluginData[tag]} : {};
 
-  const hasSample = tagData.hasOwnProperty(sample);
+  const hasSample = hasOwn(tagData, sample);
   tagData[sample] = hasSample
     ? {...tagData[sample]}
     : buildTimeSeriesLoadable<P>();
@@ -125,7 +126,7 @@ function createSampledTagDataWithLoadable<P extends SampledPluginType>(
 }
 
 function buildTimeSeriesLoadable<
-  P extends PluginType,
+  P extends PluginType
 >(): TimeSeriesLoadables[P] {
   return {
     runToSeries: {},
@@ -144,6 +145,22 @@ export function getCardId(cardMetadata: CardMetadata) {
 
 export function getPinnedCardId(baseCardId: CardId) {
   return JSON.stringify({baseCardId});
+}
+
+/**
+ * Identifies the loadable that holds a (plugin, tag, sample)'s series. Unlike
+ * a `CardId`, several cards can share one key: every run of a single-run
+ * plugin's tag reads the same loadable.
+ *
+ * The tag goes last because it is arbitrary user text, so any separator can
+ * appear inside it and only a trailing field keeps the key unambiguous.
+ */
+export function getLoadableKey(
+  plugin: PluginType,
+  tag: string,
+  sample?: number
+): string {
+  return `${plugin}\u0000${sample ?? ''}\u0000${tag}`;
 }
 
 /**
@@ -169,7 +186,7 @@ export function getRunIds(
 ) {
   if (isSampledPlugin(plugin)) {
     const tagRunSampledInfo = tagMetadata[plugin].tagRunSampledInfo;
-    if (!tagRunSampledInfo.hasOwnProperty(tag)) {
+    if (!hasOwn(tagRunSampledInfo, tag)) {
       return [];
     }
     const runIds = Object.keys(tagRunSampledInfo[tag]);
@@ -178,64 +195,212 @@ export function getRunIds(
     });
   }
   const tagToRunIds = tagMetadata[plugin].tagToRuns;
-  return tagToRunIds.hasOwnProperty(tag) ? tagToRunIds[tag] : [];
+  return hasOwn(tagToRunIds, tag) ? tagToRunIds[tag] : [];
+}
+
+export interface RetainedTimeSeries {
+  timeSeriesData: TimeSeriesData;
+  inactiveTimeSeries: Map<string, number>;
+  /**
+   * `getLoadableKey` keys of the loadables that dropped runs. Empty whenever
+   * `timeSeriesData` is the unchanged input.
+   */
+  changedLoadableKeys: Set<string>;
+}
+
+export const INACTIVE_TIME_SERIES_BYTES = 64 * 1024 * 1024;
+
+// Series arrays are immutable. Weak keys avoid retaining evicted payloads and
+// avoid walking every histogram bin / image identifier on each scroll.
+const seriesBytes = new WeakMap<object, number>();
+
+function estimatePayloadBytes(value: unknown): number {
+  if (typeof value === 'string') return 32 + 2 * value.length;
+  if (typeof value !== 'object' || value === null) return 8;
+  let bytes = 64;
+  if (Array.isArray(value)) {
+    bytes += 8 * value.length;
+    for (const item of value) bytes += estimatePayloadBytes(item);
+  } else {
+    for (const [key, item] of Object.entries(value)) {
+      bytes += 16 + 2 * key.length + estimatePayloadBytes(item);
+    }
+  }
+  return bytes;
+}
+
+function estimateSeriesBytes(series: RunToSeries[string] | undefined): number {
+  if (!series) return 0;
+  const cached = seriesBytes.get(series);
+  if (cached !== undefined) return cached;
+  const bytes = estimatePayloadBytes(series);
+  seriesBytes.set(series, bytes);
+  return bytes;
 }
 
 /**
- * Drops series and load-state entries whose run ids are not in `keepRunIds`.
+ * Protects render-buffer owners and keeps selected, completed inactive histories
+ * in least-recently-used order. An active history leaves the LRU; when its last
+ * owner exits it becomes newest. Deselected and invalidated histories are never
+ * cached. Failed states are retained too, so scrolling does not retry errors.
  *
- * Returns the input objects, unchanged, wherever nothing is dropped. Callers
- * run this on every time series response, so allocating a fresh state would
- * invalidate every card's selectors and re-render charts that did not change.
+ * Accounting includes nested histogram bins and UTF-16 image identifiers (the
+ * store contains no decoded image pixels), plus conservative object/map costs.
+ * The budget bounds estimated inactive bytes only, not the active working set.
  */
 export function retainTimeSeriesRuns(
   timeSeriesData: TimeSeriesData,
-  keepRunIds: ReadonlySet<string>
-): TimeSeriesData {
+  keepRunIds: ReadonlySet<string>,
+  visibleCards: readonly CardMetadata[],
+  previousInactive: ReadonlyMap<string, number> = new Map(),
+  budget = INACTIVE_TIME_SERIES_BYTES
+): RetainedTimeSeries {
+  const ownership = new Map<string, ReadonlySet<string>>();
+  for (const card of visibleCards) {
+    const key = getLoadableKey(card.plugin, card.tag, card.sample);
+    if (card.runId) {
+      const runs = new Set(ownership.get(key));
+      runs.add(card.runId);
+      ownership.set(key, runs);
+    } else {
+      ownership.set(key, keepRunIds);
+    }
+  }
+  const candidates = new Map<string, number>();
+  const candidateOwners = new Map<string, {key: string; runId: string}>();
+  const retain = (
+    loadable: TimeSeriesLoadables[PluginType],
+    plugin: PluginType,
+    tag: string,
+    sample?: number
+  ) => {
+    const key = getLoadableKey(plugin, tag, sample);
+    const active = ownership.get(key) ?? new Set<string>();
+    const keep = new Set(active);
+    ownership.set(key, keep);
+    for (const runId of new Set([
+      ...Object.keys(loadable.runToSeries),
+      ...Object.keys(loadable.runToLoadState),
+    ])) {
+      if (active.has(runId) || !keepRunIds.has(runId)) continue;
+      const status = loadable.runToLoadState[runId];
+      if (status !== DataLoadState.LOADED && status !== DataLoadState.FAILED) {
+        continue;
+      }
+      const cacheKey = JSON.stringify([key, runId]);
+      const bytes =
+        256 +
+        2 * cacheKey.length +
+        estimateSeriesBytes(loadable.runToSeries[runId]);
+      candidates.set(cacheKey, bytes);
+      candidateOwners.set(cacheKey, {key, runId});
+    }
+  };
+  for (const [tag, loadable] of Object.entries(timeSeriesData.scalars)) {
+    retain(loadable, PluginType.SCALARS, tag);
+  }
+  for (const [tag, loadable] of Object.entries(timeSeriesData.histograms)) {
+    retain(loadable, PluginType.HISTOGRAMS, tag);
+  }
+  for (const [tag, samples] of Object.entries(timeSeriesData.images)) {
+    for (const [sample, loadable] of Object.entries(samples)) {
+      retain(loadable, PluginType.IMAGES, tag, Number(sample));
+    }
+  }
+  const inactiveTimeSeries = new Map<string, number>();
+  let inactiveBytes = 0;
+  for (const key of previousInactive.keys()) {
+    const bytes = candidates.get(key);
+    if (bytes === undefined) continue;
+    inactiveTimeSeries.set(key, bytes);
+    inactiveBytes += bytes;
+    candidates.delete(key);
+  }
+  for (const [key, bytes] of candidates) {
+    inactiveTimeSeries.set(key, bytes);
+    inactiveBytes += bytes;
+  }
+  for (const [key, bytes] of inactiveTimeSeries) {
+    if (inactiveBytes <= budget) break;
+    inactiveTimeSeries.delete(key);
+    inactiveBytes -= bytes;
+  }
+  for (const cacheKey of inactiveTimeSeries.keys()) {
+    const {key, runId} = candidateOwners.get(cacheKey)!;
+    (ownership.get(key) as Set<string>).add(runId);
+  }
+  const changedLoadableKeys = new Set<string>();
   const scalars = retainNonSampledPluginData(
     timeSeriesData[PluginType.SCALARS],
-    keepRunIds
+    PluginType.SCALARS,
+    ownership,
+    changedLoadableKeys
   );
   const histograms = retainNonSampledPluginData(
     timeSeriesData[PluginType.HISTOGRAMS],
-    keepRunIds
+    PluginType.HISTOGRAMS,
+    ownership,
+    changedLoadableKeys
   );
   const images = retainSampledPluginData(
     timeSeriesData[PluginType.IMAGES],
-    keepRunIds
+    PluginType.IMAGES,
+    ownership,
+    changedLoadableKeys
   );
   if (
     scalars === timeSeriesData[PluginType.SCALARS] &&
     histograms === timeSeriesData[PluginType.HISTOGRAMS] &&
     images === timeSeriesData[PluginType.IMAGES]
   ) {
-    return timeSeriesData;
+    return {timeSeriesData, inactiveTimeSeries, changedLoadableKeys};
   }
   return {
-    [PluginType.SCALARS]: scalars,
-    [PluginType.HISTOGRAMS]: histograms,
-    [PluginType.IMAGES]: images,
+    inactiveTimeSeries,
+    timeSeriesData: {
+      [PluginType.SCALARS]: scalars,
+      [PluginType.HISTOGRAMS]: histograms,
+      [PluginType.IMAGES]: images,
+    },
+    changedLoadableKeys,
   };
 }
 
 function retainNonSampledPluginData<
-  T extends {runToSeries: {}; runToLoadState: {}},
->(pluginData: Record<string, T>, keepRunIds: ReadonlySet<string>) {
+  T extends {runToSeries: {}; runToLoadState: {}}
+>(
+  pluginData: Record<string, T>,
+  plugin: PluginType,
+  ownership: ReadonlyMap<string, ReadonlySet<string>>,
+  changedLoadableKeys: Set<string>
+) {
   let changed = false;
   const nextPluginData: Record<string, T> = {};
   for (const [tag, loadable] of Object.entries(pluginData)) {
+    const key = getLoadableKey(plugin, tag);
+    const keepRunIds = ownership.get(key);
+    if (!keepRunIds?.size) {
+      changed = true;
+      changedLoadableKeys.add(key);
+      continue;
+    }
     const nextLoadable = retainLoadableRuns(loadable, keepRunIds);
-    changed = changed || nextLoadable !== loadable;
+    if (nextLoadable !== loadable) {
+      changed = true;
+      changedLoadableKeys.add(getLoadableKey(plugin, tag));
+    }
     nextPluginData[tag] = nextLoadable;
   }
   return changed ? nextPluginData : pluginData;
 }
 
 function retainSampledPluginData<
-  T extends {runToSeries: {}; runToLoadState: {}},
+  T extends {runToSeries: {}; runToLoadState: {}}
 >(
   pluginData: Record<string, Record<number, T>>,
-  keepRunIds: ReadonlySet<string>
+  plugin: PluginType,
+  ownership: ReadonlyMap<string, ReadonlySet<string>>,
+  changedLoadableKeys: Set<string>
 ) {
   let changed = false;
   const nextPluginData: Record<string, Record<number, T>> = {};
@@ -243,29 +408,36 @@ function retainSampledPluginData<
     let sampleChanged = false;
     const nextSampleData: Record<number, T> = {};
     for (const [sample, loadable] of Object.entries(sampleData)) {
+      const key = getLoadableKey(plugin, tag, Number(sample));
+      const keepRunIds = ownership.get(key);
+      if (!keepRunIds?.size) {
+        sampleChanged = true;
+        changedLoadableKeys.add(key);
+        continue;
+      }
       const nextLoadable = retainLoadableRuns(loadable, keepRunIds);
-      sampleChanged = sampleChanged || nextLoadable !== loadable;
+      if (nextLoadable !== loadable) {
+        sampleChanged = true;
+        changedLoadableKeys.add(getLoadableKey(plugin, tag, Number(sample)));
+      }
       nextSampleData[Number(sample)] = nextLoadable;
     }
     changed = changed || sampleChanged;
-    nextPluginData[tag] = sampleChanged ? nextSampleData : sampleData;
+    if (Object.keys(nextSampleData).length) {
+      nextPluginData[tag] = sampleChanged ? nextSampleData : sampleData;
+    }
   }
   return changed ? nextPluginData : pluginData;
 }
 
 function retainLoadableRuns<
-  T extends {runToSeries: {}; runToLoadState: {[runId: string]: DataLoadState}},
+  T extends {runToSeries: {}; runToLoadState: {[runId: string]: DataLoadState}}
 >(loadable: T, keepRunIds: ReadonlySet<string>): T {
-  // A purge cannot cancel a request that is already in flight, so its
-  // bookkeeping stays; the response settles it and triggers another purge.
-  const keepLoadState = (runId: string) =>
-    keepRunIds.has(runId) ||
-    loadable.runToLoadState[runId] === DataLoadState.LOADING;
   const seriesRunIds = Object.keys(loadable.runToSeries);
   const loadStateRunIds = Object.keys(loadable.runToLoadState);
   if (
     seriesRunIds.every((runId) => keepRunIds.has(runId)) &&
-    loadStateRunIds.every(keepLoadState)
+    loadStateRunIds.every((runId) => keepRunIds.has(runId))
   ) {
     return loadable;
   }
@@ -278,7 +450,7 @@ function retainLoadableRuns<
   }
   const runToLoadState = {} as Record<string, DataLoadState>;
   for (const runId of loadStateRunIds) {
-    if (keepLoadState(runId)) {
+    if (keepRunIds.has(runId)) {
       runToLoadState[runId] = loadable.runToLoadState[runId];
     }
   }
@@ -411,7 +583,7 @@ export function buildOrReturnStateWithPinnedCopy(
   nextCardToPinnedCopyCache.set(cardId, pinnedCardId);
   nextPinnedCardToOriginal.set(pinnedCardId, cardId);
 
-  if (cardStepIndexMap.hasOwnProperty(cardId)) {
+  if (hasOwn(cardStepIndexMap, cardId)) {
     nextCardStepIndexMap[pinnedCardId] = cardStepIndexMap[cardId];
   }
 
@@ -581,7 +753,7 @@ export function getImageCardSteps(
   cardMetadataMap: CardMetadataMap,
   timeSeriesData: TimeSeriesData
 ): number[] {
-  if (!cardMetadataMap.hasOwnProperty(cardId)) {
+  if (!hasOwn(cardMetadataMap, cardId)) {
     return [];
   }
 
@@ -591,7 +763,7 @@ export function getImageCardSteps(
   }
 
   const loadable = getTimeSeriesLoadable(timeSeriesData, plugin, tag, sample);
-  if (loadable === null || !loadable.runToSeries.hasOwnProperty(runId)) {
+  if (loadable === null || !hasOwn(loadable.runToSeries, runId)) {
     return [];
   }
 

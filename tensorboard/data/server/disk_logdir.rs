@@ -15,14 +15,14 @@ limitations under the License.
 
 //! Log directories on local disk.
 
-use log::{error, info, warn};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::logdir::{EventFileBuf, Logdir, EVENT_FILE_BASENAME_INFIX};
+use crate::logdir::{EventFileBuf, FileFingerprint, Logdir, EVENT_FILE_BASENAME_INFIX};
 use crate::types::Run;
 
 /// A log directory on local disk.
@@ -42,71 +42,101 @@ impl Logdir for DiskLogdir {
 
     fn discover(&self) -> io::Result<HashMap<Run, Vec<EventFileBuf>>> {
         let mut run_map: HashMap<Run, Vec<EventFileBuf>> = HashMap::new();
-        let walker = WalkDir::new(&self.root)
-            .sort_by(|a, b| a.file_name().cmp(b.file_name()))
-            .follow_links(true);
-        for walkdir_item in walker {
-            let dirent = match walkdir_item {
-                Ok(dirent) => dirent,
-                Err(e) => {
-                    // TensorBoard traditionally doesn't complain loudly about non-existent
-                    // directories, since the logdir may be created after TensorBoard starts.
-                    if e.io_error()
-                        .map_or(false, |e| e.kind() == io::ErrorKind::NotFound)
-                    {
-                        info!("While walking log directory: {}", e);
-                    } else {
-                        warn!("While walking log directory: {}", e);
-                    }
-                    continue;
-                }
-            };
-            if !dirent.file_type().is_file() {
-                continue;
-            }
-            let filename = dirent.file_name().to_string_lossy();
-            if !filename.contains(EVENT_FILE_BASENAME_INFIX) {
-                continue;
-            }
-            let run_dir = match dirent.path().parent() {
-                Some(parent) => parent,
-                None => {
-                    // I don't know of any circumstance where this can happen, but I would believe
-                    // that some weird filesystem can hit it, so just proceed.
-                    warn!(
-                        "Path {} is a file but has no parent",
-                        dirent.path().display()
-                    );
-                    continue;
-                }
-            };
-            let mut run_relpath = match run_dir.strip_prefix(&self.root) {
-                Ok(rp) => rp.to_path_buf(),
-                Err(_) => {
-                    error!(
-                        "Log directory {} is not a prefix of run directory {}",
-                        &self.root.display(),
-                        &run_dir.display(),
-                    );
-                    continue;
-                }
-            };
-            // Render the root run as ".", not "".
-            if run_relpath == Path::new("") {
-                run_relpath.push(".");
-            }
-            let run = Run(run_relpath.display().to_string());
-            run_map
-                .entry(run)
-                .or_default()
-                .push(EventFileBuf(dirent.into_path()));
+        self.visit(&mut |run, file, _| {
+            run_map.entry(run).or_default().push(file);
+            Ok(())
+        })?;
+        for files in run_map.values_mut() {
+            files.sort();
         }
         Ok(run_map)
+    }
+
+    fn visit(
+        &self,
+        visitor: &mut dyn FnMut(Run, EventFileBuf, Option<FileFingerprint>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        // Sorting buffers entire directories. A descriptor limit also makes WalkDir buffer
+        // unvisited entries when descending, so retain only one open iterator per depth.
+        let walker = WalkDir::new(&self.root)
+            .max_open(usize::MAX)
+            .follow_links(true);
+        for walkdir_item in walker {
+            let dirent = walkdir_item.map_err(|e| {
+                // Missing logdirs may appear later, but this is still an incomplete scan.
+                if e.io_error()
+                    .map_or(false, |e| e.kind() == io::ErrorKind::NotFound)
+                {
+                    info!("While walking log directory: {}", e);
+                } else {
+                    warn!("While walking log directory: {}", e);
+                }
+                io::Error::from(e)
+            })?;
+            if !dirent.file_type().is_file()
+                || !dirent
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(EVENT_FILE_BASENAME_INFIX)
+            {
+                continue;
+            }
+            let run_dir = dirent.path().parent().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "event file has no parent")
+            })?;
+            let run_relpath = run_dir
+                .strip_prefix(&self.root)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let run = if run_relpath == Path::new("") {
+                Run(".".to_owned())
+            } else {
+                Run(run_relpath.display().to_string())
+            };
+            let metadata = dirent.metadata().map_err(io::Error::from)?;
+            visitor(
+                run,
+                EventFileBuf(dirent.into_path()),
+                fingerprint(&metadata),
+            )?;
+        }
+        Ok(())
     }
 
     fn open(&self, path: &EventFileBuf) -> io::Result<Self::File> {
         File::open(&path.0).map(BufReader::new)
     }
+
+    fn open_at(&self, path: &EventFileBuf, offset: u64) -> io::Result<Self::File> {
+        let mut file = File::open(&path.0)?;
+        file.seek(SeekFrom::Start(offset))?;
+        Ok(BufReader::new(file))
+    }
+}
+
+#[cfg(unix)]
+fn fingerprint(metadata: &std::fs::Metadata) -> Option<FileFingerprint> {
+    use std::os::unix::fs::MetadataExt;
+    Some(FileFingerprint {
+        len: metadata.len(),
+        identity: format!("{}:{}", metadata.dev(), metadata.ino()),
+        modified: format!(
+            "{}:{}:{}:{}",
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        ),
+    })
+}
+
+#[cfg(not(unix))]
+fn fingerprint(metadata: &std::fs::Metadata) -> Option<FileFingerprint> {
+    // Without a creation timestamp there is no safe portable replacement identity.
+    Some(FileFingerprint {
+        len: metadata.len(),
+        identity: format!("{:?}", metadata.created().ok()?),
+        modified: format!("{:?}", metadata.modified().ok()?),
+    })
 }
 
 #[cfg(test)]
