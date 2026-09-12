@@ -87,6 +87,9 @@ export class OSSSettingsConverter extends SettingsConverter<
     if (settings.themeOverride !== undefined) {
       serializableSettings.theme = settings.themeOverride;
     }
+    if (settings.darkThemeId !== undefined) {
+      serializableSettings.darkTheme = settings.darkThemeId;
+    }
     if (settings.notificationLastReadTimeInMs !== undefined) {
       serializableSettings.notificationLastReadTimeInMs =
         settings.notificationLastReadTimeInMs;
@@ -188,6 +191,13 @@ export class OSSSettingsConverter extends SettingsConverter<
       new Set(Object.values(ThemeValue)).has(backendSettings.theme)
     ) {
       settings.themeOverride = backendSettings.theme;
+    }
+
+    if (
+      backendSettings.hasOwnProperty('darkTheme') &&
+      typeof backendSettings.darkTheme === 'string'
+    ) {
+      settings.darkThemeId = backendSettings.darkTheme;
     }
 
     if (

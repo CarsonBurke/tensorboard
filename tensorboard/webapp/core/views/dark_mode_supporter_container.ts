@@ -14,8 +14,9 @@ limitations under the License.
 ==============================================================================*/
 import {ChangeDetectionStrategy, Component} from '@angular/core';
 import {Store} from '@ngrx/store';
+import {combineLatest} from 'rxjs';
 import {State} from '../../app_state';
-import {getDarkModeEnabled} from '../../selectors';
+import {getDarkModeEnabled, getDarkThemeId} from '../../selectors';
 
 @Component({
   standalone: false,
@@ -32,10 +33,15 @@ import {getDarkModeEnabled} from '../../selectors';
 })
 export class DarkModeSupportContainer {
   constructor(store: Store<State>) {
-    store.select(getDarkModeEnabled).subscribe((darkMode) => {
+    combineLatest([
+      store.select(getDarkModeEnabled),
+      store.select(getDarkThemeId),
+    ]).subscribe(([darkMode, darkThemeId]) => {
       // When changing the class name `dark-mode`, we need to update the
       // DarkModeMixin which relies on the class name.
       document.body.classList.toggle('dark-mode', darkMode);
+      // Per-variant overrides are scoped to this attribute in tb_theme.
+      document.body.dataset['tbDarkTheme'] = darkThemeId;
     });
   }
 }

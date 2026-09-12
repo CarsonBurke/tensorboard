@@ -12,7 +12,11 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
-import {FeatureFlags} from '../types';
+import {
+  DEFAULT_DARK_THEME_ID,
+  DarkThemeId,
+  FeatureFlags,
+} from '../types';
 
 export type FeatureFlagType =
   | boolean
@@ -81,6 +85,11 @@ export const FeatureFlagMetadataMap: FeatureFlagMetadataMapType<FeatureFlags> =
     enableDarkModeOverride: {
       defaultValue: null,
       queryParamOverride: null,
+    },
+    darkThemeId: {
+      defaultValue: DEFAULT_DARK_THEME_ID,
+      queryParamOverride: 'darkTheme',
+      parseValue: (str: string) => str as DarkThemeId,
     },
     defaultEnableDarkMode: {
       defaultValue: false,

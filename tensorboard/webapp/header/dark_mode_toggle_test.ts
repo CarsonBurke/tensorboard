@@ -22,8 +22,11 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {Action, Store} from '@ngrx/store';
 import {MockStore} from '@ngrx/store/testing';
 import {State} from '../core/store';
-import {overrideEnableDarkModeChanged} from '../feature_flag/actions/feature_flag_actions';
-import {getEnableDarkModeOverride} from '../selectors';
+import {
+  darkThemeChanged,
+  overrideEnableDarkModeChanged,
+} from '../feature_flag/actions/feature_flag_actions';
+import {getDarkThemeId, getEnableDarkModeOverride} from '../selectors';
 import {MatIconTestingModule} from '../testing/mat_icon_module';
 import {provideMockTbStore} from '../testing/utils';
 import {DarkModeToggleComponent} from './dark_mode_toggle_component';
@@ -48,6 +51,7 @@ describe('dark mode toggle test', () => {
     }).compileComponents();
     store = TestBed.inject<Store<State>>(Store) as MockStore<State>;
     store.overrideSelector(getEnableDarkModeOverride, null);
+    store.overrideSelector(getDarkThemeId, 'default');
 
     dispatchedActions = [];
     // Cast to jasmine.Spy for compatibility between NgRx dispatch signature overloads.
@@ -80,7 +84,18 @@ describe('dark mode toggle test', () => {
     const buttons = getMenuButtons(fixture);
     expect(
       buttons.map((button) => button.querySelector('label')!.textContent)
-    ).toEqual(['Browser default', 'Light', 'Dark']);
+    ).toEqual([
+      'Browser default',
+      'Light',
+      'Dark',
+      'Dark theme',
+      'Default dark',
+      'Catppuccin',
+      'Tokyo Night',
+      'GitHub',
+      'VS Code',
+      'Codex',
+    ]);
   });
 
   it('renders appropriate icon for each mode', () => {
@@ -116,6 +131,19 @@ describe('dark mode toggle test', () => {
       overrideEnableDarkModeChanged({enableDarkMode: true}),
       overrideEnableDarkModeChanged({enableDarkMode: false}),
       overrideEnableDarkModeChanged({enableDarkMode: null}),
+    ]);
+  });
+
+  it('fires actions when user clicks on a dark theme', () => {
+    const fixture = TestBed.createComponent(DarkModeToggleContainer);
+    fixture.detectChanges();
+    const buttons = getMenuButtons(fixture);
+
+    // Variant buttons follow the mode buttons and the disabled heading.
+    buttons[5].click();
+    expect(dispatchedActions).toEqual([
+      darkThemeChanged({darkThemeId: 'catppuccin'}),
+      overrideEnableDarkModeChanged({enableDarkMode: true}),
     ]);
   });
 });

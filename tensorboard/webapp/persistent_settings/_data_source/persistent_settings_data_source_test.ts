@@ -144,6 +144,20 @@ describe('persistent_settings data_source test', () => {
         });
       });
 
+      it('grabs dark theme value from local storage', async () => {
+        getItemSpy.withArgs(TEST_ONLY.GLOBAL_LOCAL_STORAGE_KEY).and.returnValue(
+          JSON.stringify({
+            darkTheme: 'catppuccin',
+          })
+        );
+
+        const actual = await firstValueFrom(dataSource.getSettings());
+
+        expect(actual).toEqual({
+          darkThemeId: 'catppuccin',
+        });
+      });
+
       it('properly converts stepSelectorEnabled', async () => {
         getItemSpy.withArgs(TEST_ONLY.GLOBAL_LOCAL_STORAGE_KEY).and.returnValue(
           JSON.stringify({
@@ -588,6 +602,25 @@ describe('persistent_settings data_source test', () => {
           TEST_ONLY.GLOBAL_LOCAL_STORAGE_KEY,
           JSON.stringify({
             isTooltipRowsLimitEnabled: true,
+          })
+        );
+      });
+
+      it('saves the dark theme setting to local storage', async () => {
+        getItemSpy
+          .withArgs(TEST_ONLY.GLOBAL_LOCAL_STORAGE_KEY)
+          .and.returnValue(null);
+
+        await firstValueFrom(
+          dataSource.setSettings({
+            darkThemeId: 'tokyo-night',
+          })
+        );
+
+        expect(setItemSpy).toHaveBeenCalledOnceWith(
+          TEST_ONLY.GLOBAL_LOCAL_STORAGE_KEY,
+          JSON.stringify({
+            darkTheme: 'tokyo-night',
           })
         );
       });

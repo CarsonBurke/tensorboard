@@ -17,7 +17,7 @@ import {NoopAnimationsModule} from '@angular/platform-browser/animations';
 import {Store} from '@ngrx/store';
 import {MockStore} from '@ngrx/store/testing';
 import {State} from '../../app_state';
-import {getDarkModeEnabled} from '../../selectors';
+import {getDarkModeEnabled, getDarkThemeId} from '../../selectors';
 import {provideMockTbStore} from '../../testing/utils';
 import {DarkModeSupportContainer} from './dark_mode_supporter_container';
 
@@ -32,10 +32,12 @@ describe('dark mode supporter test', () => {
     }).compileComponents();
     store = TestBed.inject<Store<State>>(Store) as MockStore<State>;
     store.overrideSelector(getDarkModeEnabled, false);
+    store.overrideSelector(getDarkThemeId, 'default');
   });
 
   afterEach(() => {
     document.body.classList.remove('dark-mode');
+    delete document.body.dataset['tbDarkTheme'];
     store?.resetSelectors();
   });
 
@@ -59,5 +61,17 @@ describe('dark mode supporter test', () => {
     store.overrideSelector(getDarkModeEnabled, false);
     store.refreshState();
     expect(document.body.classList.contains('dark-mode')).toBe(false);
+  });
+
+  it('sets the dark theme id on the body dataset', () => {
+    store.overrideSelector(getDarkModeEnabled, true);
+    store.overrideSelector(getDarkThemeId, 'catppuccin');
+    const fixture = TestBed.createComponent(DarkModeSupportContainer);
+    fixture.detectChanges();
+    expect(document.body.dataset['tbDarkTheme']).toBe('catppuccin');
+
+    store.overrideSelector(getDarkThemeId, 'tokyo-night');
+    store.refreshState();
+    expect(document.body.dataset['tbDarkTheme']).toBe('tokyo-night');
   });
 });

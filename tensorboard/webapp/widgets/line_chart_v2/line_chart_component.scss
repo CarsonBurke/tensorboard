@@ -56,6 +56,16 @@ limitations under the License.
   &.dark-mode {
     color: map.get(tb_theme.$tb-dark-foreground, text);
   }
+  // Inside the app, follow the selected dark theme variant for axis text.
+  @each $variant-id, $variant-foreground
+    in tb_theme.$tb-dark-foreground-variants
+  {
+    @if ($variant-id != 'default') {
+      body.dark-mode[data-tb-dark-theme='#{$variant-id}'] &.dark-mode {
+        color: map.get($variant-foreground, text);
+      }
+    }
+  }
   // We does not want to render x-axis and y axis in line only mode. Thus
   // we also removes the spaces the axis take.
   &.line-only-mode {

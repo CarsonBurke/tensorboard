@@ -59,9 +59,10 @@ $_accent: map.get(mat.m2-get-color-config(tb_theme.$tb-theme), accent);
       cursor: pointer;
     }
 
-    @include tb_theme.tb-dark-theme {
-      background-color: map.get(tb_theme.$tb-dark-background, background);
-    }
+    @include tb_theme.tb-dark-theme-background-prop(
+      background-color,
+      background
+    );
   }
 }
 
@@ -88,9 +89,10 @@ $_accent: map.get(mat.m2-get-color-config(tb_theme.$tb-theme), accent);
   right: -1px; // Prevent fractional width from creating a gap.
   z-index: 1;
 
-  @include tb_theme.tb-dark-theme {
-    background-color: map.get(tb_theme.$tb-dark-background, background);
-  }
+  @include tb_theme.tb-dark-theme-background-prop(
+    background-color,
+    background
+  );
 
   .add-button-column {
     width: 40px;

@@ -127,9 +127,7 @@ svg {
 .axis ::ng-deep .tick line {
   stroke: #ddd;
 
-  @include tb_theme.tb-dark-theme {
-    stroke: map.get(tb_theme.$tb-dark-foreground, border);
-  }
+  @include tb_theme.tb-dark-theme-foreground-prop(stroke, border);
 }
 
 .content {
@@ -193,9 +191,7 @@ svg {
   path {
     stroke: #fff;
 
-    @include tb_theme.tb-dark-theme {
-      stroke: map.get(tb_theme.$tb-dark-foreground, border);
-    }
+    @include tb_theme.tb-dark-theme-foreground-prop(stroke, border);
   }
 
   &.linked-time-single-step :not(.no-color) {

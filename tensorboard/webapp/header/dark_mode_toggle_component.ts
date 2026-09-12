@@ -19,6 +19,11 @@ import {
   Input,
   Output,
 } from '@angular/core';
+import {
+  DARK_THEME_IDS,
+  DARK_THEME_LABELS,
+  DarkThemeId,
+} from '../feature_flag/types';
 
 export enum DarkModeOverride {
   DEFAULT,
@@ -73,17 +78,40 @@ export enum DarkModeOverride {
       >
         <label>Dark</label>
       </button>
+      <button mat-menu-item disabled class="dark-theme-heading">
+        <label>Dark theme</label>
+      </button>
+      <button
+        mat-menu-item
+        *ngFor="let themeId of darkThemeIds"
+        [title]="getDarkThemeTitle(themeId)"
+        (click)="onDarkThemeChanged.emit(themeId)"
+      >
+        <mat-icon
+          *ngIf="themeId === darkThemeId"
+          svgIcon="done_24px"
+        ></mat-icon>
+        <label>{{ darkThemeLabels[themeId] }}</label>
+      </button>
     </mat-menu>
   `,
 })
 export class DarkModeToggleComponent {
   readonly DarkModeOverride = DarkModeOverride;
+  readonly darkThemeIds = DARK_THEME_IDS;
+  readonly darkThemeLabels = DARK_THEME_LABELS;
 
   @Input()
   darkModeOverride!: DarkModeOverride;
 
+  @Input()
+  darkThemeId!: DarkThemeId;
+
   @Output()
   onOverrideChanged = new EventEmitter<DarkModeOverride>();
+
+  @Output()
+  onDarkThemeChanged = new EventEmitter<DarkThemeId>();
 
   getButtonTitle(): string {
     let mode: string;
@@ -100,5 +128,12 @@ export class DarkModeToggleComponent {
         break;
     }
     return `Current mode: [${mode}]. Switch between browser default, light, or dark theme.`;
+  }
+
+  getDarkThemeTitle(themeId: DarkThemeId): string {
+    return (
+      `Use the ${DARK_THEME_LABELS[themeId]} dark theme. ` +
+      `Selecting a dark theme also switches to dark mode.`
+    );
   }
 }

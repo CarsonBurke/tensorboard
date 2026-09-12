@@ -262,5 +262,85 @@ describe('feature_flag_reducers', () => {
       );
       expect(state4.flagOverrides!.enableDarkModeOverride).toBeNull();
     });
+
+    it('sets dark theme id when global settings include it', () => {
+      const prevState = buildFeatureFlagState({
+        isFeatureFlagsLoaded: true,
+        flagOverrides: buildFeatureFlag({
+          darkThemeId: 'default',
+        }),
+      });
+
+      const state1 = reducers(
+        prevState,
+        persistentSettingsLoaded({
+          partialSettings: {darkThemeId: 'catppuccin'},
+        })
+      );
+      expect(state1.flagOverrides!.darkThemeId).toBe('catppuccin');
+
+      const state2 = reducers(
+        prevState,
+        persistentSettingsLoaded({
+          partialSettings: {darkThemeId: 'tokyo-night'},
+        })
+      );
+      expect(state2.flagOverrides!.darkThemeId).toBe('tokyo-night');
+
+      const state3 = reducers(
+        prevState,
+        persistentSettingsLoaded({
+          partialSettings: {},
+        })
+      );
+      expect(state3.flagOverrides!.darkThemeId).toBe('default');
+    });
+
+    it('falls back to the default dark theme for unknown theme ids', () => {
+      const prevState = buildFeatureFlagState({
+        isFeatureFlagsLoaded: true,
+        flagOverrides: buildFeatureFlag({
+          darkThemeId: 'catppuccin',
+        }),
+      });
+
+      const state = reducers(
+        prevState,
+        persistentSettingsLoaded({
+          partialSettings: {darkThemeId: 'yolo'},
+        })
+      );
+      expect(state.flagOverrides!.darkThemeId).toBe('default');
+    });
+  });
+
+  describe('#darkThemeChanged', () => {
+    it('sets the dark theme id for known themes', () => {
+      const prevState = buildFeatureFlagState({
+        flagOverrides: buildFeatureFlag({
+          darkThemeId: 'default',
+        }),
+      });
+
+      const nextState = reducers(
+        prevState,
+        actions.darkThemeChanged({darkThemeId: 'github'})
+      );
+      expect(nextState.flagOverrides!.darkThemeId).toBe('github');
+    });
+
+    it('ignores unknown theme ids', () => {
+      const prevState = buildFeatureFlagState({
+        flagOverrides: buildFeatureFlag({
+          darkThemeId: 'default',
+        }),
+      });
+
+      const nextState = reducers(
+        prevState,
+        actions.darkThemeChanged({darkThemeId: 'yolo'})
+      );
+      expect(nextState).toBe(prevState);
+    });
   });
 });

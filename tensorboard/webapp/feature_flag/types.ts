@@ -13,6 +13,41 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+export type DarkThemeId =
+  | 'default'
+  | 'catppuccin'
+  | 'tokyo-night'
+  | 'github'
+  | 'vscode'
+  | 'codex';
+
+export const DEFAULT_DARK_THEME_ID: DarkThemeId = 'default';
+
+export const DARK_THEME_IDS: readonly DarkThemeId[] = [
+  'default',
+  'catppuccin',
+  'tokyo-night',
+  'github',
+  'vscode',
+  'codex',
+];
+
+export const DARK_THEME_LABELS: Record<DarkThemeId, string> = {
+  'default': 'Default dark',
+  'catppuccin': 'Catppuccin',
+  'tokyo-night': 'Tokyo Night',
+  'github': 'GitHub',
+  'vscode': 'VS Code',
+  'codex': 'Codex',
+};
+
+export function isDarkThemeId(value: unknown): value is DarkThemeId {
+  return (
+    typeof value === 'string' &&
+    (DARK_THEME_IDS as readonly string[]).includes(value)
+  );
+}
+
 export interface FeatureFlags {
   // Whether user wants to use dark mode by default. It can be set via browser setting
   // (media query) or media query.
@@ -20,6 +55,9 @@ export interface FeatureFlags {
   // Specific user override to the default dark mode behavior. If `null`, we
   // will use the `defaultEnableDarkMode`.
   enableDarkModeOverride: boolean | null;
+  // Which dark theme variant to use when dark mode is enabled. Always a valid
+  // DarkThemeId; unknown persisted or query-param values fall back to default.
+  darkThemeId: DarkThemeId;
   // Whether the dark mode feature is enabled or disabled at the application
   // level. Temporary flag to gate the feature until it is more feature
   // complete (it is badly broken on Firefox). The feature is still available

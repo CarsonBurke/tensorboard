@@ -37,6 +37,13 @@ export const overrideEnableDarkModeChanged = createAction(
   }>()
 );
 
+export const darkThemeChanged = createAction(
+  '[FEATURE FLAG] Dark Theme Changed',
+  props<{
+    darkThemeId: string;
+  }>()
+);
+
 export const featureFlagOverrideChanged = createAction(
   '[FEATURE FLAG] Store the feature flags in persistent localStorage',
   props<{

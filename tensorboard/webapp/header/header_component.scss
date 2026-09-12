@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+@use 'sass:map';
 @use 'tensorboard/webapp/theme/tb_theme';
 
 mat-toolbar {
@@ -21,6 +22,19 @@ mat-toolbar {
   height: 64px;
   overflow: hidden;
   width: 100%;
+
+  // Material only themes colored toolbars, so the plain toolbar keeps its
+  // historical grey in light mode and the default dark theme. In the darker
+  // variants, paint it with the variant app-bar color instead.
+  @each $variant-id, $variant-background
+    in tb_theme.$tb-dark-background-variants
+  {
+    @if ($variant-id != 'default') {
+      @include tb_theme.tb-dark-theme-variant($variant-id) {
+        background-color: map.get($variant-background, app-bar);
+      }
+    }
+  }
 }
 
 .brand,

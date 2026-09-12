@@ -31,16 +31,11 @@ limitations under the License.
     background
   );
 
-  @include tb_theme.tb-dark-theme {
-    border-color: mat.m2-get-color-from-palette(
-      tb_theme.$tb-dark-foreground,
-      border
-    );
-    background-color: mat.m2-get-color-from-palette(
-      tb_theme.$tb-dark-background,
-      'background'
-    );
-  }
+  @include tb_theme.tb-dark-theme-foreground-prop(border-color, border);
+  @include tb_theme.tb-dark-theme-background-prop(
+    background-color,
+    background
+  );
 
   .search-area {
     margin-bottom: 12px;

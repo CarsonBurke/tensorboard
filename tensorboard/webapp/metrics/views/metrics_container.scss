@@ -52,13 +52,11 @@ nav {
   flex: none;
   width: 340px;
 
-  @include tb_theme.tb-dark-theme {
-    background-color: map.get(tb_theme.$tb-dark-background, background);
-    border-right-color: mat.m2-get-color-from-palette(
-      tb_theme.$tb-dark-foreground,
-      border
-    );
-  }
+  @include tb_theme.tb-dark-theme-background-prop(
+    background-color,
+    background
+  );
+  @include tb_theme.tb-dark-theme-foreground-prop(border-right-color, border);
 }
 
 metrics-main-view {

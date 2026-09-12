@@ -26,7 +26,10 @@ import {TBFeatureFlagModule} from '../webapp_data_source/tb_feature_flag_module'
 import {FeatureFlagEffects} from './effects/feature_flag_effects';
 import {FeatureFlagHttpInterceptor} from './http/feature_flag_http_interceptor';
 import {reducers} from './store/feature_flag_reducers';
-import {getEnableDarkModeOverride} from './store/feature_flag_selectors';
+import {
+  getDarkThemeId,
+  getEnableDarkModeOverride,
+} from './store/feature_flag_selectors';
 import {
   FEATURE_FLAG_STORE_CONFIG_TOKEN,
   getConfig,
@@ -34,14 +37,22 @@ import {
 import {FEATURE_FLAG_FEATURE_KEY, State} from './store/feature_flag_types';
 
 export function getThemeSettingSelector() {
-  return createSelector(getEnableDarkModeOverride, (darkModeOverride) => {
-    if (darkModeOverride === null) {
-      return {themeOverride: ThemeValue.BROWSER_DEFAULT};
+  return createSelector(
+    getEnableDarkModeOverride,
+    getDarkThemeId,
+    (darkModeOverride, darkThemeId) => {
+      if (darkModeOverride === null) {
+        return {
+          themeOverride: ThemeValue.BROWSER_DEFAULT,
+          darkThemeId,
+        };
+      }
+      return {
+        themeOverride: darkModeOverride ? ThemeValue.DARK : ThemeValue.LIGHT,
+        darkThemeId,
+      };
     }
-    return {
-      themeOverride: darkModeOverride ? ThemeValue.DARK : ThemeValue.LIGHT,
-    };
-  });
+  );
 }
 
 @NgModule({

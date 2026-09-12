@@ -102,9 +102,10 @@ mat-button-toggle-group.filter-view {
   overflow-y: auto;
   will-change: transform, scroll-position;
 
-  @include tb_theme.tb-dark-theme {
-    background-color: map.get(tb_theme.$tb-dark-background, background);
-  }
+  @include tb_theme.tb-dark-theme-background-prop(
+    background-color,
+    background
+  );
 }
 
 .main {
@@ -117,6 +118,16 @@ mat-button-toggle-group.filter-view {
     // There are no slate color that looks very natural and nice.
     background-color: #3a3a3a;
   }
+  // The main area is a step above the sidebar surface in every variant.
+  @each $variant-id, $variant-background
+    in tb_theme.$tb-dark-background-variants
+  {
+    @if ($variant-id != 'default') {
+      @include tb_theme.tb-dark-theme-variant($variant-id) {
+        background-color: map.get($variant-background, card);
+      }
+    }
+  }
 
   metrics-filtered-view,
   metrics-pinned-view {
@@ -127,14 +138,9 @@ mat-button-toggle-group.filter-view {
     );
   }
 
-  &.filter-view {
-    overflow: hidden;
-
-    metrics-filtered-view {
-      contain: content;
-      overflow: auto;
-      will-change: transform, scroll-position;
-    }
+  metrics-filtered-view {
+    // Catalog windows and card visibility share the outer CdkScrollable root.
+    flex: none;
   }
 }
 
@@ -175,12 +181,7 @@ mat-button-toggle-group.filter-view {
   color: mat.m2-get-color-from-palette(tb_theme.$tb-foreground, secondary-text);
   display: inline-flex;
 
-  @include tb_theme.tb-dark-theme {
-    color: mat.m2-get-color-from-palette(
-      tb_theme.$tb-dark-foreground,
-      secondary-text
-    );
-  }
+  @include tb_theme.tb-dark-theme-foreground-prop(color, secondary-text);
 
   &.checked {
     @include tb_theme.tb-theme-background-prop(
@@ -216,9 +217,10 @@ mat-button-toggle-group.filter-view {
 
   @include tb_theme.tb-theme-foreground-prop(border-left, border, 1px solid);
 
-  @include tb_theme.tb-dark-theme {
-    background-color: map.get(tb_theme.$tb-dark-background, background);
-  }
+  @include tb_theme.tb-dark-theme-background-prop(
+    background-color,
+    background
+  );
 }
 
 .slide-out-menu-expanded {

@@ -15,7 +15,11 @@ limitations under the License.
 import {Action, createReducer, on} from '@ngrx/store';
 import {persistentSettingsLoaded, ThemeValue} from '../../persistent_settings';
 import * as actions from '../actions/feature_flag_actions';
-import {FeatureFlags} from '../types';
+import {
+  DEFAULT_DARK_THEME_ID,
+  FeatureFlags,
+  isDarkThemeId,
+} from '../types';
 import {initialState} from './feature_flag_store_config_provider';
 import {FeatureFlagState} from './feature_flag_types';
 
@@ -41,6 +45,18 @@ const reducer = createReducer<FeatureFlagState>(
       flagOverrides: {
         ...state.flagOverrides,
         enableDarkModeOverride: enableDarkMode,
+      },
+    };
+  }),
+  on(actions.darkThemeChanged, (state, {darkThemeId}) => {
+    if (!isDarkThemeId(darkThemeId)) {
+      return state;
+    }
+    return {
+      ...state,
+      flagOverrides: {
+        ...state.flagOverrides,
+        darkThemeId,
       },
     };
   }),
@@ -73,29 +89,40 @@ const reducer = createReducer<FeatureFlagState>(
     };
   }),
   on(persistentSettingsLoaded, (state, {partialSettings}) => {
-    if (!partialSettings.themeOverride) {
-      return state;
+    const flagOverrides: Partial<FeatureFlags> = {};
+    if (partialSettings.themeOverride) {
+      let overrideValue: null | boolean;
+      switch (partialSettings.themeOverride) {
+        case ThemeValue.BROWSER_DEFAULT:
+          overrideValue = null;
+          break;
+        case ThemeValue.DARK:
+          overrideValue = true;
+          break;
+
+        case ThemeValue.LIGHT:
+          overrideValue = false;
+          break;
+      }
+      flagOverrides.enableDarkModeOverride = overrideValue!;
     }
-
-    let overrideValue: null | boolean;
-    switch (partialSettings.themeOverride) {
-      case ThemeValue.BROWSER_DEFAULT:
-        overrideValue = null;
-        break;
-      case ThemeValue.DARK:
-        overrideValue = true;
-        break;
-
-      case ThemeValue.LIGHT:
-        overrideValue = false;
-        break;
+    if (isDarkThemeId(partialSettings.darkThemeId)) {
+      flagOverrides.darkThemeId = partialSettings.darkThemeId;
+    } else if (
+      partialSettings.darkThemeId !== undefined &&
+      partialSettings.darkThemeId !== null
+    ) {
+      flagOverrides.darkThemeId = DEFAULT_DARK_THEME_ID;
+    }
+    if (Object.keys(flagOverrides).length === 0) {
+      return state;
     }
 
     return {
       ...state,
       flagOverrides: {
         ...state.flagOverrides,
-        enableDarkModeOverride: overrideValue,
+        ...flagOverrides,
       },
     };
   })

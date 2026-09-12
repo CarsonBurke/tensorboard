@@ -267,6 +267,47 @@ describe('feature_flag_selectors', () => {
     });
   });
 
+  describe('#getDarkThemeId', () => {
+    it('returns the selected dark theme', () => {
+      const state = buildState(
+        buildFeatureFlagState({
+          defaultFlags: buildFeatureFlag({
+            darkThemeId: 'default',
+          }),
+          flagOverrides: {
+            darkThemeId: 'catppuccin',
+          },
+        })
+      );
+      expect(selectors.getDarkThemeId(state)).toEqual('catppuccin');
+    });
+
+    it('returns the default theme when no override is set', () => {
+      const state = buildState(
+        buildFeatureFlagState({
+          defaultFlags: buildFeatureFlag({
+            darkThemeId: 'default',
+          }),
+        })
+      );
+      expect(selectors.getDarkThemeId(state)).toEqual('default');
+    });
+
+    it('falls back to the default theme for unknown theme ids', () => {
+      const state = buildState(
+        buildFeatureFlagState({
+          defaultFlags: buildFeatureFlag({
+            darkThemeId: 'default',
+          }),
+          flagOverrides: {
+            darkThemeId: 'yolo' as 'default',
+          },
+        })
+      );
+      expect(selectors.getDarkThemeId(state)).toEqual('default');
+    });
+  });
+
   describe('#getIsAutoDarkModeAllowed', () => {
     it('returns the proper value', () => {
       let state = buildState(

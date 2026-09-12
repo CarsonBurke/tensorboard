@@ -66,24 +66,14 @@ $_accent: map.get(mat.m2-get-color-config(tb_theme.$tb-theme), accent);
   $border: mat.m2-get-color-from-palette(tb_theme.$tb-foreground, border);
   border-top: 1px solid $border;
 
-  @include tb_theme.tb-dark-theme {
-    border-color: mat.m2-get-color-from-palette(
-      tb_theme.$tb-dark-foreground,
-      border
-    );
-  }
+  @include tb_theme.tb-dark-theme-foreground-prop(border-color, border);
 }
 
 .close-button {
   color: mat.m2-get-color-from-palette(tb_theme.$tb-foreground, secondary-text);
   width: 84px;
 
-  @include tb_theme.tb-dark-theme {
-    color: mat.m2-get-color-from-palette(
-      tb_theme.$tb-dark-foreground,
-      secondary-text
-    );
-  }
+  @include tb_theme.tb-dark-theme-foreground-prop(color, secondary-text);
 }
 
 // Make the mat-tab-body-wrapper fill the height of its parent. When flex-grow

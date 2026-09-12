@@ -211,12 +211,10 @@ $_data_table_initial_height: 100px;
       secondary-text
     );
 
-    @include tb_theme.tb-dark-theme {
-      color: mat.m2-get-color-from-palette(
-        tb_theme.$tb-dark-foreground,
-        secondary-text
-      );
-      background-color: map.get(tb_theme.$tb-dark-background, background);
-    }
+    @include tb_theme.tb-dark-theme-foreground-prop(color, secondary-text);
+    @include tb_theme.tb-dark-theme-background-prop(
+      background-color,
+      background
+    );
   }
 }

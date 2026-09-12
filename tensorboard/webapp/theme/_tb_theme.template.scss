@@ -150,6 +150,353 @@ $tb-dark-theme: map.merge(
   )
 );
 
+// Dark theme variants. Each variant keeps the default dark Material theme as
+// a baseline and overrides the surfaces with a darker, theme-specific
+// palette. The variant is selected via `body[data-tb-dark-theme]` (set by
+// DarkModeSupportContainer); `body.dark-mode` stays the source of truth for
+// whether any dark styling applies.
+$tb-catppuccin-primary: mat.m2-define-palette(
+  mat.$m2-purple-palette,
+  200,
+  100,
+  400
+);
+$tb-catppuccin-accent: mat.m2-define-palette(
+  mat.$m2-blue-palette,
+  200,
+  100,
+  400
+);
+$tb-catppuccin-foreground: map.merge(
+  $tb-dark-foreground,
+  (
+    text: #cdd6f4,
+    secondary-text: #a6adc8,
+    disabled-text: #6c7086,
+    border: #313244,
+    link: #89b4fa,
+    link-visited: #cba6f7,
+  )
+);
+$tb-catppuccin-background: map.merge(
+  $tb-dark-background,
+  (
+    background: #11111b,
+    app-bar: #181825,
+    card: #1e1e2e,
+    dialog: #1e1e2e,
+    hover: #313244,
+    selected-button: #45475a,
+  )
+);
+$tb-catppuccin-theme: mat.m2-define-dark-theme(
+  (
+    color: (
+      primary: $tb-catppuccin-primary,
+      accent: $tb-catppuccin-accent,
+      warn: $tb-warn,
+    ),
+    typography: null,
+    density: 0,
+  )
+);
+$tb-catppuccin-theme: map.merge(
+  $tb-catppuccin-theme,
+  (
+    background: $tb-catppuccin-background,
+    foreground: $tb-catppuccin-foreground,
+  )
+);
+$color-catppuccin: map.merge(
+  map.get($tb-catppuccin-theme, 'color'),
+  (
+    foreground: $tb-catppuccin-foreground,
+    background: $tb-catppuccin-background,
+  )
+);
+$tb-catppuccin-theme: map.merge(
+  $tb-catppuccin-theme,
+  (
+    color: $color-catppuccin,
+  )
+);
+
+$tb-tokyo-night-primary: mat.m2-define-palette(
+  mat.$m2-indigo-palette,
+  200,
+  100,
+  400
+);
+$tb-tokyo-night-accent: mat.m2-define-palette(
+  mat.$m2-purple-palette,
+  200,
+  100,
+  400
+);
+$tb-tokyo-night-foreground: map.merge(
+  $tb-dark-foreground,
+  (
+    text: #c0caf5,
+    secondary-text: #a9b1d6,
+    disabled-text: #565f89,
+    border: #292e42,
+    link: #7aa2f7,
+    link-visited: #bb9af7,
+  )
+);
+$tb-tokyo-night-background: map.merge(
+  $tb-dark-background,
+  (
+    background: #16161e,
+    app-bar: #1a1b26,
+    card: #1a1b26,
+    dialog: #1a1b26,
+    hover: #292e42,
+    selected-button: #292e42,
+  )
+);
+$tb-tokyo-night-theme: mat.m2-define-dark-theme(
+  (
+    color: (
+      primary: $tb-tokyo-night-primary,
+      accent: $tb-tokyo-night-accent,
+      warn: $tb-warn,
+    ),
+    typography: null,
+    density: 0,
+  )
+);
+$tb-tokyo-night-theme: map.merge(
+  $tb-tokyo-night-theme,
+  (
+    background: $tb-tokyo-night-background,
+    foreground: $tb-tokyo-night-foreground,
+  )
+);
+$color-tokyo-night: map.merge(
+  map.get($tb-tokyo-night-theme, 'color'),
+  (
+    foreground: $tb-tokyo-night-foreground,
+    background: $tb-tokyo-night-background,
+  )
+);
+$tb-tokyo-night-theme: map.merge(
+  $tb-tokyo-night-theme,
+  (
+    color: $color-tokyo-night,
+  )
+);
+
+$tb-github-primary: mat.m2-define-palette(
+  mat.$m2-blue-palette,
+  400,
+  200,
+  600
+);
+$tb-github-accent: mat.m2-define-palette(mat.$m2-blue-palette, 200, 100, 400);
+$tb-github-foreground: map.merge(
+  $tb-dark-foreground,
+  (
+    text: #e6edf3,
+    secondary-text: #9198a1,
+    disabled-text: #656c76,
+    border: #30363d,
+    link: #4493f8,
+    link-visited: #ab7df8,
+  )
+);
+$tb-github-background: map.merge(
+  $tb-dark-background,
+  (
+    background: #0d1117,
+    app-bar: #010409,
+    card: #161b22,
+    dialog: #161b22,
+    hover: #1c2128,
+    selected-button: #21262d,
+  )
+);
+$tb-github-theme: mat.m2-define-dark-theme(
+  (
+    color: (
+      primary: $tb-github-primary,
+      accent: $tb-github-accent,
+      warn: $tb-warn,
+    ),
+    typography: null,
+    density: 0,
+  )
+);
+$tb-github-theme: map.merge(
+  $tb-github-theme,
+  (
+    background: $tb-github-background,
+    foreground: $tb-github-foreground,
+  )
+);
+$color-github: map.merge(
+  map.get($tb-github-theme, 'color'),
+  (
+    foreground: $tb-github-foreground,
+    background: $tb-github-background,
+  )
+);
+$tb-github-theme: map.merge(
+  $tb-github-theme,
+  (
+    color: $color-github,
+  )
+);
+
+$tb-vscode-primary: mat.m2-define-palette(
+  mat.$m2-blue-palette,
+  500,
+  200,
+  700
+);
+$tb-vscode-accent: mat.m2-define-palette(mat.$m2-light-blue-palette, 400);
+$tb-vscode-foreground: map.merge(
+  $tb-dark-foreground,
+  (
+    text: #cccccc,
+    secondary-text: #9d9d9d,
+    disabled-text: #6e6e6e,
+    border: #2d2d2d,
+    link: #4daafc,
+    link-visited: #9a7ecc,
+  )
+);
+$tb-vscode-background: map.merge(
+  $tb-dark-background,
+  (
+    background: #1e1e1e,
+    app-bar: #181818,
+    card: #252526,
+    dialog: #252526,
+    hover: #2a2d2e,
+    selected-button: #2d2d2d,
+  )
+);
+$tb-vscode-theme: mat.m2-define-dark-theme(
+  (
+    color: (
+      primary: $tb-vscode-primary,
+      accent: $tb-vscode-accent,
+      warn: $tb-warn,
+    ),
+    typography: null,
+    density: 0,
+  )
+);
+$tb-vscode-theme: map.merge(
+  $tb-vscode-theme,
+  (
+    background: $tb-vscode-background,
+    foreground: $tb-vscode-foreground,
+  )
+);
+$color-vscode: map.merge(
+  map.get($tb-vscode-theme, 'color'),
+  (
+    foreground: $tb-vscode-foreground,
+    background: $tb-vscode-background,
+  )
+);
+$tb-vscode-theme: map.merge(
+  $tb-vscode-theme,
+  (
+    color: $color-vscode,
+  )
+);
+
+$tb-codex-primary: mat.m2-define-palette(
+  mat.$m2-teal-palette,
+  500,
+  200,
+  700
+);
+$tb-codex-accent: mat.m2-define-palette(mat.$m2-green-palette, 400, 200, 600);
+$tb-codex-foreground: map.merge(
+  $tb-dark-foreground,
+  (
+    text: #e5e5e5,
+    secondary-text: #a3a3a3,
+    disabled-text: #525252,
+    border: #262626,
+    link: #4ea1ff,
+    link-visited: #b392f0,
+  )
+);
+$tb-codex-background: map.merge(
+  $tb-dark-background,
+  (
+    background: #000,
+    app-bar: #0a0a0a,
+    card: #111,
+    dialog: #111,
+    hover: #1a1a1a,
+    selected-button: #262626,
+  )
+);
+$tb-codex-theme: mat.m2-define-dark-theme(
+  (
+    color: (
+      primary: $tb-codex-primary,
+      accent: $tb-codex-accent,
+      warn: $tb-warn,
+    ),
+    typography: null,
+    density: 0,
+  )
+);
+$tb-codex-theme: map.merge(
+  $tb-codex-theme,
+  (
+    background: $tb-codex-background,
+    foreground: $tb-codex-foreground,
+  )
+);
+$color-codex: map.merge(
+  map.get($tb-codex-theme, 'color'),
+  (
+    foreground: $tb-codex-foreground,
+    background: $tb-codex-background,
+  )
+);
+$tb-codex-theme: map.merge(
+  $tb-codex-theme,
+  (
+    color: $color-codex,
+  )
+);
+
+// Variant lookup maps, keyed by the `data-tb-dark-theme` attribute value.
+// The 'default' variant intentionally reuses the baseline dark maps.
+$tb-dark-background-variants: (
+  'default': $tb-dark-background,
+  'catppuccin': $tb-catppuccin-background,
+  'tokyo-night': $tb-tokyo-night-background,
+  'github': $tb-github-background,
+  'vscode': $tb-vscode-background,
+  'codex': $tb-codex-background,
+);
+$tb-dark-foreground-variants: (
+  'default': $tb-dark-foreground,
+  'catppuccin': $tb-catppuccin-foreground,
+  'tokyo-night': $tb-tokyo-night-foreground,
+  'github': $tb-github-foreground,
+  'vscode': $tb-vscode-foreground,
+  'codex': $tb-codex-foreground,
+);
+$tb-dark-material-theme-variants: (
+  'default': $tb-dark-theme,
+  'catppuccin': $tb-catppuccin-theme,
+  'tokyo-night': $tb-tokyo-night-theme,
+  'github': $tb-github-theme,
+  'vscode': $tb-vscode-theme,
+  'codex': $tb-codex-theme,
+);
+
 /**
  * Mixin to facilitate styling an Angular component for the dark mode.
  * For customization that uses theming object (tb-foreground or tb-background),
@@ -172,6 +519,44 @@ $tb-dark-theme: map.merge(
   @each $selector in & {
     @at-root :host-context(body.dark-mode) #{$selector} {
       @content;
+    }
+  }
+}
+
+// Variant of `tb-dark-theme` scoped to a single dark theme id, e.g.
+// `body.dark-mode[data-tb-dark-theme='catppuccin']`.
+@mixin tb-dark-theme-variant($theme-id) {
+  @each $selector in & {
+    @at-root :host-context(body.dark-mode[data-tb-dark-theme='#{$theme-id}'])
+      #{$selector} {
+      @content;
+    }
+  }
+}
+
+@mixin _tb-dark-variant-prop-color(
+  $object-name,
+  $css-property,
+  $dict-name,
+  $css-value-prefix
+) {
+  // Per-variant overrides so surfaces using the theming dictionaries follow
+  // the selected dark theme. The selectors are more specific than the
+  // `body.dark-mode` rule, so they win when a variant is active.
+  $variant-maps: if(
+    $object-name == foreground,
+    $tb-dark-foreground-variants,
+    $tb-dark-background-variants
+  );
+  @each $variant-id, $variant-map in $variant-maps {
+    // The 'default' variant reuses the baseline dark color already emitted.
+    @if ($variant-id != 'default') {
+      $variant-color: map.get($variant-map, $dict-name);
+      @if ($variant-color) {
+        @include tb-dark-theme-variant($variant-id) {
+          #{$css-property}: $css-value-prefix $variant-color;
+        }
+      }
     }
   }
 }
@@ -200,6 +585,70 @@ $tb-dark-theme: map.merge(
   @include tb-dark-theme {
     #{$css-property}: $css-value-prefix $dark-color;
   }
+
+  @include _tb-dark-variant-prop-color(
+    $object-name,
+    $css-property,
+    $dict-name,
+    $css-value-prefix
+  );
+}
+
+// Dark-mode-only counterpart of `tb-theme-background-prop`: styles an Angular
+// component using the dark background dictionary (baseline plus per-variant
+// overrides) without emitting a light-mode rule. Prefer this over a raw
+// `tb-dark-theme` block with a `$tb-dark-background` lookup so the surface
+// follows the selected dark theme variant. Do not nest this inside a
+// `tb-dark-theme` block: the `body.dark-mode` context would double up and the
+// rule would never match.
+@mixin tb-dark-theme-background-prop(
+  $css-property,
+  $dict-name,
+  $css-value-prefix: null
+) {
+  @if (not map.get($tb-dark-background, $dict-name)) {
+    @error "Name '#{$dict-name}' is not found in dark background.";
+  }
+
+  @include tb-dark-theme {
+    #{$css-property}: $css-value-prefix map.get(
+        $tb-dark-background,
+        $dict-name
+      );
+  }
+
+  @include _tb-dark-variant-prop-color(
+    background,
+    $css-property,
+    $dict-name,
+    $css-value-prefix
+  );
+}
+
+// Dark-mode-only counterpart of `tb-theme-foreground-prop`. See
+// `tb-dark-theme-background-prop`.
+@mixin tb-dark-theme-foreground-prop(
+  $css-property,
+  $dict-name,
+  $css-value-prefix: null
+) {
+  @if (not map.get($tb-dark-foreground, $dict-name)) {
+    @error "Name '#{$dict-name}' is not found in dark foreground.";
+  }
+
+  @include tb-dark-theme {
+    #{$css-property}: $css-value-prefix map.get(
+        $tb-dark-foreground,
+        $dict-name
+      );
+  }
+
+  @include _tb-dark-variant-prop-color(
+    foreground,
+    $css-property,
+    $dict-name,
+    $css-value-prefix
+  );
 }
 
 /**
@@ -369,5 +818,78 @@ $tb-dark-theme: map.merge(
     }
 
     @include mat.all-component-themes($tb-dark-theme);
+
+    // Darker theme variants. Each block is more specific than the baseline
+    // above, so its Material component colors, page background, and links
+    // win when `data-tb-dark-theme` selects the variant.
+    &[data-tb-dark-theme='catppuccin'] {
+      background-color: map.get($tb-catppuccin-background, background);
+
+      a:not(.mdc-button, .mdc-icon-button) {
+        color: map.get($tb-catppuccin-foreground, link);
+
+        &:visited {
+          color: map.get($tb-catppuccin-foreground, link-visited);
+        }
+      }
+
+      @include mat.all-component-themes($tb-catppuccin-theme);
+    }
+
+    &[data-tb-dark-theme='tokyo-night'] {
+      background-color: map.get($tb-tokyo-night-background, background);
+
+      a:not(.mdc-button, .mdc-icon-button) {
+        color: map.get($tb-tokyo-night-foreground, link);
+
+        &:visited {
+          color: map.get($tb-tokyo-night-foreground, link-visited);
+        }
+      }
+
+      @include mat.all-component-themes($tb-tokyo-night-theme);
+    }
+
+    &[data-tb-dark-theme='github'] {
+      background-color: map.get($tb-github-background, background);
+
+      a:not(.mdc-button, .mdc-icon-button) {
+        color: map.get($tb-github-foreground, link);
+
+        &:visited {
+          color: map.get($tb-github-foreground, link-visited);
+        }
+      }
+
+      @include mat.all-component-themes($tb-github-theme);
+    }
+
+    &[data-tb-dark-theme='vscode'] {
+      background-color: map.get($tb-vscode-background, background);
+
+      a:not(.mdc-button, .mdc-icon-button) {
+        color: map.get($tb-vscode-foreground, link);
+
+        &:visited {
+          color: map.get($tb-vscode-foreground, link-visited);
+        }
+      }
+
+      @include mat.all-component-themes($tb-vscode-theme);
+    }
+
+    &[data-tb-dark-theme='codex'] {
+      background-color: map.get($tb-codex-background, background);
+
+      a:not(.mdc-button, .mdc-icon-button) {
+        color: map.get($tb-codex-foreground, link);
+
+        &:visited {
+          color: map.get($tb-codex-foreground, link-visited);
+        }
+      }
+
+      @include mat.all-component-themes($tb-codex-theme);
+    }
   }
 }

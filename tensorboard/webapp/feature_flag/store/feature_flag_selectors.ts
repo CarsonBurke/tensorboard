@@ -14,7 +14,12 @@ limitations under the License.
 ==============================================================================*/
 
 import {createFeatureSelector, createSelector} from '@ngrx/store';
-import {FeatureFlags} from '../types';
+import {
+  DEFAULT_DARK_THEME_ID,
+  DarkThemeId,
+  FeatureFlags,
+  isDarkThemeId,
+} from '../types';
 import {
   FeatureFlagMetadataMapType,
   FeatureFlagType,
@@ -105,6 +110,14 @@ export const getEnableDarkModeOverride = createSelector(
   getFeatureFlags,
   (flags): boolean | null => {
     return flags.enableDarkModeOverride;
+  }
+);
+
+export const getDarkThemeId = createSelector(
+  getFeatureFlags,
+  (flags): DarkThemeId => {
+    const darkThemeId = (flags as Partial<FeatureFlags>).darkThemeId;
+    return isDarkThemeId(darkThemeId) ? darkThemeId : DEFAULT_DARK_THEME_ID;
   }
 );
 

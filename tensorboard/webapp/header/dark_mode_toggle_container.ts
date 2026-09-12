@@ -17,9 +17,16 @@ import {Store} from '@ngrx/store';
 import {Observable} from 'rxjs';
 import {map} from 'rxjs/operators';
 import {State as CoreState} from '../core/store/core_types';
-import {overrideEnableDarkModeChanged} from '../feature_flag/actions/feature_flag_actions';
-import {getEnableDarkModeOverride} from '../feature_flag/store/feature_flag_selectors';
+import {
+  darkThemeChanged,
+  overrideEnableDarkModeChanged,
+} from '../feature_flag/actions/feature_flag_actions';
+import {
+  getDarkThemeId,
+  getEnableDarkModeOverride,
+} from '../feature_flag/store/feature_flag_selectors';
 import {State as FeatureFlagState} from '../feature_flag/store/feature_flag_types';
+import {DarkThemeId} from '../feature_flag/types';
 import {DarkModeOverride} from './dark_mode_toggle_component';
 
 @Component({
@@ -29,13 +36,16 @@ import {DarkModeOverride} from './dark_mode_toggle_component';
   template: `
     <app-header-dark-mode-toggle-component
       [darkModeOverride]="darkModeOverride$ | async"
+      [darkThemeId]="darkThemeId$ | async"
       (onOverrideChanged)="changeDarkMode($event)"
+      (onDarkThemeChanged)="changeDarkTheme($event)"
     >
     </app-header-dark-mode-toggle-component>
   `,
 })
 export class DarkModeToggleContainer {
   readonly darkModeOverride$: Observable<DarkModeOverride>;
+  readonly darkThemeId$: Observable<DarkThemeId>;
 
   constructor(private readonly store: Store<CoreState & FeatureFlagState>) {
     this.darkModeOverride$ = this.store.select(getEnableDarkModeOverride).pipe(
@@ -46,6 +56,7 @@ export class DarkModeToggleContainer {
           : DarkModeOverride.DARK_MODE_OFF;
       })
     );
+    this.darkThemeId$ = this.store.select(getDarkThemeId);
   }
 
   changeDarkMode(newOverride: DarkModeOverride) {
@@ -64,5 +75,11 @@ export class DarkModeToggleContainer {
     }
 
     this.store.dispatch(overrideEnableDarkModeChanged({enableDarkMode}));
+  }
+
+  changeDarkTheme(darkThemeId: DarkThemeId) {
+    this.store.dispatch(darkThemeChanged({darkThemeId}));
+    // Selecting a dark theme variant implies the user wants dark mode.
+    this.store.dispatch(overrideEnableDarkModeChanged({enableDarkMode: true}));
   }
 }

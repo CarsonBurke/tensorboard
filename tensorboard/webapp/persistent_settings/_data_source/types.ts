@@ -29,6 +29,8 @@ export enum ThemeValue {
  * For example, ClosureCompiler can mangle property names to make the payload
  * smaller and so can `terser` (with config).
  */
+export type DarkThemeStorageId = string;
+
 export declare interface BackendSettings {
   scalarSmoothing?: number;
   tooltipSort?: TooltipSort;
@@ -37,6 +39,7 @@ export declare interface BackendSettings {
   autoReloadPeriodInMs?: number;
   paginationSize?: number;
   theme?: ThemeValue;
+  darkTheme?: DarkThemeStorageId;
   notificationLastReadTimeInMs?: number;
   sideBarWidthInPercent?: number;
   timeSeriesSettingsPaneOpened?: boolean;
@@ -65,6 +68,7 @@ export interface PersistableSettings {
   autoReloadPeriodInMs?: number;
   pageSize?: number;
   themeOverride?: ThemeValue;
+  darkThemeId?: DarkThemeStorageId;
   notificationLastReadTimeInMs?: number;
   sideBarWidthInPercent?: number;
   timeSeriesSettingsPaneOpened?: boolean;
