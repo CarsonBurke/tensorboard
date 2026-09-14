@@ -160,6 +160,9 @@ export class ScalarCardComponent<Downloader> {
     order: SortingOrder.ASCENDING,
   };
 
+  @ViewChild('chartContainer')
+  chartContainer?: ElementRef;
+
   @ViewChild('dataTableContainer')
   dataTableContainer?: ElementRef;
 
@@ -378,6 +381,79 @@ export class ScalarCardComponent<Downloader> {
     // for the table to expand or collapse correctly.
     if (this.dataTableContainer) {
       this.dataTableContainer.nativeElement.style.height = '';
+    }
+  }
+
+  /**
+   * Restores the persisted heights. `resize: vertical` makes the browser write
+   * an inline height when the user drags a container, so the stored heights go
+   * in the same place rather than through a binding, and only while that place
+   * is empty: overwriting it would revert a drag that change detection has not
+   * yet reported.
+   */
+  ngAfterViewChecked() {
+    this.restoreHeight(this.chartContainer, this.cardState?.chartHeight);
+    // An expanded table is sized by its content; `.expanded` sets
+    // `height: auto` and an inline height would override it.
+    if (!this.cardState?.tableExpanded) {
+      this.restoreHeight(this.dataTableContainer, this.cardState?.tableHeight);
+    }
+  }
+
+  private restoreHeight(
+    container: ElementRef<HTMLElement> | undefined,
+    height: number | undefined
+  ) {
+    const element = container?.nativeElement;
+    if (!element || !height || element.style.height) {
+      return;
+    }
+    element.style.height = `${height}px`;
+  }
+
+  /**
+   * Height of a container the user drag-resized, or null when this resize was
+   * not a drag. Only a drag leaves an inline height, so relayouts from window
+   * resizes, expanding the card, or expanding the table are not persisted, and
+   * re-observing a height this card just applied does not report it again.
+   */
+  private draggedHeight(
+    container: ElementRef<HTMLElement> | undefined,
+    appliedHeight: number | undefined
+  ): number | null {
+    const element = container?.nativeElement;
+    if (!element?.style.height) {
+      return null;
+    }
+    // `offsetHeight` is 0 while the container is detached or hidden; that is
+    // not a resize the user performed.
+    const height = Math.round(element.offsetHeight);
+    if (!height || height === appliedHeight) {
+      return null;
+    }
+    return height;
+  }
+
+  onChartResized() {
+    const height = this.draggedHeight(
+      this.chartContainer,
+      this.cardState?.chartHeight
+    );
+    if (height !== null) {
+      this.onCardStateChanged.emit({chartHeight: height});
+    }
+  }
+
+  onDataTableResized() {
+    if (this.cardState?.tableExpanded) {
+      return;
+    }
+    const height = this.draggedHeight(
+      this.dataTableContainer,
+      this.cardState?.tableHeight
+    );
+    if (height !== null) {
+      this.onCardStateChanged.emit({tableHeight: height});
     }
   }
 

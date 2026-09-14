@@ -104,7 +104,13 @@ limitations under the License.
       </mat-menu>
     </span>
   </div>
-  <div #chartContainer class="chart-container">
+  <div
+    #chartContainer
+    class="chart-container"
+    detectResize
+    [resizeEventDebouncePeriodInMs]="200"
+    (onResize)="onChartResized()"
+  >
     <mat-spinner
       diameter="18"
       *ngIf="loadState === DataLoadState.LOADING"
@@ -194,6 +200,9 @@ limitations under the License.
       'data-table-container': true,
       'expanded': cardState!.tableExpanded
     }"
+    detectResize
+    [resizeEventDebouncePeriodInMs]="200"
+    (onResize)="onDataTableResized()"
   >
     <scalar-card-data-table
       [chartMetadataMap]="chartMetadataMap"

@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 import {
   MetricsLocalStorageDataSource,
+  PersistedCardState,
   TEST_ONLY,
 } from './metrics_local_storage_data_source';
 
@@ -39,6 +40,7 @@ describe('metrics_local_storage_data_source', () => {
         ['foo', 2],
         ['bar', 0],
       ]),
+      cardState: new Map(),
     });
 
     expect(dataSource.getState('namespace1', ['foo', 'bar'])).toEqual({
@@ -50,6 +52,7 @@ describe('metrics_local_storage_data_source', () => {
         ['foo', 2],
         ['bar', 0],
       ]),
+      cardState: new Map(),
     });
   });
 
@@ -57,6 +60,7 @@ describe('metrics_local_storage_data_source', () => {
     dataSource.setState('namespace1', ['__proto__'], {
       tagGroupExpanded: new Map([['__proto__', true]]),
       tagGroupPageIndex: new Map([['__proto__', 2]]),
+      cardState: new Map(),
     });
 
     const serialized = window.localStorage.getItem(
@@ -66,6 +70,7 @@ describe('metrics_local_storage_data_source', () => {
     expect(dataSource.getState('namespace1', ['__proto__'])).toEqual({
       tagGroupExpanded: new Map([['__proto__', true]]),
       tagGroupPageIndex: new Map([['__proto__', 2]]),
+      cardState: new Map(),
     });
   });
 
@@ -79,6 +84,7 @@ describe('metrics_local_storage_data_source', () => {
         ['foo', 3],
         ['offscreen', 9],
       ]),
+      cardState: new Map<string, PersistedCardState>(),
     };
     dataSource.setState('namespace1', ['foo', 'offscreen'], configured);
     const offscreenState = new MetricsLocalStorageDataSource().getState(
@@ -103,6 +109,7 @@ describe('metrics_local_storage_data_source', () => {
             tagGroups: ['foo'],
             tagGroupExpanded: {foo: true},
             tagGroupPageIndex: {foo: 2},
+            cardState: {card1: {fullWidth: true, chartHeight: 300}},
           },
         },
       })
@@ -112,6 +119,7 @@ describe('metrics_local_storage_data_source', () => {
     dataSource.setState('namespace1', ['foo'], {
       tagGroupExpanded: new Map([['foo', true]]),
       tagGroupPageIndex: new Map([['foo', 2]]),
+      cardState: new Map([['card1', {fullWidth: true, chartHeight: 300}]]),
     });
 
     expect(setItemSpy).not.toHaveBeenCalled();
@@ -136,6 +144,7 @@ describe('metrics_local_storage_data_source', () => {
     expect(dataSource.getState('namespace1', ['foo'])).toEqual({
       tagGroupExpanded: new Map(),
       tagGroupPageIndex: new Map(),
+      cardState: new Map(),
     });
   });
 
@@ -146,11 +155,13 @@ describe('metrics_local_storage_data_source', () => {
         ['foo', 1.5],
         ['bar', -1],
       ]),
+      cardState: new Map(),
     });
 
     expect(dataSource.getState('namespace1', ['foo', 'bar'])).toEqual({
       tagGroupExpanded: new Map(),
       tagGroupPageIndex: new Map(),
+      cardState: new Map(),
     });
   });
 
@@ -160,6 +171,7 @@ describe('metrics_local_storage_data_source', () => {
     dataSource.setState('namespace1', [], {
       tagGroupExpanded: new Map(),
       tagGroupPageIndex: new Map(),
+      cardState: new Map(),
     });
 
     expect(
@@ -189,17 +201,20 @@ describe('metrics_local_storage_data_source', () => {
     dataSource.setState('namespace1', ['foo'], {
       tagGroupExpanded: new Map([['foo', false]]),
       tagGroupPageIndex: new Map([['foo', 2]]),
+      cardState: new Map(),
     });
 
     expect(dataSource.getState('namespace1', ['foo'])).toEqual({
       tagGroupExpanded: new Map([['foo', false]]),
       tagGroupPageIndex: new Map([['foo', 2]]),
+      cardState: new Map(),
     });
 
     setItemSpy.and.callThrough();
     dataSource.setState('namespace1', ['foo'], {
       tagGroupExpanded: new Map([['foo', false]]),
       tagGroupPageIndex: new Map([['foo', 2]]),
+      cardState: new Map(),
     });
 
     expect(setItemSpy).toHaveBeenCalledTimes(2);
@@ -228,11 +243,169 @@ describe('metrics_local_storage_data_source', () => {
     dataSource.setState('namespace1', [], {
       tagGroupExpanded: new Map(),
       tagGroupPageIndex: new Map(),
+      cardState: new Map(),
     });
 
     expect(dataSource.getState('namespace1', ['foo'])).toEqual({
       tagGroupExpanded: new Map(),
       tagGroupPageIndex: new Map(),
+      cardState: new Map(),
     });
+  });
+
+  it('persists and restores card view state', () => {
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+      cardState: new Map([
+        ['card1', {fullWidth: true, chartHeight: 420}],
+        ['card2', {tableExpanded: true, tableHeight: 240}],
+      ]),
+    });
+
+    expect(
+      new MetricsLocalStorageDataSource().getState('namespace1', ['foo'])
+        .cardState
+    ).toEqual(
+      new Map([
+        ['card1', {fullWidth: true, chartHeight: 420}],
+        ['card2', {tableExpanded: true, tableHeight: 240}],
+      ])
+    );
+  });
+
+  it('keeps stored card state for cards the caller did not pass', () => {
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+      cardState: new Map([
+        ['card1', {fullWidth: true, chartHeight: 300}],
+        ['offscreen', {tableExpanded: true, tableHeight: 250}],
+      ]),
+    });
+
+    // The store prunes card state for cards outside the catalog window, so a
+    // later sync only carries the cards that are currently live.
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+      cardState: new Map([['card1', {chartHeight: 500}]]),
+    });
+
+    expect(
+      new MetricsLocalStorageDataSource().getState('namespace1', ['foo'])
+        .cardState
+    ).toEqual(
+      new Map([
+        // Given keys win; keys that were not given survive.
+        ['card1', {fullWidth: true, chartHeight: 500}],
+        ['offscreen', {tableExpanded: true, tableHeight: 250}],
+      ])
+    );
+  });
+
+  it('writes when only the card state changed', () => {
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map([['foo', true]]),
+      tagGroupPageIndex: new Map([['foo', 0]]),
+      cardState: new Map([['card1', {fullWidth: true}]]),
+    });
+
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map([['foo', true]]),
+      tagGroupPageIndex: new Map([['foo', 0]]),
+      cardState: new Map([['card1', {fullWidth: false}]]),
+    });
+
+    expect(
+      new MetricsLocalStorageDataSource().getState('namespace1', ['foo'])
+        .cardState
+    ).toEqual(new Map([['card1', {fullWidth: false}]]));
+  });
+
+  it('drops card state values that are out of bounds or mistyped', () => {
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+      cardState: new Map<string, PersistedCardState>([
+        ['tooShort', {chartHeight: 39, tableHeight: 300}],
+        ['tooTall', {chartHeight: 5001}],
+        ['fractional', {chartHeight: 300.5}],
+        ['notANumber', {tableHeight: Number.NaN}],
+        // Values coming from storage are not type checked at runtime.
+        ['notABoolean', {fullWidth: 'yes'} as unknown as PersistedCardState],
+      ]),
+    });
+
+    expect(
+      new MetricsLocalStorageDataSource().getState('namespace1', ['foo'])
+        .cardState
+    ).toEqual(new Map([['tooShort', {tableHeight: 300}]]));
+  });
+
+  it('drops mistyped card state values found in storage', () => {
+    window.localStorage.setItem(
+      TEST_ONLY.METRICS_LOCAL_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        namespaces: {
+          namespace1: {
+            updatedAtMs: 1,
+            tagGroups: ['foo'],
+            tagGroupExpanded: {},
+            tagGroupPageIndex: {},
+            cardState: {
+              card1: {
+                fullWidth: 'yes',
+                tableExpanded: true,
+                chartHeight: '300',
+                tableHeight: 1e9,
+              },
+              card2: {chartHeight: null},
+              card3: 'nonsense',
+            },
+          },
+        },
+      })
+    );
+
+    expect(dataSource.getState('namespace1', ['foo']).cardState).toEqual(
+      new Map([['card1', {tableExpanded: true}]])
+    );
+  });
+
+  it('caps persisted cards, keeping the ones just passed in', () => {
+    const cap = TEST_ONLY.MAX_PERSISTED_CARDS;
+    const overflowing = new Map<string, PersistedCardState>();
+    for (let i = 0; i < cap + 50; i++) {
+      overflowing.set(`card${i}`, {chartHeight: 100 + i});
+    }
+
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+      cardState: overflowing,
+    });
+
+    const stored = new MetricsLocalStorageDataSource().getState('namespace1', [
+      'foo',
+    ]).cardState;
+    expect(stored.size).toBe(cap);
+    expect(stored.has('card0')).toBeTrue();
+    expect(stored.has(`card${cap}`)).toBeFalse();
+
+    dataSource.setState('namespace1', ['foo'], {
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+      cardState: new Map([['fresh', {tableHeight: 200}]]),
+    });
+
+    const afterFresh = new MetricsLocalStorageDataSource().getState(
+      'namespace1',
+      ['foo']
+    ).cardState;
+    expect(afterFresh.size).toBe(cap);
+    expect(afterFresh.get('fresh')).toEqual({tableHeight: 200});
+    expect(afterFresh.has(`card${cap - 1}`)).toBeFalse();
   });
 });

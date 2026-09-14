@@ -23,6 +23,25 @@ export type ExperimentIdToRuns = Record<
   }
 >;
 
+/**
+ * Window of the run catalog carried by a windowed run response: the run ids in
+ * the window, the backend's per-experiment run counts, and the window offset.
+ */
+export interface RunCatalog {
+  runIds: string[];
+  totals: Record<string, number>;
+  offset: number;
+}
+
+/** Whether a catalog window lists every run the backend knows about. */
+export function catalogCoversAllRuns(catalog: RunCatalog): boolean {
+  let total = 0;
+  for (const count of Object.values(catalog.totals)) {
+    total += count;
+  }
+  return total <= catalog.runIds.length;
+}
+
 export interface RunGroup {
   matches: Record<string, Run[]>;
   nonMatches: Run[];

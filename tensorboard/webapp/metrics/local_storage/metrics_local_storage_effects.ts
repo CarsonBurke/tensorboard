@@ -19,6 +19,7 @@ import {tap, withLatestFrom} from 'rxjs/operators';
 import {State} from '../../app_state';
 import * as coreActions from '../../core/actions';
 import {
+  getCardStateMap,
   getEnvironment,
   getExperimentIdsFromRoute,
   getMetricsTagGroupExpandedMap,
@@ -27,11 +28,13 @@ import {
 } from '../../selectors';
 import {DeepReadonly} from '../../util/types';
 import * as metricsActions from '../actions';
-import {CardIdWithMetadata} from '../types';
+import {CardStateMap} from '../store/metrics_types';
+import {CardId, CardIdWithMetadata} from '../types';
 import {groupCardIdWithMetdata} from '../utils';
 import {
   MetricsLocalStorageDataSource,
   MetricsLocalStorageState,
+  PersistedCardState,
 } from './metrics_local_storage_data_source';
 
 function getNamespace(dataLocation: string, experimentIds: string[] | null) {
@@ -50,6 +53,35 @@ function getTagGroups(cards: DeepReadonly<CardIdWithMetadata[]>): string[] {
 
 function mapToRecord<T>(values: Map<string, T>): Record<string, T> {
   return Object.fromEntries(values.entries());
+}
+
+/**
+ * Narrows the live card state down to the keys we persist, dropping cards that
+ * hold none of them.
+ */
+function projectPersistedCardState(
+  cardStateMap: CardStateMap
+): Map<CardId, PersistedCardState> {
+  const projected = new Map<CardId, PersistedCardState>();
+  for (const [cardId, cardState] of Object.entries(cardStateMap)) {
+    const persisted: PersistedCardState = {};
+    if (cardState.fullWidth !== undefined) {
+      persisted.fullWidth = cardState.fullWidth;
+    }
+    if (cardState.tableExpanded !== undefined) {
+      persisted.tableExpanded = cardState.tableExpanded;
+    }
+    if (cardState.chartHeight !== undefined) {
+      persisted.chartHeight = cardState.chartHeight;
+    }
+    if (cardState.tableHeight !== undefined) {
+      persisted.tableHeight = cardState.tableHeight;
+    }
+    if (Object.keys(persisted).length > 0) {
+      projected.set(cardId, persisted);
+    }
+  }
+  return projected;
 }
 
 @Injectable()
@@ -72,7 +104,8 @@ export class MetricsLocalStorageEffects {
             this.store.select(getExperimentIdsFromRoute),
             this.store.select(getNonEmptyCardIdsWithMetadata),
             this.store.select(getMetricsTagGroupExpandedMap),
-            this.store.select(getMetricsTagGroupPageIndexMap)
+            this.store.select(getMetricsTagGroupPageIndexMap),
+            this.store.select(getCardStateMap)
           ),
           tap(
             ([
@@ -82,13 +115,15 @@ export class MetricsLocalStorageEffects {
               currentCards,
               currentExpanded,
               currentPageIndex,
+              currentCardState,
             ]) => {
               this.hydrateMetricsFromLocalStorage(
                 environment.data_location,
                 experimentIds,
                 getTagGroups(currentCards),
                 currentExpanded,
-                currentPageIndex
+                currentPageIndex,
+                currentCardState
               );
             }
           )
@@ -105,7 +140,8 @@ export class MetricsLocalStorageEffects {
             this.store.select(getExperimentIdsFromRoute),
             this.store.select(getNonEmptyCardIdsWithMetadata),
             this.store.select(getMetricsTagGroupExpandedMap),
-            this.store.select(getMetricsTagGroupPageIndexMap)
+            this.store.select(getMetricsTagGroupPageIndexMap),
+            this.store.select(getCardStateMap)
           ),
           tap(
             ([
@@ -114,13 +150,15 @@ export class MetricsLocalStorageEffects {
               currentCards,
               currentExpanded,
               currentPageIndex,
+              currentCardState,
             ]) => {
               this.hydrateMetricsFromLocalStorage(
                 environment.data_location,
                 experimentIds,
                 getTagGroups(currentCards),
                 currentExpanded,
-                currentPageIndex
+                currentPageIndex,
+                currentCardState
               );
             }
           )
@@ -134,14 +172,17 @@ export class MetricsLocalStorageEffects {
         return this.actions$.pipe(
           ofType(
             metricsActions.metricsTagGroupExpansionChanged,
-            metricsActions.metricsTagGroupPageIndexChanged
+            metricsActions.metricsTagGroupPageIndexChanged,
+            metricsActions.metricsCardStateUpdated,
+            metricsActions.metricsCardFullSizeToggled
           ),
           withLatestFrom(
             this.store.select(getEnvironment),
             this.store.select(getExperimentIdsFromRoute),
             this.store.select(getNonEmptyCardIdsWithMetadata),
             this.store.select(getMetricsTagGroupExpandedMap),
-            this.store.select(getMetricsTagGroupPageIndexMap)
+            this.store.select(getMetricsTagGroupPageIndexMap),
+            this.store.select(getCardStateMap)
           ),
           tap(
             ([
@@ -151,6 +192,7 @@ export class MetricsLocalStorageEffects {
               currentCards,
               currentExpanded,
               currentPageIndex,
+              currentCardState,
             ]) => {
               const tagGroups = getTagGroups(currentCards);
               const namespace = getNamespace(
@@ -164,6 +206,7 @@ export class MetricsLocalStorageEffects {
               this.dataSource.setState(namespace, tagGroups, {
                 tagGroupExpanded: currentExpanded,
                 tagGroupPageIndex: currentPageIndex,
+                cardState: projectPersistedCardState(currentCardState),
               });
             }
           )
@@ -178,7 +221,8 @@ export class MetricsLocalStorageEffects {
     experimentIds: string[] | null,
     tagGroups: string[],
     currentExpanded: Map<string, boolean>,
-    currentPageIndex: Map<string, number>
+    currentPageIndex: Map<string, number>,
+    currentCardState: CardStateMap
   ) {
     const namespace = getNamespace(dataLocation, experimentIds);
     if (!namespace) {
@@ -193,6 +237,10 @@ export class MetricsLocalStorageEffects {
       ...currentPageIndex,
       ...storedState.tagGroupPageIndex,
     ]);
+    const cardState = projectPersistedCardState(currentCardState);
+    for (const [cardId, stored] of storedState.cardState) {
+      cardState.set(cardId, {...cardState.get(cardId), ...stored});
+    }
     tagGroups = [
       ...new Set([
         ...tagGroups,
@@ -206,12 +254,14 @@ export class MetricsLocalStorageEffects {
         tagGroups,
         tagGroupExpanded: mapToRecord(tagGroupExpanded),
         tagGroupPageIndex: mapToRecord(tagGroupPageIndex),
+        cardState: mapToRecord(cardState),
       })
     );
 
     const nextState: MetricsLocalStorageState = {
       tagGroupExpanded,
       tagGroupPageIndex,
+      cardState,
     };
     this.dataSource.setState(namespace, tagGroups, nextState);
   }

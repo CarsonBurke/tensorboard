@@ -171,18 +171,15 @@ export class RunLocalStorageDataSource {
     const currentRunIds = new Set(currentRuns.map((run) => run.id));
     const storedState = safeParse(this.getItem());
     const storedNamespace = storedState.namespaces[namespaceId];
-    // A catalog page is not evidence that an off-page selection was deleted.
-    for (const [id, selected] of Object.entries(
-      storedNamespace?.selection ?? {}
-    )) {
-      if (selected === true) currentRunIds.add(id);
-    }
+    // A catalog page is not evidence that an off-page run was deleted, so the
+    // ids this namespace already knows about stay readable. Dropping them
+    // would forget deselections and let the default selection resurrect runs.
+    for (const id of storedNamespace?.runIds ?? []) currentRunIds.add(id);
+    for (const id of Object.keys(storedNamespace?.selection ?? {}))
+      currentRunIds.add(id);
     for (const id of Object.keys(storedNamespace?.colorOverrides ?? {}))
       currentRunIds.add(id);
-    return sanitizeNamespace(
-      storedState.namespaces[namespaceId],
-      currentRunIds
-    );
+    return sanitizeNamespace(storedNamespace, currentRunIds);
   }
 
   setState(
@@ -191,8 +188,7 @@ export class RunLocalStorageDataSource {
     state: RunLocalStorageState
   ) {
     const currentRunIds = new Set(currentRuns.map((run) => run.id));
-    for (const [id, selected] of state.selection)
-      if (selected) currentRunIds.add(id);
+    for (const id of state.selection.keys()) currentRunIds.add(id);
     for (const id of state.colorOverrides.keys()) currentRunIds.add(id);
     if (currentRunIds.size === 0) {
       this.removeItem();

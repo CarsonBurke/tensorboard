@@ -3505,18 +3505,18 @@ describe('metrics reducers', () => {
   });
 
   describe('metricsCardFullSizeToggled', () => {
-    it('expands card', () => {
+    it('expands card without expanding its table', () => {
       const state = buildMetricsState();
       const action = actions.metricsCardFullSizeToggled({
         cardId: 'card1',
       });
       const nextState = reducers(state, action);
       expect(nextState.cardStateMap).toEqual({
-        card1: {fullWidth: true, tableExpanded: true},
+        card1: {fullWidth: true},
       });
     });
 
-    it('expands card when table is already expanded', () => {
+    it('keeps an expanded table while expanding the card', () => {
       const state = buildMetricsState({
         cardStateMap: {card1: {tableExpanded: true}},
       });
@@ -3538,11 +3538,11 @@ describe('metrics reducers', () => {
       });
       const nextState = reducers(state, action);
       expect(nextState.cardStateMap).toEqual({
-        card1: {fullWidth: false, tableExpanded: false},
+        card1: {fullWidth: false},
       });
     });
 
-    it('collapses card when table is already expanded', () => {
+    it('keeps an expanded table while collapsing the card', () => {
       const state = buildMetricsState({
         cardStateMap: {card1: {fullWidth: true, tableExpanded: true}},
       });
@@ -3551,7 +3551,7 @@ describe('metrics reducers', () => {
       });
       const nextState = reducers(state, action);
       expect(nextState.cardStateMap).toEqual({
-        card1: {fullWidth: false, tableExpanded: false},
+        card1: {fullWidth: false, tableExpanded: true},
       });
     });
   });
@@ -3659,6 +3659,7 @@ describe('metrics reducers', () => {
           tagGroups: ['foo', 'bar'],
           tagGroupExpanded: {foo: false, bar: true, stale: false},
           tagGroupPageIndex: {foo: 3, bar: 1, stale: 4},
+          cardState: {},
         })
       );
 
@@ -3674,6 +3675,64 @@ describe('metrics reducers', () => {
           ['bar', 1],
         ])
       );
+    });
+
+    it('merges stored card state into existing card state', () => {
+      const state = buildMetricsState({
+        cardStateMap: {
+          card1: {
+            tableExpanded: true,
+            logScale: true,
+            userViewBox: {x: [0, 1], y: [0, 1]},
+          },
+        },
+      });
+
+      const nextState = reducers(
+        state,
+        actions.metricsLocalStorageHydrated({
+          tagGroups: [],
+          tagGroupExpanded: {},
+          tagGroupPageIndex: {},
+          cardState: {
+            card1: {fullWidth: true, tableExpanded: false, chartHeight: 420},
+          },
+        })
+      );
+
+      expect(nextState.cardStateMap['card1']).toEqual({
+        tableExpanded: false,
+        fullWidth: true,
+        chartHeight: 420,
+        logScale: true,
+        userViewBox: {x: [0, 1], y: [0, 1]},
+      });
+    });
+
+    it('leaves cards absent from the payload untouched', () => {
+      const state = buildMetricsState({
+        cardStateMap: {
+          card1: {fullWidth: true},
+          card2: {tableExpanded: true, tableHeight: 300},
+        },
+      });
+
+      const nextState = reducers(
+        state,
+        actions.metricsLocalStorageHydrated({
+          tagGroups: [],
+          tagGroupExpanded: {},
+          tagGroupPageIndex: {},
+          cardState: {card3: {tableHeight: 120}},
+        })
+      );
+
+      expect(nextState.cardStateMap['card1']).toEqual({fullWidth: true});
+      expect(nextState.cardStateMap['card2']).toEqual({
+        tableExpanded: true,
+        tableHeight: 300,
+      });
+      expect(nextState.cardStateMap['card3']).toEqual({tableHeight: 120});
     });
   });
 

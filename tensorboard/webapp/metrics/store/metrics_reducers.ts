@@ -1028,7 +1028,6 @@ const reducer = createReducer(
     nextcardStateMap[cardId] = {
       ...nextcardStateMap[cardId],
       fullWidth: !nextcardStateMap[cardId]?.fullWidth,
-      tableExpanded: !nextcardStateMap[cardId]?.fullWidth,
     };
 
     return {
@@ -1518,9 +1517,18 @@ const reducer = createReducer(
   ),
   on(
     actions.metricsLocalStorageHydrated,
-    (state, {tagGroups, tagGroupExpanded, tagGroupPageIndex}) => {
+    (state, {tagGroups, tagGroupExpanded, tagGroupPageIndex, cardState}) => {
+      // The catalog window prunes `cardStateMap`, so hydration merges per card
+      // instead of replacing the map: cards absent from the payload keep the
+      // state they already have.
+      const cardStateMap = {...state.cardStateMap};
+      for (const cardId in cardState) {
+        if (!hasOwn(cardState, cardId)) continue;
+        cardStateMap[cardId] = {...cardStateMap[cardId], ...cardState[cardId]};
+      }
       return {
         ...state,
+        cardStateMap,
         tagGroupExpanded: tagGroupExpansionRecordToMap(
           tagGroups,
           tagGroupExpanded

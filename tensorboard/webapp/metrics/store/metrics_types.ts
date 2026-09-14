@@ -160,6 +160,10 @@ export type CardState = {
   imageActualSize: boolean;
   tableSorting: SortingInfo;
   logScale: boolean;
+  // Height in px of the card's chart area after the user drag-resized it.
+  chartHeight: number;
+  // Height in px of the card's run table after the user drag-resized it.
+  tableHeight: number;
 };
 
 export type CardStateMap = Record<CardId, Partial<CardState>>;

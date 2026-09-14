@@ -18,7 +18,7 @@ limitations under the License.
 
 import {createAction, props} from '@ngrx/store';
 import {Run} from '../data_source/runs_data_source_types';
-import {ExperimentIdToRuns, GroupBy} from '../types';
+import {ExperimentIdToRuns, GroupBy, RunCatalog} from '../types';
 import {ColumnHeader, SortingInfo} from '../../widgets/data_table/types';
 
 /**
@@ -41,11 +41,7 @@ export const fetchRunsSucceeded = createAction(
     runsForAllExperiments: Run[];
     newRuns: ExperimentIdToRuns;
     expNameByExpId?: Record<string, string>;
-    catalog?: {
-      runIds: string[];
-      totals: Record<string, number>;
-      offset: number;
-    };
+    catalog?: RunCatalog;
   }>()
 );
 
@@ -99,6 +95,8 @@ export const runLocalStorageHydrated = createAction(
     runIds: string[];
     selection: Record<string, boolean>;
     colorOverrides: Record<string, string>;
+    /** Whether a persisted selection was found for the current namespace. */
+    restoredSelection: boolean;
   }>()
 );
 

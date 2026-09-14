@@ -117,10 +117,17 @@ describe('RunsLocalStorageEffects', () => {
         colorOverrides: new Map(),
       }
     );
-    expect(dispatchedActions).toEqual([]);
+    expect(dispatchedActions).toEqual([
+      runsActions.runLocalStorageHydrated({
+        runIds: [],
+        selection: {},
+        colorOverrides: {},
+        restoredSelection: false,
+      }),
+    ]);
   });
 
-  it('does not clear persisted state before runs have loaded', () => {
+  it('reports an empty restore before runs have loaded without clearing', () => {
     const setStateSpy = spyOn(dataSource, 'setState').and.stub();
     effects.hydrateExistingRunsFromLocalStorage$.subscribe();
 
@@ -134,7 +141,49 @@ describe('RunsLocalStorageEffects', () => {
     );
 
     expect(setStateSpy).not.toHaveBeenCalled();
-    expect(dispatchedActions).toEqual([]);
+    expect(dispatchedActions).toEqual([
+      runsActions.runLocalStorageHydrated({
+        runIds: [],
+        selection: {},
+        colorOverrides: {},
+        restoredSelection: false,
+      }),
+    ]);
+  });
+
+  it('restores a persisted selection before runs have loaded', () => {
+    const namespace = TEST_ONLY.getNamespace('/tmp/tensorboard/runs', [
+      'exp1',
+    ])!;
+    dataSource.setState(namespace, [createRun('paged', 1)], {
+      selection: new Map([
+        ['paged', false],
+        ['chosen', true],
+      ]),
+      colorOverrides: new Map(),
+    });
+    const setStateSpy = spyOn(dataSource, 'setState').and.callThrough();
+    effects.hydrateExistingRunsFromLocalStorage$.subscribe();
+
+    actions.next(
+      coreActions.environmentLoaded({
+        environment: {
+          data_location: '/tmp/tensorboard/runs',
+          window_title: '',
+        },
+      })
+    );
+
+    expect(dispatchedActions).toEqual([
+      runsActions.runLocalStorageHydrated({
+        runIds: ['paged', 'chosen'],
+        selection: {paged: false, chosen: true},
+        colorOverrides: {},
+        restoredSelection: true,
+      }),
+    ]);
+    // Nothing may be pruned while the run list is still unknown.
+    expect(setStateSpy).not.toHaveBeenCalled();
   });
 
   it('hydrates from storage, moves auto white to the newest run, and writes once', () => {
@@ -169,6 +218,7 @@ describe('RunsLocalStorageEffects', () => {
         runIds: ['old', 'new'],
         selection: {old: false, new: true},
         colorOverrides: {new: '#fff'},
+        restoredSelection: true,
       }),
     ]);
     expect(setStateSpy).toHaveBeenCalledOnceWith(
@@ -182,6 +232,70 @@ describe('RunsLocalStorageEffects', () => {
         colorOverrides: new Map([['new', '#fff']]),
         newestRunId: 'new',
       }
+    );
+  });
+
+  it('colors the newest run white on a window holding the whole catalog', () => {
+    const oldRun = createRun('old', 1);
+    const newRun = createRun('new', 2);
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    effects.hydrateFetchedRunsFromLocalStorage$.subscribe();
+
+    actions.next(
+      runsActions.fetchRunsSucceeded({
+        experimentIds: ['exp1'],
+        runsForAllExperiments: [oldRun, newRun],
+        newRuns: {exp1: {runs: [oldRun, newRun]}},
+        catalog: {runIds: ['old', 'new'], totals: {exp1: 2}, offset: 0},
+      })
+    );
+
+    expect(dispatchedActions).toEqual([
+      runsActions.runLocalStorageHydrated({
+        runIds: ['old', 'new'],
+        selection: {},
+        colorOverrides: {new: '#fff'},
+        restoredSelection: false,
+      }),
+    ]);
+    expect(setStateSpy).toHaveBeenCalledOnceWith(
+      jasmine.stringMatching('/tmp/tensorboard/runs'),
+      [oldRun, newRun],
+      {
+        selection: new Map(),
+        colorOverrides: new Map([['new', '#fff']]),
+        newestRunId: 'new',
+      }
+    );
+  });
+
+  it('leaves auto coloring alone for a partial window', () => {
+    const oldRun = createRun('old', 1);
+    const newRun = createRun('new', 2);
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    effects.hydrateFetchedRunsFromLocalStorage$.subscribe();
+
+    actions.next(
+      runsActions.fetchRunsSucceeded({
+        experimentIds: ['exp1'],
+        runsForAllExperiments: [oldRun, newRun],
+        newRuns: {exp1: {runs: [oldRun, newRun]}},
+        catalog: {runIds: ['old', 'new'], totals: {exp1: 1000}, offset: 0},
+      })
+    );
+
+    expect(dispatchedActions).toEqual([
+      runsActions.runLocalStorageHydrated({
+        runIds: ['old', 'new'],
+        selection: {},
+        colorOverrides: {},
+        restoredSelection: false,
+      }),
+    ]);
+    expect(setStateSpy).toHaveBeenCalledOnceWith(
+      jasmine.stringMatching('/tmp/tensorboard/runs'),
+      [oldRun, newRun],
+      {selection: new Map(), colorOverrides: new Map()}
     );
   });
 
@@ -213,6 +327,7 @@ describe('RunsLocalStorageEffects', () => {
         runIds: ['run1'],
         selection: {run1: true},
         colorOverrides: {run1: '#123456'},
+        restoredSelection: true,
       }),
     ]);
     expect(setStateSpy).toHaveBeenCalledOnceWith(
@@ -222,6 +337,70 @@ describe('RunsLocalStorageEffects', () => {
         selection: new Map([['run1', true]]),
         colorOverrides: new Map([['run1', '#123456']]),
       }
+    );
+  });
+
+  it('keeps live off-page selections when another view changes saved selection', () => {
+    const chosen = createRun('chosen', 2);
+    const old = createRun('old', 1);
+    const namespace = TEST_ONLY.getNamespace('/tmp/tensorboard/runs', [
+      'exp1',
+    ])!;
+    dataSource.setState(namespace, [chosen, old], {
+      selection: new Map([
+        ['chosen', true],
+        ['old', false],
+      ]),
+      colorOverrides: new Map(),
+    });
+    effects.hydrateFetchedRunsFromLocalStorage$.subscribe();
+    const fetchPage = (runs: Run[]) =>
+      actions.next(
+        runsActions.fetchRunsSucceeded({
+          experimentIds: ['exp1'],
+          runsForAllExperiments: runs,
+          newRuns: {exp1: {runs}},
+          catalog: {
+            runIds: runs.map(({id}) => id),
+            totals: {exp1: 1000},
+            offset: 0,
+          },
+        })
+      );
+    fetchPage([chosen]);
+    store.overrideSelector(
+      getRunSelectionMap,
+      new Map([
+        ['chosen', true],
+        ['old', false],
+      ])
+    );
+    store.refreshState();
+
+    // A second tab saves a different selection before this view pages/reloads.
+    dataSource.setState(namespace, [chosen, old], {
+      selection: new Map([
+        ['chosen', false],
+        ['old', true],
+      ]),
+      colorOverrides: new Map(),
+    });
+    dispatchedActions = [];
+    fetchPage([old]);
+
+    expect(dispatchedActions).toContain(
+      runsActions.runLocalStorageHydrated({
+        runIds: ['old', 'chosen'],
+        selection: {chosen: true, old: false},
+        colorOverrides: {},
+        restoredSelection: false,
+      })
+    );
+    expect(dataSource.getState(namespace, [old]).selection).toEqual(
+      new Map([
+        ['chosen', true],
+        ['old', false],
+      ])
     );
   });
 
@@ -328,6 +507,7 @@ describe('RunsLocalStorageEffects', () => {
         runIds: ['run1'],
         selection: {},
         colorOverrides: {run1: '#fff'},
+        restoredSelection: false,
       })
     );
   });

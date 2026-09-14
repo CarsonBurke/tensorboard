@@ -27,7 +27,7 @@ import {
   getRunsTableSortingInfo,
 } from '../../selectors';
 import * as runsActions from '../actions';
-import {Run} from '../types';
+import {catalogCoversAllRuns, Run} from '../types';
 import {
   RunLocalStorageDataSource,
   RunLocalStorageState,
@@ -114,6 +114,7 @@ export class RunsLocalStorageEffects {
   readonly hydrateExistingRunsFromLocalStorage$;
   readonly syncRunsToLocalStorage$;
   private hydratedNamespace?: string;
+  private reportedWithoutNamespace = false;
 
   constructor(
     private readonly actions$: Actions,
@@ -151,8 +152,10 @@ export class RunsLocalStorageEffects {
                 runsForAllExperiments,
                 currentSelection,
                 currentColorOverrides,
-                !catalog,
-                !!catalog
+                {
+                  removeWhenEmpty: !catalog,
+                  paged: !!catalog && !catalogCoversAllRuns(catalog),
+                }
               );
             }
           )
@@ -185,7 +188,7 @@ export class RunsLocalStorageEffects {
                 currentRuns,
                 currentSelection,
                 currentColorOverrides,
-                false
+                {environmentLoaded: true}
               );
             }
           )
@@ -265,31 +268,63 @@ export class RunsLocalStorageEffects {
     currentRuns: Run[],
     currentSelection: Map<string, boolean>,
     currentColorOverrides: Map<string, string>,
-    removeWhenEmpty: boolean,
-    paged = false
+    {
+      removeWhenEmpty = false,
+      paged = false,
+      environmentLoaded = false,
+    }: {
+      /** Whether an empty run list should clear the stored state. */
+      removeWhenEmpty?: boolean;
+      /**
+       * Whether `currentRuns` is only a window of the catalog. A window cannot
+       * name the newest run, so auto coloring stays untouched.
+       */
+      paged?: boolean;
+      /** Whether the environment, and with it the namespace, is known. */
+      environmentLoaded?: boolean;
+    }
   ) {
     const namespace = getNamespace(dataLocation, experimentIds);
     if (!namespace) {
-      return;
-    }
-    if (!currentRuns.length && !paged) {
-      if (removeWhenEmpty) {
-        this.dataSource.setState(namespace, [], {
-          selection: new Map(),
-          colorOverrides: new Map(),
-        });
+      // A run response can land before the environment names the data
+      // location, and reporting then would hand unseen runs the default
+      // selection. Only a loaded environment proves nothing can be persisted,
+      // and the store defers its default until some restore is reported.
+      if (environmentLoaded && !this.reportedWithoutNamespace) {
+        this.reportedWithoutNamespace = true;
+        this.store.dispatch(
+          runsActions.runLocalStorageHydrated({
+            runIds: currentRuns.map(({id}) => id),
+            selection: mapToRecord(currentSelection),
+            colorOverrides: mapToRecord(currentColorOverrides),
+            restoredSelection: false,
+          })
+        );
       }
       return;
+    }
+    if (!currentRuns.length && !paged && removeWhenEmpty) {
+      this.dataSource.setState(namespace, [], {
+        selection: new Map(),
+        colorOverrides: new Map(),
+      });
     }
 
     const currentRunIds = new Set(currentRuns.map((run) => run.id));
     const storedState = this.dataSource.getState(namespace, currentRuns);
-    for (const [id, selected] of storedState.selection)
+    const restoreSelection = this.hydratedNamespace !== namespace;
+    // Other tabs share storage, not this view's live selection. Restore once
+    // on entry; fetching another page or reloading data must not select runs.
+    const persistedSelection = restoreSelection
+      ? storedState.selection
+      : new Map<string, boolean>();
+    for (const [id, selected] of currentSelection)
       if (selected) currentRunIds.add(id);
+    for (const id of persistedSelection.keys()) currentRunIds.add(id);
     for (const id of storedState.colorOverrides.keys()) currentRunIds.add(id);
     const selection = new Map([
       ...pickMap(currentSelection, currentRunIds),
-      ...storedState.selection,
+      ...persistedSelection,
     ]);
     const colorOverrides = new Map([
       ...pickMap(currentColorOverrides, currentRunIds),
@@ -303,6 +338,7 @@ export class RunsLocalStorageEffects {
 
     if (
       !paged &&
+      currentRuns.length &&
       storedState.newestRunId &&
       storedState.newestRunId !== newestRunId &&
       colorOverrides.get(storedState.newestRunId) === NEWEST_RUN_COLOR
@@ -320,6 +356,7 @@ export class RunsLocalStorageEffects {
         runIds: Array.from(currentRunIds),
         selection: mapToRecord(selection),
         colorOverrides: mapToRecord(colorOverrides),
+        restoredSelection: restoreSelection && storedState.selection.size > 0,
       })
     );
     const restoreSorting = this.hydratedNamespace !== namespace;
@@ -330,6 +367,11 @@ export class RunsLocalStorageEffects {
           sortingInfo: storedState.sortingInfo,
         })
       );
+    }
+    if (!currentRuns.length) {
+      // Runs are not loaded yet; keeping the stored state untouched avoids
+      // pruning selections for runs this pass cannot see.
+      return;
     }
     const nextState: RunLocalStorageState = {
       selection,

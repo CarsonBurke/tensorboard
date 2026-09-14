@@ -9,9 +9,29 @@ The 2.21 minor series tracks TensorFlow 2.21.
   and rendered charts have a wider exit buffer to avoid rebuilds on reversal.
   Closed categories need only summaries; category-local pagination remains.
   Existing explicit full-catalog API requests remain available without hard caps.
+- Persist Time Series card view state per log directory: whether a card is at
+  full size, whether its run table is expanded, and the heights the chart and
+  the table were drag-resized to.
 - Time Series Dashboard Optimization: Improved usability for time-series tooltips by limiting them to a maximum of 5 items and setting the default sorting to `"Nearest Pixel"` (prioritizing values closest to the cursor) (#7046, #7051).
 
 ## Bug Fixes
+- Cancel pending full-list selection when a newer selection or filter replaces it,
+  so a delayed response cannot reselect old runs.
+- Restore saved run selection only when entering a board, so pagination and data
+  refresh do not import another open view's selection.
+- Wait for the saved run selection before selecting runs by default, so reloading
+  a board no longer reselects runs outside the last visited page.
+- Color the newest run white as soon as its runs load, instead of only after a
+  later reload, whenever the loaded window covers the whole run catalog.
+- Give charts the horizontal room their y axis does not need: the axis reports
+  the width of its widest label and the plot takes the rest.
+- Stop expanding a card's run table when the card is toggled to full size; the
+  table keeps its own expansion state.
+- Render native scroll bars in dark mode with dark chrome instead of the
+  browser's light default.
+- Avoid creating a redundant WebGL capability-probe context in every chart worker.
+- Fix Three.js disposal in chart workers so removing charts releases their
+  WebGL contexts instead of throwing on `cancelAnimationFrame`.
 - Use actual rendered category bounds for Time Series viewport loading so height
   estimates cannot leave visible expanded categories blank.
 - Avoid rebuilding scalar run-table rows during scrolling; reuse rows and derived

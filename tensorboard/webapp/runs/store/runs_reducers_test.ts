@@ -177,6 +177,93 @@ describe('runs_reducers', () => {
       expect(state.ui.selectionState.get(second.id)).toBeTrue();
     });
 
+    it('defers the default selection until local storage reports', () => {
+      const first = buildRun({id: 'exp/first', name: 'first'});
+      const second = buildRun({id: 'exp/second', name: 'second'});
+      const fetched = actions.fetchRunsSucceeded({
+        experimentIds: ['exp'],
+        runsForAllExperiments: [first, second],
+        newRuns: {exp: {runs: [first, second]}},
+        catalog: {
+          runIds: [first.id, second.id],
+          totals: {exp: 2},
+          offset: 0,
+        },
+      });
+      let state = runsReducers.reducers(
+        buildRunsState({}, {selectionRestored: false}),
+        fetched
+      );
+      expect([...state.ui.selectionState]).toEqual([]);
+
+      // Nothing was persisted, so the deferred default applies on hydration.
+      state = runsReducers.reducers(
+        state,
+        actions.runLocalStorageHydrated({
+          runIds: [first.id, second.id],
+          selection: {},
+          colorOverrides: {},
+          restoredSelection: false,
+        })
+      );
+      expect(state.ui.selectionState.get(first.id)).toBeTrue();
+      expect(state.ui.selectionState.get(second.id)).toBeTrue();
+    });
+
+    it('never selects runs a restored selection does not mention', () => {
+      const paged = buildRun({id: 'exp/paged', name: 'paged'});
+      const chosen = buildRun({id: 'exp/chosen', name: 'chosen'});
+      let state = runsReducers.reducers(
+        buildRunsState({}, {selectionRestored: false}),
+        actions.fetchRunsSucceeded({
+          experimentIds: ['exp'],
+          runsForAllExperiments: [paged, chosen],
+          newRuns: {exp: {runs: [paged, chosen]}},
+          catalog: {
+            runIds: [paged.id, chosen.id],
+            totals: {exp: 2},
+            offset: 0,
+          },
+        })
+      );
+      state = runsReducers.reducers(
+        state,
+        actions.runLocalStorageHydrated({
+          runIds: [paged.id, chosen.id],
+          selection: {[chosen.id]: true},
+          colorOverrides: {},
+          restoredSelection: true,
+        })
+      );
+
+      expect(state.ui.selectionState.get(chosen.id)).toBeTrue();
+      expect(state.ui.selectionState.get(paged.id)).toBeFalse();
+    });
+
+    it('selects unseen runs once the restore reported nothing stored', () => {
+      const first = buildRun({id: 'exp/first', name: 'first'});
+      let state = runsReducers.reducers(
+        buildRunsState({}, {selectionRestored: false}),
+        actions.runLocalStorageHydrated({
+          runIds: [],
+          selection: {},
+          colorOverrides: {},
+          restoredSelection: false,
+        })
+      );
+      state = runsReducers.reducers(
+        state,
+        actions.fetchRunsSucceeded({
+          experimentIds: ['exp'],
+          runsForAllExperiments: [first],
+          newRuns: {exp: {runs: [first]}},
+          catalog: {runIds: [first.id], totals: {exp: 1}, offset: 0},
+        })
+      );
+
+      expect(state.ui.selectionState.get(first.id)).toBeTrue();
+    });
+
     function createFakeRuns(count: number): Run[] {
       return [...new Array(count)].map((unused, index) => {
         return buildRun({id: `id1_${index}`});
@@ -851,6 +938,7 @@ describe('runs_reducers', () => {
           runIds: ['run1', 'run2', 'stale'],
           selection: {run1: true, run2: false, stale: true},
           colorOverrides: {run1: '#fff'},
+          restoredSelection: true,
         })
       );
 
@@ -880,6 +968,7 @@ describe('runs_reducers', () => {
           runIds: ['run1', 'run2', 'stale'],
           selection: {run1: true, run2: false},
           colorOverrides: {},
+          restoredSelection: true,
         })
       );
 

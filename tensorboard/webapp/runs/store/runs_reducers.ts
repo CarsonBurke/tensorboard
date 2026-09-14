@@ -25,9 +25,10 @@ import {createNamespaceContextedState} from '../../app_routing/namespaced_state_
 import {RouteKind} from '../../app_routing/types';
 import * as hparamsActions from '../../hparams/_redux/hparams_actions';
 import {DataLoadState} from '../../types/data';
+import {hasOwn} from '../../util/lang';
 import {composeReducers} from '../../util/ngrx';
 import * as runsActions from '../actions';
-import {GroupByKey, URLDeserializedState} from '../types';
+import {catalogCoversAllRuns, GroupByKey, URLDeserializedState} from '../types';
 import {
   MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT,
   RunsDataNamespacedState,
@@ -366,6 +367,8 @@ const {initialState: uiInitialState, reducers: uiNamespaceContextedReducers} =
   >(
     {
       selectionState: new Map<string, boolean>(),
+      selectionRestored: false,
+      pendingSelectionDefault: false,
       runsTableHeaders: [
         {
           type: ColumnHeaderType.RUN,
@@ -455,17 +458,45 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
       )
     );
 
-    // Populate selection states for previously unseen runs.
-    const runSelected = action.catalog
-      ? state.selectionState.size === 0 &&
-        action.catalog.runIds.length <= MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT &&
-        Object.values(action.catalog.totals).reduce((a, b) => a + b, 0) <=
-          action.catalog.runIds.length
-      : action.runsForAllExperiments.length <=
+    if (!action.catalog) {
+      // Populate selection states for previously unseen runs.
+      const runSelected =
+        action.runsForAllExperiments.length <=
         MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT;
+      for (const run of action.runsForAllExperiments) {
+        if (!nextSelectionState.has(run.id)) {
+          nextSelectionState.set(run.id, runSelected);
+        }
+      }
+      return {
+        ...state,
+        selectionState: nextSelectionState,
+      };
+    }
+
+    // Select every run by default only for an untouched selector whose window
+    // holds the entire catalog: a partial window cannot speak for the runs it
+    // does not list.
+    const defaultSelected =
+      state.selectionState.size === 0 &&
+      action.catalog.runIds.length <= MAX_NUM_RUNS_TO_ENABLE_BY_DEFAULT &&
+      catalogCoversAllRuns(action.catalog);
+    if (!state.selectionRestored) {
+      // This response raced localStorage hydration, so an empty selection does
+      // not mean the user never chose. Selecting now would resurrect runs the
+      // user deselected in a window this response does not cover; hydration
+      // applies the default instead when nothing was persisted.
+      return {
+        ...state,
+        selectionState: nextSelectionState,
+        pendingSelectionDefault: defaultSelected,
+      };
+    }
+
+    // Populate selection states for previously unseen runs.
     for (const run of action.runsForAllExperiments) {
       if (!nextSelectionState.has(run.id)) {
-        nextSelectionState.set(run.id, runSelected);
+        nextSelectionState.set(run.id, defaultSelected);
       }
     }
 
@@ -512,23 +543,37 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
       selectionState: nextSelectionState,
     };
   }),
-  on(runsActions.runLocalStorageHydrated, (state, {runIds, selection}) => {
-    const currentRunIds = new Set(runIds);
-    const nextSelectionState = new Map<string, boolean>();
-    for (const [runId, selected] of state.selectionState.entries()) {
-      if (!currentRunIds.has(runId)) {
-        nextSelectionState.set(runId, selected);
+  on(
+    runsActions.runLocalStorageHydrated,
+    (state, {runIds, selection, restoredSelection}) => {
+      const currentRunIds = new Set(runIds);
+      const nextSelectionState = new Map<string, boolean>();
+      for (const [runId, selected] of state.selectionState.entries()) {
+        if (!currentRunIds.has(runId)) {
+          nextSelectionState.set(runId, selected);
+        }
       }
-    }
-    for (const runId of runIds) {
-      nextSelectionState.set(runId, Boolean(selection[runId]));
-    }
+      // A stored selection cannot list runs it never saw, so only a namespace
+      // without persisted choices may take the default a racing run response
+      // deferred. Everything else stays unselected until the user asks for it.
+      const unknownSelected =
+        !state.selectionRestored &&
+        !restoredSelection &&
+        state.pendingSelectionDefault;
+      for (const runId of runIds) {
+        nextSelectionState.set(
+          runId,
+          hasOwn(selection, runId) ? Boolean(selection[runId]) : unknownSelected
+        );
+      }
 
-    return {
-      ...state,
-      selectionState: nextSelectionState,
-    };
-  }),
+      return {
+        ...state,
+        selectionState: nextSelectionState,
+        selectionRestored: true,
+      };
+    }
+  ),
   on(runsActions.runsTableHeaderAdded, (state, {header, index}) => {
     const newRunsTableHeaders = [...state.runsTableHeaders];
     if (index === undefined) {

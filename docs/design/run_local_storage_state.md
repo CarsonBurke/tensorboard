@@ -23,6 +23,10 @@ repositories with many generated runs, preserving these choices is valuable.
 - Persist the run table's selected sort order.
 - Persist Time Series tag group expansion state and per-group pagination in
   browser `localStorage`.
+- Persist per-card Time Series view state: the card's full-size flag, its run
+  table expansion flag, and the heights the user drag-resized the chart and the
+  table to. (Pinned cards persist separately, by tag, through
+  `metrics/data_source/saved_pins_data_source.ts`.)
 - Persist only runs that are currently present in the active run directory or
   experiment set.
 - Prune old runs every time state is synchronized.
@@ -142,6 +146,14 @@ declare interface StoredMetricsNamespaceV1 {
   tagGroups: string[];
   tagGroupExpanded: Record<string, boolean>;
   tagGroupPageIndex: Record<string, number>;
+  cardState?: Record<CardId, PersistedCardState>;
+}
+
+interface PersistedCardState {
+  fullWidth?: boolean;
+  tableExpanded?: boolean;
+  chartHeight?: number;
+  tableHeight?: number;
 }
 ```
 
@@ -181,6 +193,14 @@ tagGroupPageIndex = pick(nonNegativeIntegerPageIndex, currentTagGroups);
 tagGroups = Array.from(currentTagGroups);
 ```
 
+Card state is the exception to pruning. The store drops `cardStateMap` entries
+for cards outside the current catalog window, so a sync that happens while a
+card is off-window must not delete it from storage: `setState` merges the given
+entries over the stored ones key by key and keeps entries it was not given. The
+stored map is bounded instead (`MAX_PERSISTED_CARDS`, given entries first), and
+each entry is validated on read and on write: flags must be booleans and
+heights must be integers within a sane pixel range.
+
 This means localStorage never accumulates stale runs for the current directory.
 If a run is deleted from disk and TensorBoard reloads, its persisted selection
 and color are removed on that same sync.
@@ -205,6 +225,8 @@ export const runLocalStorageHydrated = createAction(
     runIds: string[];
     selection: Record<string, boolean>;
     colorOverrides: Record<string, string>;
+    // Whether a persisted selection existed for this namespace.
+    restoredSelection: boolean;
   }>()
 );
 ```
@@ -226,6 +248,18 @@ knows the current run set. The effect should:
 5. If no persisted user color exists for the newest run, include
    `colorOverrides[runId] = '#fff'` in `runLocalStorageHydrated`.
 6. Write the pruned and hydrated state back to localStorage.
+
+Run responses can arrive before hydration, and a windowed response cannot know
+whether an empty `selectionState` means "the user deselected everything" or
+"nothing has been restored yet". The reducer therefore defers its
+select-all-by-default decision to `pendingSelectionDefault` and applies it only
+when hydration reports `restoredSelection: false`; runs a restored selection
+does not mention stay unselected, because a stored selection cannot enumerate
+runs it never saw.
+
+Step 5 needs the whole run list, so it runs when the response is not windowed
+or when its window covers the entire catalog (`catalogCoversAllRuns`). A
+partial window cannot name the newest run and leaves coloring untouched.
 
 ### Sync Flow
 
@@ -278,6 +312,7 @@ export const metricsLocalStorageHydrated = createAction(
     tagGroups: string[];
     tagGroupExpanded: Record<string, boolean>;
     tagGroupPageIndex: Record<string, number>;
+    cardState: Record<CardId, Partial<CardState>>;
   }>()
 );
 ```
@@ -301,13 +336,28 @@ metadata load independently. Hydration should:
 5. Dispatch `metricsLocalStorageHydrated`.
 6. Write the pruned hydrated state back to localStorage.
 
-Sync metrics group state after:
+Sync metrics group and card state after:
 
 - `metricsTagGroupExpansionChanged`
 - `metricsTagGroupPageIndexChanged`
+- `metricsCardStateUpdated`
+- `metricsCardFullSizeToggled`
 
 The effect should read current group names and current group maps from
-selectors, then write the pruned active namespace.
+selectors, then write the pruned active namespace. Card state is projected down
+to the four persisted keys before writing, so derived entries such as
+`dataMinMax` or `userViewBox` never reach storage.
+
+### Card Heights
+
+`CardState` carries `chartHeight` and `tableHeight`. `resize: vertical` makes
+the browser write an inline height when the user drags a container, so the card
+restores the stored heights into that same inline style and only while it is
+empty: overwriting it would revert a drag that change detection has not yet
+reported. For the same reason a resize is reported only when an inline height
+is present, which keeps relayouts from window resizes, full-size toggles, or
+table expansion out of storage. An expanded table is content-sized
+(`height: auto`) and ignores `tableHeight`.
 
 ### Newest Run Detection
 

@@ -242,6 +242,7 @@ export const metricsLocalStorageHydrated = createAction(
     tagGroups: string[];
     tagGroupExpanded: Record<string, boolean>;
     tagGroupPageIndex: Record<string, number>;
+    cardState: Record<CardId, Partial<CardState>>;
   }>()
 );
 

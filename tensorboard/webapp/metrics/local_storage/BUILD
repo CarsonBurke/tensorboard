@@ -17,6 +17,7 @@ tf_ng_module(
         "//tensorboard/webapp/metrics:types",
         "//tensorboard/webapp/metrics:utils",
         "//tensorboard/webapp/metrics/actions",
+        "//tensorboard/webapp/metrics/store:types",
         "//tensorboard/webapp/util:types",
         "@npm//@angular/core",
         "@npm//@ngrx/effects",

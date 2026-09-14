@@ -21,6 +21,7 @@ import {ReplaySubject} from 'rxjs';
 import {State} from '../../app_state';
 import * as coreActions from '../../core/actions';
 import {
+  getCardStateMap,
   getEnvironment,
   getExperimentIdsFromRoute,
   getMetricsTagGroupExpandedMap,
@@ -94,6 +95,7 @@ describe('MetricsLocalStorageEffects', () => {
       getMetricsTagGroupPageIndexMap,
       new Map([['foo', 0]])
     );
+    store.overrideSelector(getCardStateMap, {});
   });
 
   afterEach(() => {
@@ -109,6 +111,7 @@ describe('MetricsLocalStorageEffects', () => {
     dataSource.setState(namespace, ['offscreen'], {
       tagGroupExpanded: new Map([['offscreen', false]]),
       tagGroupPageIndex: new Map([['offscreen', 7]]),
+      cardState: new Map(),
     });
     store.overrideSelector(getNonEmptyCardIdsWithMetadata, []);
     store.refreshState();
@@ -133,6 +136,7 @@ describe('MetricsLocalStorageEffects', () => {
           ['foo', 0],
           ['offscreen', 7],
         ]),
+        cardState: new Map(),
       }
     );
     subscription.unsubscribe();
@@ -148,6 +152,7 @@ describe('MetricsLocalStorageEffects', () => {
         ['foo', 2],
         ['bar', 1],
       ]),
+      cardState: new Map(),
     });
     const setStateSpy = spyOn(dataSource, 'setState').and.stub();
     store.refreshState();
@@ -168,6 +173,7 @@ describe('MetricsLocalStorageEffects', () => {
         tagGroups: ['bar', 'foo'],
         tagGroupExpanded: {foo: false, bar: true},
         tagGroupPageIndex: {foo: 2, bar: 1},
+        cardState: {},
       }),
     ]);
     expect(setStateSpy).toHaveBeenCalledOnceWith(
@@ -182,6 +188,7 @@ describe('MetricsLocalStorageEffects', () => {
           ['foo', 2],
           ['bar', 1],
         ]),
+        cardState: new Map(),
       }
     );
   });
@@ -190,6 +197,7 @@ describe('MetricsLocalStorageEffects', () => {
     spyOn(dataSource, 'getState').and.returnValue({
       tagGroupExpanded: new Map([['foo', false]]),
       tagGroupPageIndex: new Map([['foo', 3]]),
+      cardState: new Map(),
     });
     const setStateSpy = spyOn(dataSource, 'setState').and.stub();
     store.refreshState();
@@ -209,6 +217,7 @@ describe('MetricsLocalStorageEffects', () => {
         tagGroups: ['bar', 'foo'],
         tagGroupExpanded: {foo: false},
         tagGroupPageIndex: {foo: 3},
+        cardState: {},
       }),
     ]);
     expect(setStateSpy).toHaveBeenCalledOnceWith(
@@ -217,6 +226,7 @@ describe('MetricsLocalStorageEffects', () => {
       {
         tagGroupExpanded: new Map([['foo', false]]),
         tagGroupPageIndex: new Map([['foo', 3]]),
+        cardState: new Map(),
       }
     );
   });
@@ -256,7 +266,98 @@ describe('MetricsLocalStorageEffects', () => {
           ['foo', 4],
           ['bar', 0],
         ]),
+        cardState: new Map(),
       }
+    );
+  });
+
+  it('lets stored card state win over live card state on hydration', () => {
+    spyOn(dataSource, 'getState').and.returnValue({
+      tagGroupExpanded: new Map(),
+      tagGroupPageIndex: new Map(),
+      cardState: new Map([
+        ['card1', {chartHeight: 480}],
+        ['card2', {fullWidth: true, tableHeight: 260}],
+      ]),
+    });
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    store.overrideSelector(getCardStateMap, {
+      card1: {
+        fullWidth: false,
+        tableExpanded: true,
+        chartHeight: 300,
+        tableHeight: 120,
+        logScale: true,
+      },
+    });
+    store.refreshState();
+
+    effects.hydrateFetchedMetadataFromLocalStorage$.subscribe();
+    actions.next(
+      metricsActions.metricsTagMetadataLoaded({
+        tagMetadata: {
+          scalars: {tagDescriptions: {}, tagToRuns: {}},
+          histograms: {tagDescriptions: {}, tagToRuns: {}},
+          images: {tagDescriptions: {}, tagRunSampledInfo: {}},
+        },
+      })
+    );
+
+    const expectedCardState = {
+      card1: {
+        fullWidth: false,
+        tableExpanded: true,
+        // Stored value wins; `logScale` is not persisted.
+        chartHeight: 480,
+        tableHeight: 120,
+      },
+      card2: {fullWidth: true, tableHeight: 260},
+    };
+    expect(dispatchedActions).toEqual([
+      metricsActions.metricsLocalStorageHydrated({
+        tagGroups: ['bar', 'foo'],
+        tagGroupExpanded: {foo: true},
+        tagGroupPageIndex: {foo: 0},
+        cardState: expectedCardState,
+      }),
+    ]);
+    expect(setStateSpy.calls.mostRecent().args[2].cardState).toEqual(
+      new Map(Object.entries(expectedCardState))
+    );
+  });
+
+  it('writes the persisted card state keys when a card state changes', () => {
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    store.overrideSelector(getCardStateMap, {
+      card1: {chartHeight: 333, logScale: true},
+      card2: {userViewBox: null},
+    });
+    store.refreshState();
+
+    effects.syncMetricsToLocalStorage$.subscribe();
+    actions.next(
+      metricsActions.metricsCardStateUpdated({
+        cardId: 'card1',
+        settings: {chartHeight: 333},
+      })
+    );
+
+    expect(setStateSpy.calls.mostRecent().args[2].cardState).toEqual(
+      // `card2` holds no persisted key, so it is not written at all.
+      new Map([['card1', {chartHeight: 333}]])
+    );
+  });
+
+  it('writes the card state when a card is toggled to full size', () => {
+    const setStateSpy = spyOn(dataSource, 'setState').and.stub();
+    store.overrideSelector(getCardStateMap, {card1: {fullWidth: true}});
+    store.refreshState();
+
+    effects.syncMetricsToLocalStorage$.subscribe();
+    actions.next(metricsActions.metricsCardFullSizeToggled({cardId: 'card1'}));
+
+    expect(setStateSpy.calls.mostRecent().args[2].cardState).toEqual(
+      new Map([['card1', {fullWidth: true}]])
     );
   });
 });

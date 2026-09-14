@@ -66,6 +66,8 @@ export function buildRunsState(
     },
     ui: {
       selectionState: new Map(),
+      selectionRestored: true,
+      pendingSelectionDefault: false,
       runsTableHeaders: [],
       sortingInfo: {
         name: 'run',

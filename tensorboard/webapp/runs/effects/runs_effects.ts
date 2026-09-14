@@ -23,6 +23,7 @@ import {
   map,
   mergeMap,
   take,
+  takeUntil,
   switchMap,
   tap,
   withLatestFrom,
@@ -38,10 +39,7 @@ import {
   getDashboardHparamFilterMap,
   getDashboardMetricsFilterMap,
 } from '../../hparams/_redux/hparams_selectors';
-import {
-  HparamFilter,
-  MetricFilter,
-} from '../../hparams/_redux/types';
+import {HparamFilter, MetricFilter} from '../../hparams/_redux/types';
 import {SessionGroup} from '../../hparams/_types';
 import {ExperimentAlias} from '../../experiments/types';
 import {utils as runFilterUtils} from '../../metrics/views/main_view/common_selectors';
@@ -296,11 +294,27 @@ export class RunsEffects {
                 })
               )
             ).pipe(
+              // A full-scope request can outlive a newer choice. Never let its
+              // eventual response toggle runs in a different selection or view.
+              takeUntil(
+                this.actions$.pipe(
+                  ofType(
+                    actions.runSelectionToggled,
+                    actions.singleRunSelected,
+                    actions.runPageSelectionToggled,
+                    actions.runSelectorRegexFilterChanged,
+                    navigated,
+                    stateRehydratedFromUrl,
+                    hparamsActions.dashboardHparamFilterAdded,
+                    hparamsActions.dashboardHparamFilterRemoved,
+                    hparamsActions.dashboardMetricFilterAdded,
+                    hparamsActions.dashboardMetricFilterRemoved
+                  )
+                )
+              ),
               map((pages) =>
                 actions.runPageSelectionToggled({
-                  runIds: pages.flatMap(({runs}) =>
-                    runs.map((run) => run.id)
-                  ),
+                  runIds: pages.flatMap(({runs}) => runs.map((run) => run.id)),
                 })
               ),
               catchError(() => EMPTY)
@@ -546,8 +560,7 @@ export class RunsEffects {
           : sorting.name === 'run'
           ? 'name'
           : 'start_time',
-        descending:
-          !sessionSort && sorting.order === SortingOrder.DESCENDING,
+        descending: !sessionSort && sorting.order === SortingOrder.DESCENDING,
         ...(sessionSort || hparamFilters.size || metricFilters.size
           ? {
               defaultRank: missingMatches

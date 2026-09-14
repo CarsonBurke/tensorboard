@@ -4569,6 +4569,149 @@ describe('scalar card', () => {
     }));
   });
 
+  describe('persisted card heights', () => {
+    beforeEach(() => {
+      store.overrideSelector(getMetricsLinkedTimeEnabled, true);
+      store.overrideSelector(getSingleSelectionHeaders, [
+        {
+          type: ColumnHeaderType.RUN,
+          name: 'run',
+          displayName: 'Run',
+          enabled: true,
+        },
+      ]);
+      const runToSeries = {
+        run1: [
+          {wallTime: 1, value: 1, step: 1},
+          {wallTime: 2, value: 10, step: 2},
+        ],
+      };
+      provideMockCardRunToSeriesData(
+        selectSpy,
+        PluginType.SCALARS,
+        'card1',
+        null /* metadataOverride */,
+        runToSeries
+      );
+      store.overrideSelector(
+        selectors.getCurrentRouteRunSelection,
+        new Map([['run1', true]])
+      );
+      store.overrideSelector(
+        commonSelectors.getFilteredRenderableRunsIds,
+        new Set(['run1'])
+      );
+      store.overrideSelector(getMetricsLinkedTimeSelection, {
+        start: {step: 2},
+        end: null,
+      });
+      store.overrideSelector(getMetricsCardTimeSelection, {
+        start: {step: 2},
+        end: null,
+      });
+    });
+
+    it('sizes the chart and the table from the card state', fakeAsync(() => {
+      store.overrideSelector(getCardStateMap, {
+        card1: {chartHeight: 321, tableHeight: 234},
+      });
+
+      const fixture = createComponent('card1');
+
+      expect(
+        fixture.debugElement.query(By.css('.chart-container')).nativeElement
+          .style.height
+      ).toBe('321px');
+      expect(
+        fixture.debugElement.query(By.css('.data-table-container'))
+          .nativeElement.style.height
+      ).toBe('234px');
+    }));
+
+    it('leaves the default sizes when the card state has no heights', fakeAsync(() => {
+      store.overrideSelector(getCardStateMap, {card1: {}});
+
+      const fixture = createComponent('card1');
+
+      expect(
+        fixture.debugElement.query(By.css('.chart-container')).nativeElement
+          .style.height
+      ).toBe('');
+      expect(
+        fixture.debugElement.query(By.css('.data-table-container'))
+          .nativeElement.style.height
+      ).toBe('');
+    }));
+
+    it('ignores the table height while the table is expanded', fakeAsync(() => {
+      store.overrideSelector(getCardStateMap, {
+        card1: {tableHeight: 234, tableExpanded: true},
+      });
+
+      const fixture = createComponent('card1');
+
+      const tableContainer = fixture.debugElement.query(
+        By.css('.data-table-container')
+      );
+      expect(
+        tableContainer.nativeElement.classList.contains('expanded')
+      ).toBeTrue();
+      expect(tableContainer.nativeElement.style.height).toBe('');
+    }));
+
+    it('dispatches the chart height when the chart is resized', fakeAsync(() => {
+      store.overrideSelector(getCardStateMap, {card1: {}});
+      const fixture = createComponent('card1');
+      const chartContainer = fixture.debugElement.query(
+        By.css('.chart-container')
+      );
+      // A drag leaves exactly this inline height behind.
+      chartContainer.nativeElement.style.height = '321px';
+      expect(chartContainer.nativeElement.offsetHeight).toBe(321);
+
+      chartContainer.triggerEventHandler('onResize', null);
+
+      expect(dispatchedActions).toEqual([
+        metricsCardStateUpdated({
+          cardId: 'card1',
+          settings: {chartHeight: 321},
+        }),
+      ]);
+    }));
+
+    it('dispatches the table height when the table is resized', fakeAsync(() => {
+      store.overrideSelector(getCardStateMap, {card1: {}});
+      const fixture = createComponent('card1');
+      const tableContainer = fixture.debugElement.query(
+        By.css('.data-table-container')
+      );
+      tableContainer.nativeElement.style.height = '234px';
+      expect(tableContainer.nativeElement.offsetHeight).toBe(234);
+
+      tableContainer.triggerEventHandler('onResize', null);
+
+      expect(dispatchedActions).toEqual([
+        metricsCardStateUpdated({
+          cardId: 'card1',
+          settings: {tableHeight: 234},
+        }),
+      ]);
+    }));
+
+    it('does not dispatch when the applied height is observed again', fakeAsync(() => {
+      store.overrideSelector(getCardStateMap, {card1: {chartHeight: 321}});
+      const fixture = createComponent('card1');
+      const chartContainer = fixture.debugElement.query(
+        By.css('.chart-container')
+      );
+      expect(chartContainer.nativeElement.offsetHeight).toBe(321);
+
+      chartContainer.triggerEventHandler('onResize', null);
+
+      expect(dispatchedActions).toEqual([]);
+    }));
+  });
+
   describe('step selector feature integration', () => {
     describe('fob controls', () => {
       beforeEach(() => {

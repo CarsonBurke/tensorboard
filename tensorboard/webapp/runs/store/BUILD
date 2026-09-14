@@ -22,6 +22,7 @@ tf_ts_library(
         "//tensorboard/webapp/runs/actions",
         "//tensorboard/webapp/types",
         "//tensorboard/webapp/types:ui",
+        "//tensorboard/webapp/util:lang",
         "//tensorboard/webapp/util:ngrx",
         "//tensorboard/webapp/widgets/data_table:types",
         "@npm//@ngrx/store",

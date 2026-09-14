@@ -20,7 +20,7 @@ import {NamespaceContextedState} from '../../app_routing/namespaced_state_reduce
 import {LoadState} from '../../types/data';
 import {ColumnHeader, SortingInfo} from '../../widgets/data_table/types';
 import {HparamValue} from '../data_source/runs_data_source_types';
-import {GroupBy, GroupByKey} from '../types';
+import {GroupBy, GroupByKey, RunCatalog} from '../types';
 
 export {Domain, DomainType} from '../data_source/runs_data_source_types';
 
@@ -62,11 +62,7 @@ export interface RunsDataNonNamespacedState {
   runIdToExpId: Record<RunId, ExperimentId>;
   runMetadata: Record<RunId, Run>;
   runsLoadState: Record<ExperimentId, LoadState>;
-  catalog?: {
-    runIds: string[];
-    totals: Record<string, number>;
-    offset: number;
-  };
+  catalog?: RunCatalog;
 }
 
 /**
@@ -82,6 +78,17 @@ export interface RunsUiNamespacedState {
    * Indicates whether the run is selected.
    */
   selectionState: Map<RunId, boolean>;
+  /**
+   * Whether the persisted selection for this namespace has been reported by
+   * the local storage layer. Windowed run responses arrive before hydration,
+   * so an empty `selectionState` is not evidence that the user never chose.
+   */
+  selectionRestored: boolean;
+  /**
+   * Selection that a run response computed for previously unseen runs while
+   * waiting for hydration. Applied by hydration when nothing was persisted.
+   */
+  pendingSelectionDefault: boolean;
   runsTableHeaders: ColumnHeader[];
   sortingInfo: SortingInfo;
   catalogWindow?: {offset: number; limit: number};

@@ -904,9 +904,7 @@ describe('runs_effects', () => {
     Object.assign(runsDataSource, {
       fetchRunsPage: (id: keyof typeof runs, request: RunPageRequest) => {
         seenRequests.push({id, request});
-        const all = [...runs[id]].sort((x, y) =>
-          x.name < y.name ? -1 : 1
-        );
+        const all = [...runs[id]].sort((x, y) => (x.name < y.name ? -1 : 1));
         return of({
           runs: all.slice(request.offset, request.offset + request.limit),
           total: all.length,
@@ -947,6 +945,46 @@ describe('runs_effects', () => {
     ]);
     subscription.unsubscribe();
   });
+
+  for (const newerIntent of [
+    actions.singleRunSelected({runId: 'a/alpha'}),
+    actions.runSelectorRegexFilterChanged({regexString: 'alpha'}),
+  ]) {
+    it(`discards a pending select-all after ${newerIntent.type}`, () => {
+      const pending = new ReplaySubject<{runs: Run[]; total: number}>(1);
+      const runs = [
+        createRun({id: 'a/alpha', name: 'alpha'}),
+        createRun({id: 'a/beta', name: 'beta'}),
+      ];
+      Object.assign(runsDataSource, {fetchRunsPage: () => pending});
+      effects = new RunsEffects(TestBed.inject(Actions), store, runsDataSource);
+      store.overrideSelector(getActiveRoute, buildExperimentRouteFromId('a'));
+      store.overrideSelector(getExperimentIdsFromRoute, ['a']);
+      store.overrideSelector(getRunCatalog, {
+        runIds: ['a/alpha'],
+        totals: {a: 2},
+        offset: 0,
+      });
+      store.refreshState();
+      const emitted: Action[] = [];
+      const subscription = effects.selectAllRuns$.subscribe((value) =>
+        emitted.push(value)
+      );
+
+      action.next(actions.selectAllRuns());
+      action.next(newerIntent);
+      pending.next({runs, total: 2});
+      pending.complete();
+      expect(emitted).toEqual([]);
+
+      // Cancellation must not disable a subsequent deliberate select-all.
+      action.next(actions.selectAllRuns());
+      expect(emitted).toEqual([
+        actions.runPageSelectionToggled({runIds: ['a/alpha', 'a/beta']}),
+      ]);
+      subscription.unsubscribe();
+    });
+  }
 
   it('does nothing for select-all without a catalog', () => {
     Object.assign(runsDataSource, {
