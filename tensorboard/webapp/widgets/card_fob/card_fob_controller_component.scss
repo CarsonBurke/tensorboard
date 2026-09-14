@@ -57,9 +57,10 @@ limitations under the License.
   position: absolute;
   // Height/Width to match x-axis
   height: 30px;
-  width: calc(
-    100% - 74px
-  ); // the dot on the left takes up 50px, the edit button takes up 24px
+  // Spans the chart minus the y axis on the left and the axis extent edit
+  // button on the right. Line charts report their axis width; other charts
+  // keep the historical 50px.
+  width: calc(100% - var(--line-chart-y-axis-width, 50px) - 24px);
 }
 
 .prospective-area {

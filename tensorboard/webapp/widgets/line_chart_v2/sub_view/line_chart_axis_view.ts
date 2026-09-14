@@ -29,6 +29,21 @@ import {AxisUtils, MajorTick, MinorTick} from './line_chart_axis_utils';
 
 const AXIS_FONT = '11px Roboto, sans-serif';
 
+/**
+ * Space right of a y label: the 1px axis line, its 5px margin, and 2px so
+ * subpixel rounding cannot clip the widest label.
+ */
+const Y_AXIS_LABEL_GUTTER = 8;
+
+/**
+ * Narrowest y axis. The extent edit button is 24px wide and sits 5px from the
+ * right edge, so anything narrower would let it cover the labels entirely.
+ */
+const MIN_Y_AXIS_WIDTH = 30;
+
+/** Widest y axis, which is also the width when major labels need room. */
+const MAX_Y_AXIS_WIDTH = 50;
+
 @Component({
   standalone: false,
   selector: 'line-chart-axis',
@@ -58,10 +73,20 @@ export class LineChartAxisComponent {
   @Output()
   onViewExtentChange = new EventEmitter<[number, number]>();
 
+  /**
+   * Width the y axis needs for its widest label. The chart reserves this much
+   * instead of a gutter wide enough for labels the chart does not have. The x
+   * axis spans its grid column and never emits.
+   */
+  @Output()
+  yAxisWidthChanged = new EventEmitter<number>();
+
   editMenuOpened = false;
 
   majorTicks: MajorTick[] = [];
   minorTicks: MinorTick[] = [];
+
+  private yAxisWidth?: number;
 
   ngOnChanges() {
     let ticks: {minor: MinorTick[]; major: MajorTick[]} | null = null;
@@ -98,6 +123,26 @@ export class LineChartAxisComponent {
       this.axis,
       AXIS_FONT
     );
+
+    if (this.axis === 'y') {
+      // Major labels share the column with the minor ones, so keep the full
+      // width whenever they are present.
+      const width = this.majorTicks.length
+        ? MAX_Y_AXIS_WIDTH
+        : Math.min(
+            MAX_Y_AXIS_WIDTH,
+            Math.max(
+              MIN_Y_AXIS_WIDTH,
+              Math.ceil(
+                AxisUtils.getMaxTickLabelWidth(this.minorTicks, AXIS_FONT)
+              ) + Y_AXIS_LABEL_GUTTER
+            )
+          );
+      if (width !== this.yAxisWidth) {
+        this.yAxisWidth = width;
+        this.yAxisWidthChanged.emit(width);
+      }
+    }
   }
 
   getFormatter(): Formatter {

@@ -251,6 +251,7 @@ yarn_install(
     post_install_patches = [
         "//patches:@angular+build-tooling+0.0.0-98b30ab5fdeeb1df3278f5257b9a8f07abb76941.patch",
         "//patches:@bazel+concatjs+5.8.1.patch",
+        "//patches:three+0.137.5.patch",
     ],
     yarn_lock = "//:yarn.lock",
 )

@@ -195,7 +195,23 @@ export class LineChartComponent
   private scaleUpdated = true;
   private isRenderingContextLost = false;
 
-  constructor(private readonly changeDetector: ChangeDetectorRef) {}
+  constructor(
+    private readonly changeDetector: ChangeDetectorRef,
+    private readonly hostRef: ElementRef<HTMLElement>
+  ) {}
+
+  /**
+   * Publishes the width the y axis needs as a CSS variable, which sizes its
+   * grid column and tells overlays how much of the chart the axis takes. It is
+   * written to the host element directly: a template binding would be read
+   * before the axis reports, and change detection would reject the update.
+   */
+  onYAxisWidthChanged(width: number) {
+    this.hostRef.nativeElement.style.setProperty(
+      '--line-chart-y-axis-width',
+      `${width}px`
+    );
+  }
 
   ngOnInit() {
     // Let the parent component know if its initial value.

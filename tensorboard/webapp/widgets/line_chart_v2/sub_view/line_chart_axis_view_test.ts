@@ -55,6 +55,7 @@ import {LineChartAxisComponent} from './line_chart_axis_view';
       [scale]="scale"
       [gridCount]="5"
       [domDim]="domDim"
+      (yAxisWidthChanged)="onYAxisWidthChanged($event)"
     ></line-chart-axis>
   `,
 })
@@ -76,6 +77,9 @@ class TestableComponent {
 
   @Input()
   onXViewExtentChange: jasmine.Spy = jasmine.createSpy();
+
+  @Input()
+  onYAxisWidthChanged: jasmine.Spy = jasmine.createSpy();
 }
 
 describe('line_chart_v2/sub_view/axis test', () => {
@@ -154,6 +158,38 @@ describe('line_chart_v2/sub_view/axis test', () => {
       '0.8',
       '1',
     ]);
+  });
+
+  describe('y axis width', () => {
+    it('asks for the minimum when its labels are short', () => {
+      const fixture = TestBed.createComponent(TestableComponent);
+      fixture.detectChanges();
+
+      expect(
+        fixture.componentInstance.onYAxisWidthChanged.calls.allArgs()
+      ).toEqual([[30]]);
+    });
+
+    it('grows for wider labels without exceeding the full gutter', () => {
+      const fixture = TestBed.createComponent(TestableComponent);
+      fixture.detectChanges();
+      fixture.componentInstance.onYAxisWidthChanged.calls.reset();
+
+      fixture.componentInstance.viewBox = {x: [100, 300], y: [-1e9, -1e8]};
+      fixture.detectChanges();
+
+      const [[width]] =
+        fixture.componentInstance.onYAxisWidthChanged.calls.allArgs();
+      assertLabels(fixture.debugElement.queryAll(ByCss.Y_AXIS_LABEL), [
+        '-1e+9',
+        '-8e+8',
+        '-6e+8',
+        '-4e+8',
+        '-2e+8',
+      ]);
+      expect(width).toBeGreaterThan(30);
+      expect(width).toBeLessThanOrEqual(50);
+    });
   });
 
   describe('temporal axis', () => {

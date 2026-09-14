@@ -808,6 +808,9 @@ $tb-dark-material-theme-variants: (
   // meaningless.
   body.dark-mode {
     background-color: map.get($tb-dark-background, background);
+    // Let the browser render scroll bars and other native widgets in their
+    // dark form; the light default is jarring inside dark cards.
+    color-scheme: dark;
 
     a:not(.mdc-button, .mdc-icon-button) {
       color: map.get($tb-dark-foreground, link);

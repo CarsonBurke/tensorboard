@@ -23,7 +23,15 @@ limitations under the License.
   #overlayTarget="cdkOverlayOrigin"
   cdkOverlayOrigin
 >
-  <div class="series-view" #seriesView>
+  <!-- The y axis column resizes with its labels without resizing the
+  container, so the plot area needs its own observer. -->
+  <div
+    class="series-view"
+    #seriesView
+    detectResize
+    (onResize)="onViewResize()"
+    [resizeEventDebouncePeriodInMs]="0"
+  >
     <line-chart-grid-view
       *ngIf="!lineOnly"
       [viewExtent]="viewBox"
@@ -77,6 +85,7 @@ limitations under the License.
       [gridCount]="Y_GRID_COUNT"
       [scale]="yScale"
       (onViewExtentChange)="onViewBoxChangedFromAxis($event, 'y')"
+      (yAxisWidthChanged)="onYAxisWidthChanged($event)"
     ></line-chart-axis>
   </div>
   <div class="x-axis" #xAxis>

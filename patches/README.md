@@ -19,6 +19,28 @@ plain `yarn patch-package "<pkg>"` silently drops any changes to the package's
 file, and always review `git diff patches/` after regenerating to confirm no
 hunk disappeared.
 
+## `three+0.137.5.patch`
+
+**Modified files:** `src/renderers/WebGLRenderer.js` and the ESM, CommonJS,
+and unminified browser builds.
+
+**What it does:** Initializes the renderer's animation context with `self`
+instead of `window`. Both names refer to the window on the main thread, but
+only `self` exists in the chart's dedicated worker. Three.js 0.137.5 calls
+`animation.stop()` during disposal even without an active animation loop;
+its window-only initialization therefore throws on `cancelAnimationFrame`
+inside workers. That aborts chart disposal before TensorBoard releases the
+WebGL context and closes the worker message port.
+
+This patch applies to the package entry points used by production bundling
+and tests, without introducing a fake `window` global in workers. Remove it
+when upgrading to a Three.js version with worker-safe animation disposal.
+
+Verified against the built chart worker in a real browser: repeatedly mount
+and unmount five scalar charts, then confirm no worker exceptions and no
+remaining live chart contexts. Main-thread-only renderer tests do not cover
+this failure.
+
 ## `@bazel+concatjs+5.8.1.patch`
 
 **Modified files:**

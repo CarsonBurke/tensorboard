@@ -338,10 +338,13 @@ export class ThreeRenderer implements ObjectRenderer<CacheValue> {
     private readonly onContextLost?: EventListener
   ) {
     if (
-      ChartUtils.isWebGl2OffscreenCanvasSupported() &&
+      typeof OffscreenCanvas !== 'undefined' &&
       canvas instanceof OffscreenCanvas
     ) {
       // THREE.js requires a style object which OffscreenCanvas lacks.
+      // Only the canvas type matters here. The host checks WebGL2 support
+      // before choosing WorkerChart; probing again would create a throwaway
+      // WebGL context in every pooled worker before its first real renderer.
       const styleless = canvas as unknown as {style?: object};
       styleless.style = styleless.style ?? {};
     }

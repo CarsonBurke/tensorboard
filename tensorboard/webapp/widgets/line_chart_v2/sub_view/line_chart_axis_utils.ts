@@ -272,6 +272,33 @@ function filterTicksByVisibility(
   });
 }
 
+/**
+ * Width in pixels of the widest tick label, used to size the axis to its
+ * content instead of a worst-case constant.
+ */
+function getMaxTickLabelWidth(ticks: MinorTick[], axisFont: string): number {
+  if (!canvasForMeasure) return 0;
+  canvasForMeasure.font = axisFont;
+  // Advance width, unlike the height `filterTicksByVisibility` memoizes for
+  // the y axis, so the key carries its own prefix.
+  const memoKeyPrefix = `width\u0000${axisFont}\u0000`;
+
+  let maxWidth = 0;
+  for (const tick of ticks) {
+    const memoKey = memoKeyPrefix + tick.tickFormattedString;
+    let width = textDimMemo.get(memoKey);
+    if (width === undefined) {
+      width = canvasForMeasure.measureText(tick.tickFormattedString).width;
+      if (textDimMemo.size >= MAX_MEMOIZED_TEXT_DIMS) {
+        textDimMemo.clear();
+      }
+      textDimMemo.set(memoKey, width);
+    }
+    maxWidth = Math.max(maxWidth, width);
+  }
+  return maxWidth;
+}
+
 function containsScientificNotation(values: number[]): boolean {
   for (const value of values) {
     if (String(value).includes('e')) {
@@ -286,6 +313,7 @@ export const AxisUtils = {
   getTicksForTemporalScale,
   getTicksForLinearScale,
   filterTicksByVisibility,
+  getMaxTickLabelWidth,
 };
 
 export const TEST_ONLY = {containsScientificNotation};
