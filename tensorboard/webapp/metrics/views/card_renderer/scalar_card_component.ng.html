@@ -116,7 +116,7 @@ limitations under the License.
       *ngIf="loadState === DataLoadState.LOADING"
     ></mat-spinner>
     <line-chart
-      [preferredRendererType]="forceSvg ? RendererType.SVG : RendererType.WEBGL"
+      [preferredRendererType]="forceSvg ? RendererType.SVG : RendererType.UPLOT"
       [seriesData]="dataSeries"
       [seriesMetadataMap]="chartMetadataMap"
       [xScaleType]="xScaleType"

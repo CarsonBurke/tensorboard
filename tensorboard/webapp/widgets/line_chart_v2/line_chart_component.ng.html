@@ -47,6 +47,11 @@ limitations under the License.
         #chartEl
         *ngIf="getRendererType() === RendererType.WEBGL"
       ></canvas>
+      <div
+        #chartEl
+        class="uplot-container"
+        *ngIf="getRendererType() === RendererType.UPLOT"
+      ></div>
     </ng-container>
     <line-chart-interactive-view
       *ngIf="!lineOnly"

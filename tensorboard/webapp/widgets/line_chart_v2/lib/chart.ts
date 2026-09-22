@@ -71,6 +71,8 @@ export class ChartImpl implements Chart {
         );
         break;
       }
+      case RendererType.UPLOT:
+        throw new RangeError('UPlot charts must be constructed with UPlotChart.');
     }
 
     this.renderer.setUseDarkMode(option.useDarkMode);

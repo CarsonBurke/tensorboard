@@ -47,6 +47,17 @@ tf_ts_library(
 )
 
 tf_ts_library(
+    name = "uplot_chart",
+    srcs = ["uplot_chart.ts"],
+    visibility = ["//tensorboard/webapp/widgets/line_chart_v2:__pkg__"],
+    deps = [
+        ":chart_types",
+        ":internal_types",
+        "@npm//uplot",
+    ],
+)
+
+tf_ts_library(
     name = "chart_types",
     srcs = [
         "chart_types.ts",
@@ -167,12 +178,14 @@ tf_ts_library(
         "formatter_test.ts",
         "integration_test.ts",
         "scale_test.ts",
+        "uplot_chart_test.ts",
     ],
     visibility = [
         "//tensorboard:internal",
     ],
     deps = [
         ":chart",
+        ":chart_types",
         ":coordinator",
         ":drawable",
         ":formatter",
@@ -180,6 +193,7 @@ tf_ts_library(
         ":public_types",
         ":scale",
         ":testing",
+        ":uplot_chart",
         ":worker",
         "//tensorboard/webapp/widgets/line_chart_v2/lib/renderer",
         "@npm//@angular/core",

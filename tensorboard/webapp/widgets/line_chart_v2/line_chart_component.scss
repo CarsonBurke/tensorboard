@@ -84,6 +84,7 @@ limitations under the License.
   .custom-vis,
   canvas,
   svg,
+  .uplot-container,
   line-chart-grid-view,
   line-chart-interactive-view {
     height: 100%;
@@ -91,6 +92,37 @@ limitations under the License.
     position: absolute;
     top: 0;
     width: 100%;
+  }
+}
+
+.uplot-container {
+  overflow: hidden;
+
+  // uPlot builds its DOM at runtime, outside Angular templates, so its
+  // elements never carry view-encapsulation attributes. ::ng-deep keeps these
+  // selectors matching them. uPlot's axes, legend, cursor, and selection
+  // layers are disabled here, but these layout rules are still required for
+  // its canvas wrapper (mirroring uPlot's own stylesheet: the under/cursor
+  // overlay layers must be absolute so they do not push the canvas down).
+  ::ng-deep {
+    .uplot,
+    .uplot .u-wrap {
+      height: 100%;
+      position: relative;
+      width: 100%;
+    }
+
+    .uplot .u-under,
+    .uplot .u-over {
+      position: absolute;
+    }
+
+    .uplot canvas {
+      display: block;
+      height: 100%;
+      position: relative;
+      width: 100%;
+    }
   }
 }
 

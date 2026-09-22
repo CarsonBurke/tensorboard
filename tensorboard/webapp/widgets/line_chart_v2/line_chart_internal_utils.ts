@@ -151,6 +151,8 @@ export function getRendererType(
       return ChartUtils.isWebGl2Supported()
         ? RendererType.WEBGL
         : RendererType.SVG;
+    case RendererType.UPLOT:
+      return RendererType.UPLOT;
     default:
       const _ = preferredRendererType as never;
       throw new Error(`Unknown rendererType: ${preferredRendererType}`);

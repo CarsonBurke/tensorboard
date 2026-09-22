@@ -17,6 +17,7 @@ import {Point, Polyline, Rect} from '../internal_types';
 export enum RendererType {
   SVG,
   WEBGL,
+  UPLOT,
 }
 
 /**

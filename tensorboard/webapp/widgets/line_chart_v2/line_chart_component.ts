@@ -30,6 +30,7 @@ import {
 } from '@angular/core';
 import {Observable, ReplaySubject} from 'rxjs';
 import {ChartImpl} from './lib/chart';
+import {UPlotChart} from './lib/uplot_chart';
 import {Chart} from './lib/chart_types';
 import {
   ChartCallbacks,
@@ -91,7 +92,7 @@ export class LineChartComponent
   private yAxis!: ElementRef<HTMLElement>;
 
   @ViewChild('chartEl', {static: false, read: ElementRef})
-  private chartEl?: ElementRef<HTMLCanvasElement | SVGElement>;
+  private chartEl?: ElementRef<HTMLCanvasElement | SVGElement | HTMLElement>;
 
   /**
    * Optional ngTemplate that renders on top of line chart (not axis). This
@@ -110,7 +111,7 @@ export class LineChartComponent
   useDarkMode: boolean = false;
 
   @Input()
-  preferredRendererType: RendererType = RendererType.WEBGL;
+  preferredRendererType: RendererType = RendererType.UPLOT;
 
   @Input()
   seriesData!: DataSeries[];
@@ -417,6 +418,16 @@ export class LineChartComponent
           useDarkMode: this.useDarkMode,
         };
         break;
+      case RendererType.UPLOT:
+        params = {
+          type: RendererType.UPLOT,
+          container: this.chartEl!.nativeElement as HTMLElement,
+          devicePixelRatio: window.devicePixelRatio,
+          callbacks,
+          domDimension: this.domDimensions.main,
+          useDarkMode: this.useDarkMode,
+        };
+        break;
       default:
         const neverRendererType = rendererType as never;
         throw new Error(
@@ -426,9 +437,24 @@ export class LineChartComponent
 
     const useWorker =
       rendererType !== RendererType.SVG &&
+      rendererType !== RendererType.UPLOT &&
       ChartUtils.isWebGl2OffscreenCanvasSupported();
-    const klass = useWorker ? WorkerChart : ChartImpl;
-    this.lineChart = new klass(params);
+    if (useWorker) {
+      this.lineChart = new WorkerChart(
+        params as Extract<ChartOptions, {type: RendererType.WEBGL}>
+      );
+    } else if (rendererType === RendererType.UPLOT) {
+      this.lineChart = new UPlotChart(
+        params as Extract<ChartOptions, {type: RendererType.UPLOT}>
+      );
+    } else {
+      this.lineChart = new ChartImpl(
+        params as Extract<
+          ChartOptions,
+          {type: RendererType.SVG | RendererType.WEBGL}
+        >
+      );
+    }
   }
 
   ngOnDestroy() {

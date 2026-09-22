@@ -33,11 +33,13 @@ tf_ng_module(
         "//tensorboard/webapp/widgets/line_chart_v2/lib:public_types",
         "//tensorboard/webapp/widgets/line_chart_v2/lib:scale",
         "//tensorboard/webapp/widgets/line_chart_v2/lib:utils",
+        "//tensorboard/webapp/widgets/line_chart_v2/lib:uplot_chart",
         "//tensorboard/webapp/widgets/line_chart_v2/lib/worker:worker_chart",
         "//tensorboard/webapp/widgets/line_chart_v2/sub_view",
         "@npm//@angular/common",
         "@npm//@angular/core",
         "@npm//rxjs",
+        "@npm//uplot",
     ],
 )
 

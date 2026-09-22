@@ -582,7 +582,7 @@ describe('scalar card line chart', () => {
 
       const lineChartEl = fixture.debugElement.query(Selector.LINE_CHART);
       expect(lineChartEl.componentInstance.preferredRendererType).toBe(
-        RendererType.WEBGL
+        RendererType.UPLOT
       );
 
       store.overrideSelector(selectors.getForceSvgFeatureFlag, true);

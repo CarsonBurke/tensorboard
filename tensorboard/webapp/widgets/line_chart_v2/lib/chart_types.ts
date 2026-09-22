@@ -62,4 +62,13 @@ export interface WebGlChartOptions extends BaseChartOptions {
   container: OffscreenCanvas | HTMLCanvasElement;
 }
 
-export type ChartOptions = SvgChartOptions | WebGlChartOptions;
+export interface UPlotChartOptions extends BaseChartOptions {
+  type: RendererType.UPLOT;
+  container: HTMLElement;
+  devicePixelRatio: number;
+}
+
+export type ChartOptions =
+  | SvgChartOptions
+  | WebGlChartOptions
+  | UPlotChartOptions;
