@@ -60,6 +60,8 @@ export class ReloaderComponent {
         this.cancelLoad();
         if (enabled) {
           this.load(reloadPeriodInMs as number);
+        } else {
+          this.missedAutoReload = false;
         }
       });
   }

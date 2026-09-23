@@ -415,6 +415,31 @@ describe('reloader_component', () => {
     fixture.destroy();
   }));
 
+  it('discards a missed reload when auto reload is disabled', fakeAsync(() => {
+    const fixture = TestBed.createComponent(ReloaderComponent);
+    fixture.detectChanges();
+
+    simulateVisibilityChange(false);
+    tick(5);
+    store.setState(
+      createState(
+        createSettingsState({
+          settings: createSettings({
+            reloadPeriodInMs: 5,
+            reloadEnabled: false,
+          }),
+        })
+      )
+    );
+
+    simulateVisibilityChange(true);
+    tick(10);
+    expect(backendReload).not.toHaveBeenCalled();
+    expect(dispatchSpy).not.toHaveBeenCalled();
+
+    fixture.destroy();
+  }));
+
   it('rescans the logdir before refetching', fakeAsync(() => {
     const rescan = new Subject<void>();
     backendReload$ = rescan;
