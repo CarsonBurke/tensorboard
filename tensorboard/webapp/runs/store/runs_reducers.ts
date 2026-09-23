@@ -507,7 +507,9 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
   }),
   on(runsActions.runSelectionToggled, (state, {runId}) => {
     const nextSelectionState = new Map(state.selectionState);
-    nextSelectionState.set(runId, !Boolean(nextSelectionState.get(runId)));
+    const selected = !Boolean(nextSelectionState.get(runId));
+    if (selected) nextSelectionState.delete(runId);
+    nextSelectionState.set(runId, selected);
 
     return {
       ...state,
@@ -535,6 +537,9 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
       return Boolean(nextSelectionState.get(runId));
     });
     for (const runId of runIds) {
+      if (nextValue && !nextSelectionState.get(runId)) {
+        nextSelectionState.delete(runId);
+      }
       nextSelectionState.set(runId, nextValue);
     }
 
@@ -545,7 +550,7 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
   }),
   on(
     runsActions.runLocalStorageHydrated,
-    (state, {runIds, selection, restoredSelection}) => {
+    (state, {runIds, selection, selectionOrder, restoredSelection}) => {
       const currentRunIds = new Set(runIds);
       const nextSelectionState = new Map<string, boolean>();
       for (const [runId, selected] of state.selectionState.entries()) {
@@ -560,7 +565,14 @@ const uiReducer: ActionReducer<RunsUiState, Action> = createReducer(
         !state.selectionRestored &&
         !restoredSelection &&
         state.pendingSelectionDefault;
-      for (const runId of runIds) {
+      // Hydration on data refresh must preserve the full live selection order.
+      // Initial restoration supplies the persisted order explicitly.
+      const orderedRunIds = new Set([
+        ...(selectionOrder ?? state.selectionState.keys()),
+        ...runIds,
+      ]);
+      for (const runId of orderedRunIds) {
+        if (!currentRunIds.has(runId)) continue;
         nextSelectionState.set(
           runId,
           hasOwn(selection, runId) ? Boolean(selection[runId]) : unknownSelected

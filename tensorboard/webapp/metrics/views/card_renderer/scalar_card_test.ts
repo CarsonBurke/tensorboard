@@ -537,6 +537,126 @@ describe('scalar card', () => {
       expect(visible).toBe(true);
     }));
 
+    it('keeps selection stacking across fetch orders and card recreation', fakeAsync(() => {
+      const run1 = [{wallTime: 100, value: 1, step: 333}];
+      const run2 = [{wallTime: 100, value: 2, step: 333}];
+      const history = new ReplaySubject<Record<string, typeof run1>>(1);
+      history.next({run2});
+      provideMockCardRunToSeriesData(
+        selectSpy,
+        PluginType.SCALARS,
+        'card1',
+        null,
+        {run2}
+      );
+      selectSpy
+        .withArgs(selectors.getCardTimeSeries, 'card1')
+        .and.returnValue(history);
+      store.overrideSelector(
+        selectors.getRunSelectionMap,
+        new Map([
+          ['run2', true],
+          ['run1', true],
+        ])
+      );
+      store.overrideSelector(
+        commonSelectors.getFilteredRenderableRunsIds,
+        new Set(['run2', 'run1'])
+      );
+      let fixture = createComponent('card1');
+      history.next({run2, run1});
+      tick(0);
+      fixture.detectChanges();
+      let chart = fixture.debugElement.query(
+        Selector.LINE_CHART
+      ).componentInstance;
+      expect(chart.seriesData.map((series: DataSeries) => series.id)).toEqual([
+        'run2',
+        'run1',
+      ]);
+      expect(Object.keys(chart.seriesMetadataMap)).toEqual(['run1', 'run2']);
+
+      fixture.destroy();
+      history.next({run1, run2});
+      fixture = createComponent('card1');
+      chart = fixture.debugElement.query(Selector.LINE_CHART).componentInstance;
+      expect(chart.seriesData.map((series: DataSeries) => series.id)).toEqual([
+        'run2',
+        'run1',
+      ]);
+      expect(Object.keys(chart.seriesMetadataMap)).toEqual(['run1', 'run2']);
+      fixture.destroy();
+      history.complete();
+    }));
+
+    for (const smoothing of [0, 0.6]) {
+      it(`preserves full selection order and reuses points with smoothing=${smoothing}`, fakeAsync(() => {
+        const runToSeries = {
+          run1: [{wallTime: 100, value: 1, step: 1}],
+          run2: [{wallTime: 100, value: 2, step: 1}],
+          run3: [{wallTime: 100, value: 3, step: 1}],
+        };
+        provideMockCardRunToSeriesData(
+          selectSpy,
+          PluginType.SCALARS,
+          'card1',
+          null,
+          runToSeries
+        );
+        store.overrideSelector(getMetricsScalarSmoothing, smoothing);
+        const selection = store.overrideSelector(
+          selectors.getRunSelectionMap,
+          new Map([
+            ['run1', true],
+            ['run2', true],
+            ['run3', true],
+          ])
+        );
+        const fixture = createComponent('card1');
+        const chart = fixture.debugElement.query(
+          Selector.LINE_CHART
+        ).componentInstance;
+        const expectedIds = (ids: string[]) =>
+          smoothing > 0
+            ? [...ids, ...ids.map((id) => JSON.stringify(['smoothed', id]))]
+            : ids;
+        expect(chart.seriesData.map((series: DataSeries) => series.id)).toEqual(
+          expectedIds(['run1', 'run2', 'run3'])
+        );
+        const originalSeries = new Map(
+          chart.seriesData.map((series: DataSeries) => [series.id, series])
+        );
+
+        selection.setResult(
+          new Map([
+            ['run1', false],
+            ['run2', true],
+            ['run3', true],
+          ])
+        );
+        store.refreshState();
+        tick(0);
+        fixture.detectChanges();
+        selection.setResult(
+          new Map([
+            ['run2', true],
+            ['run3', true],
+            ['run1', true],
+          ])
+        );
+        store.refreshState();
+        tick(0);
+        fixture.detectChanges();
+        expect(chart.seriesData.map((series: DataSeries) => series.id)).toEqual(
+          expectedIds(['run2', 'run3', 'run1'])
+        );
+        for (const series of chart.seriesData) {
+          expect(series).toBe(originalSeries.get(series.id));
+        }
+        fixture.destroy();
+      }));
+    }
+
     it('clears rendered series and metadata when loaded history is evicted', fakeAsync(() => {
       const runToSeries = {
         run1: [{wallTime: 100, value: 1, step: 333}],

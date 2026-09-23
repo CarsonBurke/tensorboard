@@ -94,6 +94,8 @@ export const runLocalStorageHydrated = createAction(
   props<{
     runIds: string[];
     selection: Record<string, boolean>;
+    /** Map iteration order, preserved separately from integer-like object keys. */
+    selectionOrder?: string[];
     colorOverrides: Record<string, string>;
     /** Whether a persisted selection was found for the current namespace. */
     restoredSelection: boolean;

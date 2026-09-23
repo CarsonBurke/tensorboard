@@ -296,6 +296,7 @@ export class RunsLocalStorageEffects {
           runsActions.runLocalStorageHydrated({
             runIds: currentRuns.map(({id}) => id),
             selection: mapToRecord(currentSelection),
+            selectionOrder: Array.from(currentSelection.keys()),
             colorOverrides: mapToRecord(currentColorOverrides),
             restoredSelection: false,
           })
@@ -322,10 +323,10 @@ export class RunsLocalStorageEffects {
       if (selected) currentRunIds.add(id);
     for (const id of persistedSelection.keys()) currentRunIds.add(id);
     for (const id of storedState.colorOverrides.keys()) currentRunIds.add(id);
-    const selection = new Map([
-      ...pickMap(currentSelection, currentRunIds),
-      ...persistedSelection,
-    ]);
+    const selection = new Map(persistedSelection);
+    for (const [id, selected] of pickMap(currentSelection, currentRunIds)) {
+      if (!selection.has(id)) selection.set(id, selected);
+    }
     const colorOverrides = new Map([
       ...pickMap(currentColorOverrides, currentRunIds),
       ...storedState.colorOverrides,
@@ -355,6 +356,7 @@ export class RunsLocalStorageEffects {
       runsActions.runLocalStorageHydrated({
         runIds: Array.from(currentRunIds),
         selection: mapToRecord(selection),
+        selectionOrder: Array.from(selection.keys()),
         colorOverrides: mapToRecord(colorOverrides),
         restoredSelection: restoreSelection && storedState.selection.size > 0,
       })

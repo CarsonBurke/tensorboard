@@ -922,6 +922,115 @@ describe('runs_reducers', () => {
     });
   });
 
+  describe('selection stacking order', () => {
+    function selectedIds(state: ReturnType<typeof buildRunsState>) {
+      return [...state.ui.selectionState]
+        .filter(([, selected]) => selected)
+        .map(([id]) => id);
+    }
+
+    it('tracks every selection and moves a reselected run to the end', () => {
+      let state = buildRunsState(
+        {},
+        {
+          selectionState: new Map([
+            ['A', false],
+            ['B', false],
+            ['C', false],
+          ]),
+        }
+      );
+      for (const runId of ['A', 'B', 'C']) {
+        state = runsReducers.reducers(
+          state,
+          actions.runSelectionToggled({runId})
+        );
+      }
+      expect(selectedIds(state)).toEqual(['A', 'B', 'C']);
+      state = runsReducers.reducers(
+        state,
+        actions.runSelectionToggled({runId: 'A'})
+      );
+      expect(selectedIds(state)).toEqual(['B', 'C']);
+      state = runsReducers.reducers(
+        state,
+        actions.runSelectionToggled({runId: 'A'})
+      );
+      expect(selectedIds(state)).toEqual(['B', 'C', 'A']);
+    });
+
+    it('appends only newly selected bulk runs in action order', () => {
+      const state = buildRunsState(
+        {},
+        {
+          selectionState: new Map([
+            ['A', false],
+            ['B', true],
+            ['C', false],
+            ['D', true],
+          ]),
+        }
+      );
+      const nextState = runsReducers.reducers(
+        state,
+        actions.runPageSelectionToggled({runIds: ['C', 'D', 'A']})
+      );
+      expect(selectedIds(nextState)).toEqual(['B', 'D', 'C', 'A']);
+      const deselected = runsReducers.reducers(
+        nextState,
+        actions.runPageSelectionToggled({runIds: ['D', 'C']})
+      );
+      expect(selectedIds(deselected)).toEqual(['B', 'A']);
+    });
+
+    it('preserves live order when hydration follows a reordered fetch', () => {
+      const state = buildRunsState(
+        {},
+        {
+          selectionState: new Map([
+            ['B', true],
+            ['C', true],
+            ['A', true],
+          ]),
+        }
+      );
+      const nextState = runsReducers.reducers(
+        state,
+        actions.runLocalStorageHydrated({
+          runIds: ['A', 'B', 'C'],
+          selection: {A: true, B: true, C: true},
+          colorOverrides: {},
+          restoredSelection: false,
+        })
+      );
+      expect(selectedIds(nextState)).toEqual(['B', 'C', 'A']);
+    });
+
+    it('restores persisted order ahead of fetched default order', () => {
+      const state = buildRunsState(
+        {},
+        {
+          selectionState: new Map([
+            ['1', true],
+            ['2', true],
+            ['3', true],
+          ]),
+        }
+      );
+      const nextState = runsReducers.reducers(
+        state,
+        actions.runLocalStorageHydrated({
+          runIds: ['1', '2', '3'],
+          selection: {'1': true, '2': true, '3': true},
+          selectionOrder: ['2', '3', '1'],
+          colorOverrides: {},
+          restoredSelection: true,
+        })
+      );
+      expect(selectedIds(nextState)).toEqual(['2', '3', '1']);
+    });
+  });
+
   describe('runLocalStorageHydrated', () => {
     it('hydrates run colors only for the current run ids', () => {
       const state = buildRunsState({

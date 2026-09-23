@@ -60,6 +60,7 @@ import {
   getMetricsCardRangeSelectionEnabled,
   getRun,
   getRunColorMap,
+  getRunSelectionMap,
   getCurrentRouteRunSelection,
   getGroupedHeadersForCard,
   getMultiRunCardLoadState,
@@ -372,9 +373,13 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
       this.store.select(getMetricsScalarPartitionNonMonotonicX),
     ]).pipe(
       map(([runToSeries, axis, partition]) =>
-        Object.keys(runToSeries).flatMap((runId) =>
-          transformScalarSeries(runId, runToSeries[runId], axis, partition)
-        )
+        // Keep a deterministic fallback for runs not yet in selection state.
+        // Selected runs are ordered after smoothing, independently of fetching.
+        Object.keys(runToSeries)
+          .sort()
+          .flatMap((runId) =>
+            transformScalarSeries(runId, runToSeries[runId], axis, partition)
+          )
       ),
       distinctUntilChanged(areSeriesEqual),
       takeUntil(this.ngUnsubscribe),
@@ -419,29 +424,65 @@ export class ScalarCardContainer implements CardRenderer, OnInit, OnDestroy {
           id: seriesId,
           points,
         }));
-        if (smoothing <= 0) {
-          return of(cleanedRunsData);
-        }
-
-        return new Observable<ScalarCardDataSeries[]>((subscriber) => {
-          const controller = new AbortController();
-          classicSmoothing(cleanedRunsData, smoothing, controller.signal).then(
-            (smoothed) => {
-              subscriber.next([
-                ...cleanedRunsData,
-                ...smoothed.map((series) => ({
-                  id: getSmoothedSeriesId(series.id),
-                  points: series.points,
-                })),
-              ]);
-              subscriber.complete();
-            },
-            (error) => {
-              if (!controller.signal.aborted) subscriber.error(error);
-            }
-          );
-          return () => controller.abort();
-        });
+        const data$ =
+          smoothing <= 0
+            ? of(cleanedRunsData)
+            : new Observable<ScalarCardDataSeries[]>((subscriber) => {
+                const controller = new AbortController();
+                classicSmoothing(
+                  cleanedRunsData,
+                  smoothing,
+                  controller.signal
+                ).then(
+                  (smoothed) => {
+                    subscriber.next([
+                      ...cleanedRunsData,
+                      ...smoothed.map((series) => ({
+                        id: getSmoothedSeriesId(series.id),
+                        points: series.points,
+                      })),
+                    ]);
+                    subscriber.complete();
+                  },
+                  (error) => {
+                    if (!controller.signal.aborted) subscriber.error(error);
+                  }
+                );
+                return () => controller.abort();
+              });
+        // Selection changes only reorder existing lines; do not restart the
+        // smoothing work. The shared map preserves the full selection history
+        // even when this card is destroyed and recreated by virtualization.
+        return data$.pipe(
+          combineLatestWith(this.store.select(getRunSelectionMap)),
+          map(([series, selection]) => {
+            const runOrder = new Map(
+              [...selection]
+                .filter(([, selected]) => selected)
+                .map(([runId], index) => [runId, index])
+            );
+            const ordered = [...runsData].sort(
+              (a, b) =>
+                (runOrder.get(a.runId) ?? -1) - (runOrder.get(b.runId) ?? -1)
+            );
+            // Keep faint originals below smoothed lines, with both layers
+            // following oldest-to-newest selection order.
+            const seriesOrder = new Map(
+              [
+                ...ordered.map(({seriesId}) => seriesId),
+                ...ordered.map(({seriesId}) => getSmoothedSeriesId(seriesId)),
+              ].map((id, index) => [id, index])
+            );
+            return [...series].sort(
+              (a, b) => seriesOrder.get(a.id)! - seriesOrder.get(b.id)!
+            );
+          }),
+          distinctUntilChanged(
+            (a, b) =>
+              a.length === b.length &&
+              a.every((series, index) => series === b[index])
+          )
+        );
       }),
       takeUntil(this.ngUnsubscribe),
       startWith([] as ScalarCardDataSeries[])

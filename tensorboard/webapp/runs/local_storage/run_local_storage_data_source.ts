@@ -30,6 +30,7 @@ declare interface StoredRunNamespaceV1 {
   updatedAtMs: number;
   runIds: string[];
   selection: Record<string, boolean>;
+  selectionOrder?: string[];
   colorOverrides: Record<string, string>;
   newestRunId?: string;
   sortingInfo?: SortingInfo;
@@ -88,7 +89,20 @@ function sanitizeNamespace(
     storedNamespace.selection &&
     typeof storedNamespace.selection === 'object'
   ) {
-    for (const [runId, value] of Object.entries(storedNamespace.selection)) {
+    // Older namespaces have no explicit order; retain their object order.
+    // The array also preserves numeric run ids, which JSON objects reorder.
+    const orderedRunIds = new Set([
+      ...(Array.isArray(storedNamespace.selectionOrder)
+        ? storedNamespace.selectionOrder.filter((id) => typeof id === 'string')
+        : []),
+      ...Object.keys(storedNamespace.selection),
+    ]);
+    for (const runId of orderedRunIds) {
+      if (
+        !Object.prototype.hasOwnProperty.call(storedNamespace.selection, runId)
+      )
+        continue;
+      const value = storedNamespace.selection[runId];
       if (currentRunIds.has(runId) && typeof value === 'boolean') {
         selection.set(runId, value);
       }
@@ -148,6 +162,7 @@ function namespacesAreEquivalent(
     JSON.stringify({
       runIds: storedNamespace.runIds,
       selection: storedNamespace.selection,
+      selectionOrder: storedNamespace.selectionOrder,
       colorOverrides: storedNamespace.colorOverrides,
       newestRunId: storedNamespace.newestRunId,
       sortingInfo: storedNamespace.sortingInfo,
@@ -155,6 +170,7 @@ function namespacesAreEquivalent(
     JSON.stringify({
       runIds: nextNamespace.runIds,
       selection: nextNamespace.selection,
+      selectionOrder: nextNamespace.selectionOrder,
       colorOverrides: nextNamespace.colorOverrides,
       newestRunId: nextNamespace.newestRunId,
       sortingInfo: nextNamespace.sortingInfo,
@@ -199,6 +215,7 @@ export class RunLocalStorageDataSource {
       updatedAtMs: 0,
       runIds: Array.from(currentRunIds),
       selection: mapToObject(state.selection, currentRunIds),
+      selectionOrder: Array.from(state.selection.keys()),
       colorOverrides: mapToObject(state.colorOverrides, currentRunIds),
     };
     if (state.newestRunId && currentRunIds.has(state.newestRunId)) {

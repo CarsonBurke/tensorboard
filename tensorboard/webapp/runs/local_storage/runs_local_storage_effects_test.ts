@@ -97,6 +97,62 @@ describe('RunsLocalStorageEffects', () => {
     ).toBe('z');
   });
 
+  it('restores selection order and preserves live order on later fetches', () => {
+    const runs = ['1', '2', '3'].map((id) => createRun(id, 1));
+    const namespace = TEST_ONLY.getNamespace('/tmp/tensorboard/runs', [
+      'exp1',
+    ])!;
+    dataSource.setState(namespace, runs, {
+      selection: new Map([
+        ['2', true],
+        ['3', true],
+        ['1', true],
+      ]),
+      colorOverrides: new Map(),
+    });
+    store.overrideSelector(
+      getRunSelectionMap,
+      new Map([
+        ['1', true],
+        ['2', true],
+        ['3', true],
+      ])
+    );
+    store.refreshState();
+    effects.hydrateFetchedRunsFromLocalStorage$.subscribe();
+    const fetch = runsActions.fetchRunsSucceeded({
+      experimentIds: ['exp1'],
+      runsForAllExperiments: runs,
+      newRuns: {exp1: {runs}},
+    });
+    actions.next(fetch);
+    expect(dispatchedActions[0]).toEqual(
+      jasmine.objectContaining({
+        selectionOrder: ['2', '3', '1'],
+      })
+    );
+    store.overrideSelector(
+      getRunSelectionMap,
+      new Map([
+        ['3', true],
+        ['1', true],
+        ['2', true],
+      ])
+    );
+    store.refreshState();
+    actions.next(fetch);
+    expect(dispatchedActions[1]).toEqual(
+      jasmine.objectContaining({
+        selectionOrder: ['3', '1', '2'],
+      })
+    );
+    expect([...dataSource.getState(namespace, runs).selection.keys()]).toEqual([
+      '3',
+      '1',
+      '2',
+    ]);
+  });
+
   it('clears persisted state when the fetched route has no runs', () => {
     const setStateSpy = spyOn(dataSource, 'setState').and.stub();
     effects.hydrateFetchedRunsFromLocalStorage$.subscribe();
@@ -121,6 +177,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: [],
         selection: {},
+        selectionOrder: [],
         colorOverrides: {},
         restoredSelection: false,
       }),
@@ -145,6 +202,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: [],
         selection: {},
+        selectionOrder: [],
         colorOverrides: {},
         restoredSelection: false,
       }),
@@ -178,6 +236,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: ['paged', 'chosen'],
         selection: {paged: false, chosen: true},
+        selectionOrder: ['paged', 'chosen'],
         colorOverrides: {},
         restoredSelection: true,
       }),
@@ -217,6 +276,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: ['old', 'new'],
         selection: {old: false, new: true},
+        selectionOrder: ['old', 'new'],
         colorOverrides: {new: '#fff'},
         restoredSelection: true,
       }),
@@ -254,6 +314,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: ['old', 'new'],
         selection: {},
+        selectionOrder: [],
         colorOverrides: {new: '#fff'},
         restoredSelection: false,
       }),
@@ -288,6 +349,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: ['old', 'new'],
         selection: {},
+        selectionOrder: [],
         colorOverrides: {},
         restoredSelection: false,
       }),
@@ -326,6 +388,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: ['run1'],
         selection: {run1: true},
+        selectionOrder: ['run1'],
         colorOverrides: {run1: '#123456'},
         restoredSelection: true,
       }),
@@ -392,6 +455,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: ['old', 'chosen'],
         selection: {chosen: true, old: false},
+        selectionOrder: ['chosen', 'old'],
         colorOverrides: {},
         restoredSelection: false,
       })
@@ -506,6 +570,7 @@ describe('RunsLocalStorageEffects', () => {
       runsActions.runLocalStorageHydrated({
         runIds: ['run1'],
         selection: {},
+        selectionOrder: [],
         colorOverrides: {run1: '#fff'},
         restoredSelection: false,
       })

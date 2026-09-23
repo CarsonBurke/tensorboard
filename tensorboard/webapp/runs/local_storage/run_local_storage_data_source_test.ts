@@ -35,6 +35,58 @@ describe('RunLocalStorageDataSource', () => {
     window.localStorage.removeItem(TEST_ONLY.RUN_LOCAL_STORAGE_KEY);
   });
 
+  it('round trips numeric run ids in selection order', () => {
+    const runs = ['1', '2', '3'].map(createRun);
+    dataSource.setState('namespace', runs, {
+      selection: new Map([
+        ['2', true],
+        ['3', true],
+        ['1', true],
+      ]),
+      colorOverrides: new Map(),
+    });
+    expect([
+      ...new RunLocalStorageDataSource()
+        .getState('namespace', runs)
+        .selection.keys(),
+    ]).toEqual(['2', '3', '1']);
+    dataSource.setState('namespace', runs, {
+      selection: new Map([
+        ['3', true],
+        ['1', true],
+        ['2', true],
+      ]),
+      colorOverrides: new Map(),
+    });
+    expect([
+      ...new RunLocalStorageDataSource()
+        .getState('namespace', runs)
+        .selection.keys(),
+    ]).toEqual(['3', '1', '2']);
+  });
+
+  it('ignores invalid ordering entries and retains legacy selection entries', () => {
+    window.localStorage.setItem(
+      TEST_ONLY.RUN_LOCAL_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        namespaces: {
+          namespace: {
+            runIds: ['A', 'B', 'C'],
+            selection: {A: true, B: false, C: true},
+            selectionOrder: ['C', null, 'missing', 'C'],
+            colorOverrides: {},
+          },
+        },
+      })
+    );
+    expect([...dataSource.getState('namespace', []).selection]).toEqual([
+      ['C', true],
+      ['A', true],
+      ['B', false],
+    ]);
+  });
+
   it('returns empty state for empty storage', () => {
     const state = dataSource.getState('namespace', [createRun('run1')]);
 
@@ -124,6 +176,7 @@ describe('RunLocalStorageDataSource', () => {
           updatedAtMs: jasmine.any(Number),
           runIds: ['run1', 'deleted'],
           selection: {run1: false, deleted: true},
+          selectionOrder: ['run1', 'deleted'],
           colorOverrides: {run1: '#fff', deleted: '#000'},
           newestRunId: 'run1',
         },
@@ -157,6 +210,7 @@ describe('RunLocalStorageDataSource', () => {
             updatedAtMs: 1,
             runIds: ['run1'],
             selection: {run1: true},
+            selectionOrder: ['run1'],
             colorOverrides: {run1: '#fff'},
             newestRunId: 'run1',
           },

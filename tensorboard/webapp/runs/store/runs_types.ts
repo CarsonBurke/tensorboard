@@ -75,7 +75,8 @@ export type RunsDataState = NamespaceContextedState<
 
 export interface RunsUiNamespacedState {
   /**
-   * Indicates whether the run is selected.
+   * Indicates whether the run is selected. Selected entries iterate in selection
+   * order, oldest first. Reselecting a run moves it after every selected run.
    */
   selectionState: Map<RunId, boolean>;
   /**
