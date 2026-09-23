@@ -56,82 +56,96 @@ function scaleDistribution(type: ScaleType): 1 | 3 {
 export class UPlotChart implements Chart {
   private readonly callbacks: ChartCallbacks;
   private readonly container: HTMLElement;
-  private readonly devicePixelRatio: number;
   private dimensions: Dimension;
   private data: DataSeries[] = [];
   private metadata: DataSeriesMetadataMap = {};
   private viewBox: Extent = {x: [0, 1], y: [0, 1]};
   private xScaleType = ScaleType.LINEAR;
   private yScaleType = ScaleType.LINEAR;
-  private useDarkMode: boolean;
   private plot: uPlotModule | null = null;
   private disposed = false;
 
   constructor(options: UPlotChartOptions) {
     this.callbacks = options.callbacks;
     this.container = options.container;
-    this.devicePixelRatio = options.devicePixelRatio;
     this.dimensions = options.domDimension;
-    this.useDarkMode = options.useDarkMode;
     this.recreate();
   }
 
   resize(dim: Dimension): void {
+    if (this.disposed) return;
+    const widthChanged = this.dimensions.width !== dim.width;
     this.dimensions = dim;
-    this.plot?.setSize({width: dim.width, height: dim.height});
-    this.callbacks.onDrawEnd();
+    if (!this.plot) return;
+    this.plot.batch(() => {
+      if (widthChanged) {
+        this.plot!.setData(
+          this.makePlotData() as unknown as uPlotModule.AlignedData,
+          false
+        );
+      }
+      this.plot!.setSize({width: dim.width, height: dim.height});
+    });
   }
 
   setMetadata(metadataMap: DataSeriesMetadataMap): void {
+    if (this.disposed) return;
     this.metadata = metadataMap;
     if (!this.plot) return;
     for (let index = 0; index < this.data.length; index++) {
       const series = this.plot.series[index + 1];
       const metadata = this.metadata[this.data[index].id];
-      if (!series || !metadata) continue;
-      series.show = metadata.visible;
-      // uPlot normalizes `stroke` to a function at construction and calls it
-      // on every draw, so it must stay a function here as well. Assigning the
-      // raw color string breaks all subsequent draws.
-      const color = metadata.color;
-      const stroke: NonNullable<uPlotModule.Series['stroke']> = () => color;
-      series.stroke = stroke;
-      series.alpha = metadata.opacity ?? 1;
+      series.show = metadata?.visible ?? false;
+      series.alpha = metadata?.opacity ?? 1;
     }
-    this.plot.setData(
-      this.makePlotData() as unknown as uPlotModule.AlignedData,
-      false
-    );
-    this.callbacks.onDrawEnd();
+    // Style changes do not invalidate geometry. Stroke callbacks read the
+    // current metadata for both lines and points on the next draw.
+    this.plot.redraw(false);
   }
 
   setViewBox(extent: Extent): void {
+    if (this.disposed) return;
     this.viewBox = extent;
     if (!this.plot) return;
     this.plot.batch(() => {
       this.plot!.setScale('x', {min: extent.x[0], max: extent.x[1]});
       this.plot!.setScale('y', {min: extent.y[0], max: extent.y[1]});
     });
-    this.callbacks.onDrawEnd();
   }
 
   setData(data: DataSeries[]): void {
-    // uPlot bakes the series list into the constructor, so a change in the
-    // series count or identity requires rebuilding the plot. Otherwise only
-    // the values need updating.
-    const seriesChanged =
-      data.length !== this.data.length ||
-      data.some((series, index) => series.id !== this.data[index]?.id);
+    if (this.disposed) return;
+    const previousData = this.data;
     this.data = data;
-    if (!this.plot || seriesChanged) {
+    if (!this.plot || data.length === 0) {
       this.recreate();
       return;
+    }
+
+    // Keep the canvas and unchanged prefix. uPlot supports changing its
+    // series list in place; rebuilding the entire plot causes visible churn
+    // whenever another run finishes loading.
+    let firstChanged = 0;
+    while (
+      firstChanged < previousData.length &&
+      firstChanged < data.length &&
+      previousData[firstChanged].id === data[firstChanged].id
+    ) {
+      firstChanged++;
+    }
+    for (let index = previousData.length; index > firstChanged; index--) {
+      this.plot.delSeries(index);
+    }
+    for (let index = firstChanged; index < data.length; index++) {
+      this.plot.addSeries(this.makeSeriesOptions(data[index]));
     }
     this.plot.setData(
       this.makePlotData() as unknown as uPlotModule.AlignedData,
       false
     );
-    this.callbacks.onDrawEnd();
+    // setData(..., false) invalidates paths but deliberately does not paint.
+    // An unchanged domain (e.g. while zoomed) must still show new samples.
+    this.plot.redraw(false);
   }
 
   setXScaleType(type: ScaleType): void {
@@ -146,8 +160,7 @@ export class UPlotChart implements Chart {
     this.recreate();
   }
 
-  setUseDarkMode(useDarkMode: boolean): void {
-    this.useDarkMode = useDarkMode;
+  setUseDarkMode(_useDarkMode: boolean): void {
     // Line colors are owned by metadata. The chart surface is transparent and
     // inherits the card background, so a theme change needs no canvas clear.
   }
@@ -179,32 +192,21 @@ export class UPlotChart implements Chart {
         x: {
           time: this.xScaleType === ScaleType.TIME,
           distr: scaleDistribution(this.xScaleType),
-          range: [this.viewBox.x[0], this.viewBox.x[1]],
+          auto: false,
+          range: () => this.viewBox.x,
         },
         y: {
           distr: scaleDistribution(this.yScaleType),
-          range: [this.viewBox.y[0], this.viewBox.y[1]],
+          auto: false,
+          range: () => this.viewBox.y,
         },
       },
       mode: 2,
       series: [
         null as unknown as uPlotModule.Series,
-        ...this.data.map((series) => {
-          const metadata = this.metadata[series.id];
-          return {
-            label: series.id,
-            show: metadata?.visible ?? true,
-            stroke: metadata?.color ?? '#000',
-            width: 2,
-            alpha: metadata?.opacity ?? 1,
-            spanGaps: false,
-            facets: [
-              {scale: 'x', auto: false},
-              {scale: 'y', auto: false},
-            ],
-          };
-        }),
+        ...this.data.map((series) => this.makeSeriesOptions(series)),
       ],
+      hooks: {draw: [() => this.callbacks.onDrawEnd()]},
       axes: [{show: false}, {show: false}],
       legend: {show: false},
       cursor: {show: false},
@@ -215,7 +217,36 @@ export class UPlotChart implements Chart {
     };
 
     this.plot = new UPlot(options, this.makePlotData(), this.container);
-    this.callbacks.onDrawEnd();
+  }
+
+  private makeSeriesOptions(series: DataSeries): uPlotModule.Series {
+    const metadata = this.metadata[series.id];
+    const stroke = () => this.metadata[series.id]?.color ?? null;
+    return {
+      label: series.id,
+      // Data and metadata arrive independently. Do not display a new run
+      // until its visibility and color are known.
+      show: metadata?.visible ?? false,
+      stroke,
+      width: 2,
+      alpha: metadata?.opacity ?? 1,
+      spanGaps: false,
+      points: {
+        // In mode 2 uPlot does not supply aligned point indices. Explicitly
+        // select the lone sample after duplicate-x normalization.
+        show: false,
+        filter: (plot, index) => {
+          const data = plot.data as unknown as PlotData;
+          return data[index]![0].length === 1 ? [0] : null;
+        },
+        stroke,
+        fill: stroke,
+      },
+      facets: [
+        {scale: 'x', auto: false},
+        {scale: 'y', auto: false},
+      ],
+    };
   }
 
   private makePlotData(): PlotData {
@@ -240,10 +271,6 @@ export class UPlotChart implements Chart {
           y.push(Number.isFinite(point.y) ? point.y : null);
         }
       }
-      if (x.length === 1) {
-        x.push(x[0] + Math.max(Math.abs(x[0]) * 1e-9, 1));
-        y.push(null);
-      }
       result.push([x, y]);
     }
     return result;
@@ -254,8 +281,8 @@ export class UPlotChart implements Chart {
     maxPoints: number
   ): ReadonlyArray<{x: number; y: number}> {
     if (points.length <= maxPoints) return points;
-    // Each bucket contributes at most first, last, min and max. Limiting the
-    // number of buckets keeps the total output at or below maxPoints.
+    // Keep each bucket's endpoints and extrema, plus discontinuities. Gaps
+    // may exceed the point budget: dropping them would invent connecting lines.
     const bucketCount = Math.max(1, Math.floor(maxPoints / 4));
     const stride = points.length / bucketCount;
     const output: Array<{x: number; y: number}> = [];
@@ -265,19 +292,22 @@ export class UPlotChart implements Chart {
       if (end <= start) continue;
       let min = -1;
       let max = -1;
+      const indices = new Set([start, end - 1]);
       for (let index = start; index < end; index++) {
-        if (!Number.isFinite(points[index].y)) continue;
+        if (!Number.isFinite(points[index].y)) {
+          indices.add(index);
+          if (index > start) indices.add(index - 1);
+          if (index + 1 < end) indices.add(index + 1);
+          continue;
+        }
         if (min === -1 || points[index].y < points[min].y) min = index;
         if (max === -1 || points[index].y > points[max].y) max = index;
       }
-      const first = points[start];
-      const last = points[end - 1];
-      const bucketPoints = [first, last];
-      if (min !== -1) bucketPoints.push(points[min]);
-      if (max !== -1) bucketPoints.push(points[max]);
-      bucketPoints.sort((a, b) => a.x - b.x);
-      for (const point of bucketPoints) {
-        if (output.length === 0 || output[output.length - 1].x !== point.x) {
+      if (min !== -1) indices.add(min);
+      if (max !== -1) indices.add(max);
+      for (const index of [...indices].sort((a, b) => a - b)) {
+        const point = points[index];
+        if (output.length === 0 || output[output.length - 1] !== point) {
           output.push(point);
         }
       }
