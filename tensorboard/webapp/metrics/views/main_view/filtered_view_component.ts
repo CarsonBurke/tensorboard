@@ -32,9 +32,11 @@ import {
   CatalogScrollWindow,
   CatalogScrollGeometry,
   CATALOG_ROW_HEIGHT,
-  CATALOG_GROUP_HEIGHT,
   catalogGridColumns,
 } from './card_groups_component';
+
+// The "Tags matching filter" toolbar above the first row of cards.
+const TOOLBAR_HEIGHT = 42;
 
 interface FilteredCatalogView {
   totalCards: number;
@@ -69,15 +71,23 @@ interface FilteredCatalogView {
       *ngIf="catalog ? catalog.totalCards === 0 : isEmptyMatch"
       class="warn"
     ></metrics-empty-tag-match>
-    <div aria-hidden="true" [style.height.px]="beforeHeight"></div>
-    <div class="card-window" [style.min-height.px]="windowHeight">
+    <div
+      class="catalog-spacer"
+      aria-hidden="true"
+      [style.height.px]="beforeHeight"
+    ></div>
+    <div class="card-window">
       <metrics-card-grid
         [cardIdsWithMetadata]="cardIdsWithMetadata"
         [virtualWindow]="catalog !== null"
         [cardObserver]="cardObserver"
       ></metrics-card-grid>
     </div>
-    <div aria-hidden="true" [style.height.px]="afterHeight"></div>
+    <div
+      class="catalog-spacer"
+      aria-hidden="true"
+      [style.height.px]="afterHeight"
+    ></div>
   `,
   styleUrls: ['filtered_view_component.css'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -91,14 +101,11 @@ export class FilteredViewComponent {
 
   beforeHeight = 0;
   afterHeight = 0;
-  windowHeight: number | null = null;
+  private windowHeight: number | null = null;
   private columns = 1;
   private lastRequest = '';
   private scrollWindow?: CatalogScrollWindow;
-  private anchor: {cardId: string; top: number} | null = null;
   private readonly geometry = new CatalogScrollGeometry();
-  private logicalAnchor: number | null = null;
-  private bottomAnchor = false;
   private cardBounds: Array<{top: number; bottom: number}> = [];
   private renderedWindowHeight = 0;
 
@@ -115,7 +122,8 @@ export class FilteredViewComponent {
       this.scrollable.getElementRef().nativeElement,
       this.element.nativeElement,
       this.zone,
-      (measure) => this.updateViewport(measure)
+      (measure) => this.updateViewport(measure),
+      () => this.catalog !== null
     );
   }
 
@@ -125,62 +133,9 @@ export class FilteredViewComponent {
     const scopeChanged =
       changes['catalog'] && previous?.scope !== this.catalog?.scope;
     if (scopeChanged) {
-      this.anchor = null;
-      this.logicalAnchor = null;
-      this.bottomAnchor = false;
       this.lastRequest = '';
       if (this.scrollable)
         this.scrollable.getElementRef().nativeElement.scrollTop = 0;
-    }
-    const previousCards = changes['cardIdsWithMetadata']?.previousValue as
-      | CardIdWithMetadata[]
-      | undefined;
-    if (!scopeChanged && this.catalog && previousCards && this.scrollWindow) {
-      const rootTop = this.scrollWindow.root.getBoundingClientRect().top;
-      const elements =
-        this.element.nativeElement.querySelectorAll<HTMLElement>('.card-space');
-      const index = Array.from(elements).findIndex(
-        (card) => card.getBoundingClientRect().bottom > rootTop
-      );
-      const card = previousCards[index];
-      if (
-        card &&
-        this.cardIdsWithMetadata.some((next) => next.cardId === card.cardId)
-      ) {
-        this.anchor = {
-          cardId: card.cardId,
-          top: elements[index].getBoundingClientRect().top,
-        };
-      }
-    }
-    if (
-      !scopeChanged &&
-      previous &&
-      this.catalog &&
-      this.scrollWindow &&
-      previous.filteredOffset !== this.catalog.filteredOffset
-    ) {
-      const top = Math.max(
-        0,
-        this.scrollWindow.bounds().top - CATALOG_GROUP_HEIGHT
-      );
-      const window =
-        this.element.nativeElement.querySelector<HTMLElement>('.card-window');
-      const extra =
-        window && top >= this.beforeHeight
-          ? Math.max(
-              0,
-              window.getBoundingClientRect().height -
-                (this.windowHeight ?? 16) +
-                16
-            )
-          : 0;
-      this.logicalAnchor = this.geometry.toLogical(Math.max(0, top - extra));
-    }
-    if (!scopeChanged && previousCards && this.isAtBottom()) {
-      this.bottomAnchor = true;
-      this.anchor = null;
-      this.logicalAnchor = null;
     }
     this.updateGeometry();
     this.scrollWindow?.invalidate();
@@ -207,41 +162,9 @@ export class FilteredViewComponent {
       Math.ceil(count / this.columns) * CATALOG_ROW_HEIGHT + 16;
   }
 
-  private isAtBottom() {
-    const root = this.scrollWindow?.root;
-    return (
-      !!root &&
-      root.scrollTop > 0 &&
-      root.scrollHeight - root.scrollTop - root.clientHeight <= 1
-    );
-  }
-
   private updateViewport(measure: boolean) {
     if (!this.catalog || !this.scrollWindow) return;
     const catalog = this.catalog;
-    if (this.bottomAnchor) {
-      this.scrollWindow.root.scrollTop = this.scrollWindow.root.scrollHeight;
-      this.bottomAnchor = false;
-    }
-    if (this.anchor) {
-      const cards =
-        this.element.nativeElement.querySelectorAll<HTMLElement>('.card-space');
-      const index = this.cardIdsWithMetadata.findIndex(
-        (card) => card.cardId === this.anchor!.cardId
-      );
-      if (cards[index]) {
-        this.scrollWindow.root.scrollTop +=
-          cards[index].getBoundingClientRect().top - this.anchor.top;
-      }
-      this.logicalAnchor = null;
-      this.anchor = null;
-    }
-    if (this.logicalAnchor !== null) {
-      this.scrollWindow.root.scrollTop +=
-        this.geometry.toPhysical(this.logicalAnchor) -
-        Math.max(0, this.scrollWindow.bounds().top - CATALOG_GROUP_HEIGHT);
-      this.logicalAnchor = null;
-    }
     const bounds = this.scrollWindow.bounds();
     const columns = catalogGridColumns(bounds.width, catalog.cardMinWidth);
     const geometryChanged = columns !== this.columns;
@@ -267,7 +190,7 @@ export class FilteredViewComponent {
           ?.getBoundingClientRect().height ?? 0;
     }
     const bufferTop = Math.max(0, bounds.top - bounds.height);
-    const top = Math.max(0, bounds.top - CATALOG_GROUP_HEIGHT);
+    const top = Math.max(0, bounds.top - TOOLBAR_HEIGHT);
     const firstVisible = this.cardBounds.findIndex(
       (card) => card.bottom > bufferTop
     );
@@ -277,14 +200,14 @@ export class FilteredViewComponent {
       (Math.ceil((bounds.height * 3) / CATALOG_ROW_HEIGHT) + 8) * this.columns
     );
     let first: number;
-    if (this.isAtBottom()) {
+    if (this.scrollWindow.isAtBottom()) {
       // Map End to a complete final window, rather than the first logical row
       // covered by a compressed spacer's last physical viewport.
       first =
         Math.ceil(Math.max(0, catalog.totalCards - filteredLimit) / block) *
         block;
     } else if (
-      bufferTop >= this.beforeHeight + CATALOG_GROUP_HEIGHT &&
+      bufferTop >= this.beforeHeight + TOOLBAR_HEIGHT &&
       firstVisible >= 0
     ) {
       // Use actual card geometry for full-width cards and expanded run tables.

@@ -45,7 +45,8 @@ $_background: map.get(tb_theme.$tb-theme, background);
   }
 }
 
-card-view {
+card-view,
+.card-placeholder {
   @include tb_theme.tb-theme-foreground-prop(border, border, 1px solid);
   border-radius: 4px;
   box-sizing: border-box;
@@ -54,6 +55,13 @@ card-view {
   // Make sure the cards generally have some guaranteed minimum height to avoid
   // jank as cards load.
   min-height: common.$metrics-min-card-height;
+}
+
+// A card restyles its contents as they load and resize, and the browser gives
+// up on a scroll anchor whose own layout properties change. Anchor to the
+// card's slot instead, which only ever changes because the card resized.
+card-view {
+  overflow-anchor: none;
 }
 
 .group-controls {

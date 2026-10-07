@@ -24,6 +24,7 @@ import {
   NgZone,
   SimpleChange,
   Type,
+  ViewEncapsulation,
 } from '@angular/core';
 import {
   ComponentFixture,
@@ -63,7 +64,12 @@ import {CardGridComponent} from './card_grid_component';
 import {CardGridContainer} from './card_grid_container';
 import {CardGroupToolBarComponent} from './card_group_toolbar_component';
 import {CardGroupToolBarContainer} from './card_group_toolbar_container';
-import {CardGroupsComponent} from './card_groups_component';
+import {
+  CardGroupsComponent,
+  CatalogCardGroup,
+  CatalogGroupView,
+  CatalogScrollWindow,
+} from './card_groups_component';
 import {CardGroupsContainer} from './card_groups_container';
 import * as common_selectors from './common_selectors';
 import {EmptyTagMatchMessageComponent} from './empty_tag_match_message_component';
@@ -1182,7 +1188,7 @@ describe('metrics main view', () => {
       grid.className = 'card-grid';
       group.appendChild(grid);
       const gridRect = spyOn(grid, 'getBoundingClientRect').and.returnValue(
-        new DOMRect(0, 42, 400, 1558)
+        new DOMRect(0, 41, 400, 1558)
       );
       host.appendChild(group);
       root.appendChild(host);
@@ -1234,17 +1240,17 @@ describe('metrics main view', () => {
       });
       zone.run(() => view.ngAfterViewInit());
       tick(32);
-      expect(view.reservedHeight(view.cardGroups[0])).toBe(1600);
+      expect(view.reservedHeight(view.cardGroups[0])).toBe(1599);
 
       const previousGroups = view.cardGroups;
       view.cardGroups = [{groupName: 'table', totalCards: 1, items: []}];
       // An unloaded grid's natural height is smaller than its loaded run table.
-      gridRect.and.returnValue(new DOMRect(0, 42, 400, 352));
+      gridRect.and.returnValue(new DOMRect(0, 41, 400, 352));
       view.ngOnChanges({
         cardGroups: new SimpleChange(previousGroups, view.cardGroups, false),
       });
       tick(16);
-      expect(view.reservedHeight(view.cardGroups[0])).toBe(1600);
+      expect(view.reservedHeight(view.cardGroups[0])).toBe(1599);
 
       const enterAngular = spyOn(zone, 'run').and.callThrough();
       markForCheck.calls.reset();
@@ -1257,7 +1263,7 @@ describe('metrics main view', () => {
       expect(groupRect).not.toHaveBeenCalled();
 
       // The outer group still has its old reservation when loaded content
-      // shrinks; measuring that box would permanently retain 1600px.
+      // shrinks; measuring that box would permanently retain 1599px.
       const unloadedGroups = view.cardGroups;
       view.cardGroups = [
         {groupName: 'table', totalCards: 1, items: createNScalarCards(1)},
@@ -1266,32 +1272,25 @@ describe('metrics main view', () => {
         cardGroups: new SimpleChange(unloadedGroups, view.cardGroups, false),
       });
       tick(16);
-      expect(view.reservedHeight(view.cardGroups[0])).toBe(394);
+      expect(view.reservedHeight(view.cardGroups[0])).toBe(393);
       view.ngOnDestroy();
     }));
 
-    it('keeps the final categories visible after applying a compressed end window', fakeAsync(() => {
+    it('requests the final categories at a compressed catalog end', fakeAsync(() => {
       const root = document.createElement('div');
       const host = document.createElement('div');
       root.appendChild(host);
-      let scrollHeight = 8_000_000;
-      let scrollTop = scrollHeight - 655;
       Object.defineProperties(root, {
         clientHeight: {value: 655},
-        scrollHeight: {get: () => scrollHeight},
-        scrollTop: {
-          get: () => scrollTop,
-          set: (value: number) => {
-            scrollTop = Math.max(0, Math.min(value, scrollHeight - 655));
-          },
-        },
+        scrollHeight: {value: 8_000_000},
+        scrollTop: {value: 7_999_345, writable: true},
       });
       Object.defineProperty(host, 'clientWidth', {value: 837});
       spyOn(root, 'getBoundingClientRect').and.returnValue(
         new DOMRect(0, 0, 837, 655)
       );
       spyOn(host, 'getBoundingClientRect').and.callFake(
-        () => new DOMRect(0, -root.scrollTop, 837, scrollHeight)
+        () => new DOMRect(0, -root.scrollTop, 837, 8_000_000)
       );
       const view = new CardGroupsComponent(
         new ElementRef(host),
@@ -1319,51 +1318,84 @@ describe('metrics main view', () => {
       view.viewportChanged.subscribe(requested);
       view.ngAfterViewInit();
       tick(16);
+      // A compressed spacer's last viewport covers far more categories than
+      // one window; the end must still map to the window that finishes it.
       const {groupOffset, groupLimit} = requested.calls.mostRecent().args[0];
       expect(groupOffset).toBeLessThan(view.catalog.totalGroups);
       expect(groupOffset + groupLimit).toBeGreaterThanOrEqual(
         view.catalog.totalGroups
       );
-      const previousCatalog = view.catalog;
-      view.catalog = {
-        ...previousCatalog,
-        groupOffset,
-        viewport: requested.calls.mostRecent().args[0],
-      };
-      view.cardGroups = Array.from(
-        {length: view.catalog.totalGroups - groupOffset},
-        (_, index) => ({
-          groupName: `category-${groupOffset + index}`,
-          items: [],
-        })
-      );
-      const elements = view.cardGroups.map((unused, index) => {
-        const group = document.createElement('div');
-        group.className = 'card-group';
-        host.appendChild(group);
-        spyOn(group, 'getBoundingClientRect').and.callFake(
-          () =>
-            new DOMRect(
-              0,
-              view.beforeHeight + index * 42 - root.scrollTop,
-              837,
-              42
-            )
-        );
-        return group;
+      view.ngOnDestroy();
+    }));
+
+    it('never writes the scroll position when a new window arrives', fakeAsync(() => {
+      const root = document.createElement('div');
+      const host = document.createElement('div');
+      root.appendChild(host);
+      let scrollTop = 4_000;
+      const scrollTopWrites: number[] = [];
+      Object.defineProperties(root, {
+        clientHeight: {value: 655},
+        scrollHeight: {value: 100_000},
+        scrollTop: {
+          get: () => scrollTop,
+          set: (value: number) => {
+            scrollTopWrites.push(value);
+            scrollTop = value;
+          },
+        },
       });
+      Object.defineProperty(host, 'clientWidth', {value: 837});
+      spyOn(root, 'getBoundingClientRect').and.returnValue(
+        new DOMRect(0, 0, 837, 655)
+      );
+      spyOn(host, 'getBoundingClientRect').and.callFake(
+        () => new DOMRect(0, -root.scrollTop, 837, 100_000)
+      );
+      const view = new CardGroupsComponent(
+        new ElementRef(host),
+        {markForCheck() {}} as ChangeDetectorRef,
+        TestBed.inject(NgZone),
+        {getElementRef: () => new ElementRef(root)} as unknown as CdkScrollable
+      );
+      view.catalog = {
+        groupOffset: 0,
+        totalGroups: 2_000,
+        expanded: new Map(),
+        pages: new Map(),
+        pageSize: 12,
+        cardMinWidth: 335,
+        scope: 'selected-run',
+        viewport: {
+          groupOffset: 0,
+          groupLimit: 100,
+          visibleGroups: [],
+          filteredOffset: 0,
+          filteredLimit: 40,
+        },
+      };
+      view.ngAfterViewInit();
+      tick(16);
+
+      // The reader keeps scrolling between the response and the next frame.
+      // Restoring a position captured at either moment would undo that input;
+      // holding the content in place is left to browser scroll anchoring.
+      const previousCatalog = view.catalog;
+      view.catalog = {...previousCatalog, groupOffset: 60};
+      view.cardGroups = Array.from({length: 100}, (_, index) => ({
+        groupName: `category-${60 + index}`,
+        items: [],
+      }));
       view.ngOnChanges({
         catalog: new SimpleChange(previousCatalog, view.catalog, false),
         cardGroups: new SimpleChange([], view.cardGroups, false),
       });
-      // Apply spacer bindings as the view renders the server response.
-      scrollHeight =
-        view.beforeHeight + view.cardGroups.length * 42 + view.afterHeight;
+      scrollTop = 4_600;
+      root.dispatchEvent(new Event('scroll'));
       tick(32);
-      expect(root.scrollTop + root.clientHeight).toBeCloseTo(scrollHeight, 5);
-      const finalBounds = elements[elements.length - 1].getBoundingClientRect();
-      expect(finalBounds.top).toBeLessThan(root.clientHeight);
-      expect(finalBounds.bottom).toBeCloseTo(root.clientHeight, 5);
+
+      expect(scrollTopWrites).toEqual([]);
+      expect(root.scrollTop).toBe(4_600);
       view.ngOnDestroy();
     }));
 
@@ -2082,6 +2114,291 @@ describe('metrics main view', () => {
 
       expect(dispatchedActions).toEqual([actions.metricsSettingsPaneClosed()]);
     });
+  });
+});
+
+// Categories are deliberately taller than the 41px the catalog estimates, as
+// expanded ones are: replacing rendered categories with an estimate, or the
+// reverse, then moves everything after them unless the browser compensates.
+@Component({
+  standalone: false,
+  selector: 'testable-catalog',
+  template: `
+    <div cdkScrollable class="testable-catalog-scroller">
+      <metrics-card-groups-component
+        [cardGroups]="cardGroups"
+        [catalog]="catalog"
+      ></metrics-card-groups-component>
+    </div>
+  `,
+  styles: [
+    `
+      .testable-catalog-scroller {
+        height: 300px;
+        overflow-y: scroll;
+      }
+      .testable-catalog-scroller .card-group {
+        height: 60px;
+      }
+    `,
+  ],
+  encapsulation: ViewEncapsulation.None,
+})
+class TestableCatalog {
+  cardGroups: CatalogCardGroup[] = [];
+  catalog: CatalogGroupView | null = null;
+}
+
+describe('catalog scroll anchoring', () => {
+  let fixture: ComponentFixture<TestableCatalog>;
+  let scroller: HTMLElement;
+
+  function showWindow(groupOffset: number) {
+    fixture.componentInstance.cardGroups = Array.from(
+      {length: 60},
+      (_, index) => ({groupName: `category-${groupOffset + index}`, items: []})
+    );
+    fixture.componentInstance.catalog = {
+      groupOffset,
+      totalGroups: 1000,
+      expanded: new Map(),
+      pages: new Map(),
+      pageSize: 12,
+      cardMinWidth: null,
+      scope: 'selected-run',
+      viewport: {
+        groupOffset,
+        groupLimit: 60,
+        visibleGroups: [],
+        filteredOffset: 0,
+        filteredLimit: 40,
+      },
+    };
+    fixture.detectChanges();
+  }
+
+  function nextFrame() {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  }
+
+  function offsetInViewport(element: Element) {
+    return (
+      element.getBoundingClientRect().top - scroller.getBoundingClientRect().top
+    );
+  }
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [ScrollingModule],
+      declarations: [CardGroupsComponent, TestableCatalog],
+      schemas: [NO_ERRORS_SCHEMA],
+    }).compileComponents();
+    fixture = TestBed.createComponent(TestableCatalog);
+    scroller = fixture.nativeElement.querySelector(
+      '.testable-catalog-scroller'
+    );
+    showWindow(0);
+  });
+
+  it('holds rendered categories in place when the window moves', async () => {
+    scroller.scrollTop = 40 * 60 + 10;
+    await nextFrame();
+    const category = scroller.querySelectorAll('.card-group')[40];
+    expect(offsetInViewport(category)).toBe(-10);
+
+    // 20 categories of 60px leave the window for 20 estimates of 41px.
+    showWindow(20);
+    await nextFrame();
+
+    expect(category.isConnected).toBeTrue();
+    expect(offsetInViewport(category)).toBe(-10);
+    expect(scroller.scrollTop).toBe(40 * 60 + 10 - 20 * (60 - 41));
+  });
+
+  it('holds rendered categories in place when the window moves back', async () => {
+    showWindow(20);
+    scroller.scrollTop = 20 * 41 + 5 * 60 + 10;
+    await nextFrame();
+    const category = scroller.querySelectorAll('.card-group')[5];
+    expect(offsetInViewport(category)).toBe(-10);
+
+    showWindow(0);
+    await nextFrame();
+
+    expect(offsetInViewport(category)).toBe(-10);
+    expect(scroller.scrollTop).toBe(25 * 60 + 10);
+  });
+
+  it('does not anchor to an unloaded stretch', async () => {
+    // Past the 60 rendered categories: only the trailing estimate is in view.
+    scroller.scrollTop = 18_000;
+    await nextFrame();
+
+    // The estimate stands for a position in the catalog. Following it as the
+    // categories before it resize would carry the reader away from the
+    // position whose categories are being requested.
+    const category = scroller.querySelector<HTMLElement>('.card-group')!;
+    category.style.height = '500px';
+    await nextFrame();
+
+    expect(scroller.scrollTop).toBe(18_000);
+  });
+});
+
+describe('catalog scroll window', () => {
+  let root: HTMLElement;
+  let host: HTMLElement;
+  let scrollWindow: CatalogScrollWindow;
+
+  // Scroll events and resize observations are both delivered while a frame is
+  // rendered, so they have run by the following frame's animation callbacks.
+  function nextFrame() {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  }
+
+  function distanceFromEnd() {
+    return root.scrollHeight - root.clientHeight - root.scrollTop;
+  }
+
+  beforeEach(() => {
+    root = document.createElement('div');
+    root.style.cssText = 'height: 100px; overflow-y: scroll;';
+    host = document.createElement('div');
+    host.style.height = '1000px';
+    root.appendChild(host);
+    document.body.appendChild(root);
+    scrollWindow = new CatalogScrollWindow(
+      root,
+      host,
+      TestBed.inject(NgZone),
+      () => {}
+    );
+  });
+
+  afterEach(() => {
+    scrollWindow.destroy();
+    root.remove();
+  });
+
+  it('keeps a reader at the end there while the end loads', async () => {
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+
+    host.style.height = '1500px';
+    await nextFrame();
+    expect(distanceFromEnd()).toBe(0);
+  });
+
+  it('leaves a reader who is not at the end where they are', async () => {
+    root.scrollTop = 300;
+    await nextFrame();
+
+    host.style.height = '1500px';
+    await nextFrame();
+    expect(root.scrollTop).toBe(300);
+  });
+
+  it('does not treat the top of unscrollable content as its end', async () => {
+    host.style.height = '50px';
+    root.dispatchEvent(new Event('scroll'));
+
+    host.style.height = '1000px';
+    await nextFrame();
+    expect(root.scrollTop).toBe(0);
+  });
+
+  it('shows the update the end, not the position the resize left', async () => {
+    const sawBottom: boolean[] = [];
+    scrollWindow.destroy();
+    scrollWindow = new CatalogScrollWindow(
+      root,
+      host,
+      TestBed.inject(NgZone),
+      () => sawBottom.push(scrollWindow.isAtBottom())
+    );
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+    sawBottom.length = 0;
+
+    // As when a window arrives: content resizes and an update is scheduled
+    // before the browser has laid anything out. An update that saw the stale
+    // position would request the window for it.
+    host.style.height = '1500px';
+    scrollWindow.invalidate();
+    await nextFrame();
+
+    expect(sawBottom.length).toBeGreaterThan(0);
+    expect(sawBottom).not.toContain(false);
+  });
+
+  it('keeps following the end through keys that scroll to it', async () => {
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+
+    // A second End or Page Down at the end scrolls nothing.
+    root.dispatchEvent(new KeyboardEvent('keydown', {key: 'End'}));
+    host.style.height = '1500px';
+    await nextFrame();
+    expect(distanceFromEnd()).toBe(0);
+  });
+
+  it('does not follow the end after a click', async () => {
+    const control = document.createElement('button');
+    host.appendChild(control);
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+
+    // Such as expanding the last category: what it reveals grows downward
+    // from a control that must stay under the pointer.
+    control.click();
+    host.style.height = '1500px';
+    await nextFrame();
+    expect(distanceFromEnd()).toBe(500);
+  });
+
+  it('follows the end again once the reader scrolls back to it', async () => {
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+    root.click();
+    host.style.height = '1500px';
+    await nextFrame();
+
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+    host.style.height = '2000px';
+    await nextFrame();
+    expect(distanceFromEnd()).toBe(0);
+  });
+
+  it('does not follow the end for a view that does not hold it', async () => {
+    scrollWindow.destroy();
+    scrollWindow = new CatalogScrollWindow(
+      root,
+      host,
+      TestBed.inject(NgZone),
+      () => {},
+      () => false
+    );
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+
+    host.style.height = '1500px';
+    await nextFrame();
+    expect(distanceFromEnd()).toBe(500);
+  });
+
+  it('stops following the end once destroyed', async () => {
+    root.scrollTop = root.scrollHeight;
+    await nextFrame();
+
+    scrollWindow.destroy();
+    host.style.height = '1500px';
+    await nextFrame();
+    expect(distanceFromEnd()).toBe(500);
   });
 });
 

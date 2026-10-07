@@ -159,6 +159,7 @@ tf_ng_module(
         "//tensorboard/webapp/settings",
         "//tensorboard/webapp/types",
         "//tensorboard/webapp/types:ui",
+        "//tensorboard/webapp/util:dom",
         "//tensorboard/webapp/util:string",
         "//tensorboard/webapp/util:types",
         "//tensorboard/webapp/widgets/filter_input",

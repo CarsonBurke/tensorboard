@@ -18,5 +18,11 @@ limitations under the License.
 :host {
   @include common.metrics-sub-view;
   display: block;
+}
+
+// An unloaded stretch stands for a position in the catalog rather than for
+// content. The browser must not anchor the scroll position to it and carry the
+// reader along when the categories before it resize.
+.catalog-spacer {
   overflow-anchor: none;
 }

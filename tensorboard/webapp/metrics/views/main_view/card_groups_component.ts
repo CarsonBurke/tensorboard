@@ -49,7 +49,8 @@ export interface CatalogCardGroup extends CardGroup {
 
 // Keep in sync with the grid's 16px gap, 335px minimum width and 320px height.
 export const CATALOG_ROW_HEIGHT = 336;
-export const CATALOG_GROUP_HEIGHT = 42;
+// A 42px toolbar whose bottom border overlaps whatever follows it by 1px.
+export const CATALOG_GROUP_HEIGHT = 41;
 export function catalogGridColumns(width: number, cardMinWidth: number | null) {
   const minimum =
     cardMinWidth && cardMinWidth >= 335 && cardMinWidth <= 735
@@ -83,21 +84,20 @@ export class CatalogScrollGeometry {
       this.end + (position - this.before - this.end + this.start) / this.scale
     );
   }
-
-  toPhysical(position: number) {
-    if (position < this.start) return position * this.scale;
-    if (position <= this.end) return this.before + position - this.start;
-    return (
-      this.before + this.end - this.start + (position - this.end) * this.scale
-    );
-  }
 }
 
-/** One frame-coalesced listener per active virtual view, not per category. */
+/**
+ * One frame-coalesced listener per active virtual view, not per category.
+ *
+ * Positions against rendered content are left to browser scroll anchoring.
+ * The end of the view has nothing below it to anchor to, so a reader who
+ * scrolls there is kept there while the final rows load and resize.
+ */
 export class CatalogScrollWindow {
   private frame: number | null = null;
   private readonly resizeObserver: ResizeObserver;
   private measure = true;
+  private atEnd = false;
   private readonly contentElements = new Set<HTMLElement>();
   readonly schedule = () => {
     if (this.frame !== null) return;
@@ -106,6 +106,8 @@ export class CatalogScrollWindow {
         this.frame = null;
         const measure = this.measure;
         this.measure = false;
+        // The update chooses a window from the position it finds.
+        this.keepAtEnd();
         this.update(measure);
       });
     });
@@ -139,13 +141,22 @@ export class CatalogScrollWindow {
     readonly root: HTMLElement,
     private readonly host: HTMLElement,
     private readonly zone: NgZone,
-    private readonly update: (measure: boolean) => void
+    private readonly update: (measure: boolean) => void,
+    private readonly holdsEnd: () => boolean = () => true
   ) {
     this.resizeObserver = this.zone.runOutsideAngular(
-      () => new ResizeObserver(() => this.invalidate())
+      () =>
+        new ResizeObserver(() => {
+          // Delivered after layout and before paint: the end never visibly
+          // moves away from a reader who is at it.
+          this.keepAtEnd();
+          this.invalidate();
+        })
     );
     this.zone.runOutsideAngular(() => {
-      root.addEventListener('scroll', this.schedule, {passive: true});
+      root.addEventListener('scroll', this.onScroll, {passive: true});
+      // Capture, so the hold is released before the click is acted on.
+      root.addEventListener('click', this.releaseEnd, {capture: true});
       this.resizeObserver.observe(root);
       this.resizeObserver.observe(host);
       // Pinned cards can resize above this view without resizing the scroll root.
@@ -169,8 +180,32 @@ export class CatalogScrollWindow {
     };
   }
 
+  isAtBottom() {
+    const {scrollTop, scrollHeight, clientHeight} = this.root;
+    return scrollTop > 0 && scrollHeight - scrollTop - clientHeight <= 1;
+  }
+
+  private keepAtEnd() {
+    if (this.atEnd && this.holdsEnd() && !this.isAtBottom()) {
+      this.root.scrollTop = this.root.scrollHeight;
+    }
+  }
+
+  private readonly onScroll = () => {
+    this.atEnd = this.isAtBottom();
+    this.schedule();
+  };
+
+  // What a click reveals, such as the cards of the last category, grows away
+  // from a control that must stay under the pointer. Keyboard activation of a
+  // control is a click too; keys that only scroll are not.
+  private readonly releaseEnd = () => {
+    this.atEnd = false;
+  };
+
   destroy() {
-    this.root.removeEventListener('scroll', this.schedule);
+    this.root.removeEventListener('scroll', this.onScroll);
+    this.root.removeEventListener('click', this.releaseEnd, {capture: true});
     this.resizeObserver.disconnect();
     if (this.frame !== null) cancelAnimationFrame(this.frame);
   }
@@ -180,11 +215,15 @@ export class CatalogScrollWindow {
   standalone: false,
   selector: 'metrics-card-groups-component',
   template: `
-    <div aria-hidden="true" [style.height.px]="beforeHeight"></div>
+    <div
+      class="catalog-spacer"
+      aria-hidden="true"
+      [style.height.px]="beforeHeight"
+    ></div>
     <div
       *ngFor="let group of cardGroups; trackBy: trackByGroup"
       class="card-group"
-      [style.min-height.px]="reservedHeight(group)"
+      [style.min-height.px]="group.items.length ? null : reservedHeight(group)"
     >
       <metrics-card-group-toolbar
         [numberOfCards]="group.totalCards ?? group.items.length"
@@ -197,7 +236,11 @@ export class CatalogScrollWindow {
         [groupName]="group.groupName"
       ></metrics-card-grid>
     </div>
-    <div aria-hidden="true" [style.height.px]="afterHeight"></div>
+    <div
+      class="catalog-spacer"
+      aria-hidden="true"
+      [style.height.px]="afterHeight"
+    ></div>
   `,
   styleUrls: ['card_groups_component.css'],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -218,8 +261,6 @@ export class CardGroupsComponent {
   private groupBounds: Array<{top: number; bottom: number}> = [];
   private lastRequest = '';
   private readonly geometry = new CatalogScrollGeometry();
-  private logicalAnchor: number | null = null;
-  private bottomAnchor = false;
 
   constructor(
     private readonly element: ElementRef<HTMLElement>,
@@ -234,7 +275,8 @@ export class CardGroupsComponent {
       this.scrollable.getElementRef().nativeElement,
       this.element.nativeElement,
       this.zone,
-      (measure) => this.updateViewport(measure)
+      (measure) => this.updateViewport(measure),
+      () => this.catalog !== null
     );
   }
 
@@ -244,22 +286,11 @@ export class CardGroupsComponent {
     const scopeChanged =
       changes['catalog'] && previous?.scope !== this.catalog?.scope;
     if (scopeChanged) {
-      this.logicalAnchor = null;
-      this.bottomAnchor = false;
       this.expandedGroups.clear();
       this.measuredHeights.clear();
       this.lastRequest = '';
       if (this.scrollable)
         this.scrollable.getElementRef().nativeElement.scrollTop = 0;
-    } else if (
-      previous &&
-      this.catalog &&
-      this.scrollWindow &&
-      previous.groupOffset !== this.catalog.groupOffset
-    ) {
-      this.logicalAnchor = this.geometry.toLogical(
-        this.scrollWindow.bounds().top
-      );
     }
     if (
       previous &&
@@ -277,10 +308,6 @@ export class CardGroupsComponent {
           this.measuredHeights.delete(name);
         }
       }
-    }
-    if (!scopeChanged && this.isAtBottom()) {
-      this.bottomAnchor = true;
-      this.logicalAnchor = null;
     }
     this.updateGeometry();
     this.scrollWindow?.invalidate();
@@ -356,30 +383,9 @@ export class CardGroupsComponent {
     return Math.min(low, Math.max(0, this.catalog!.totalGroups - 1));
   }
 
-  private isAtBottom() {
-    const root = this.scrollWindow?.root;
-    return (
-      !!root &&
-      root.scrollTop > 0 &&
-      root.scrollHeight - root.scrollTop - root.clientHeight <= 1
-    );
-  }
-
   private updateViewport(measure: boolean) {
     const catalog = this.catalog;
     if (!catalog || !this.scrollWindow) return;
-    if (this.bottomAnchor) {
-      this.scrollWindow.root.scrollTop =
-        this.scrollWindow.root.scrollHeight -
-        this.scrollWindow.root.clientHeight;
-      this.bottomAnchor = false;
-    }
-    if (this.logicalAnchor !== null) {
-      this.scrollWindow.root.scrollTop +=
-        this.geometry.toPhysical(this.logicalAnchor) -
-        this.scrollWindow.bounds().top;
-      this.logicalAnchor = null;
-    }
     const bounds = this.scrollWindow.bounds();
     const columns = catalogGridColumns(bounds.width, catalog.cardMinWidth);
     const columnsChanged = columns !== this.columns;
@@ -425,16 +431,10 @@ export class CardGroupsComponent {
       });
       this.scrollWindow.observeContent(observed);
     }
-    if (geometryChanged) {
-      this.updateGeometry();
-      if (this.isAtBottom()) {
-        this.bottomAnchor = true;
-        this.scrollWindow.invalidate();
-      }
-    }
+    if (geometryChanged) this.updateGeometry();
     const bufferGroups = Math.ceil(bounds.height / CATALOG_GROUP_HEIGHT);
     const groupLimit = Math.max(60, bufferGroups * 3 + 40);
-    const atBottom = this.isAtBottom();
+    const atBottom = this.scrollWindow.isAtBottom();
     const renderedFirst = this.groupBounds.findIndex(
       (rect) => rect.top <= bounds.top && rect.bottom > bounds.top
     );

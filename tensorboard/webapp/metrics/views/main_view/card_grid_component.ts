@@ -18,12 +18,16 @@ import {
   Component,
   EventEmitter,
   Input,
+  OnChanges,
+  OnDestroy,
+  OnInit,
   Optional,
   Output,
   SimpleChanges,
 } from '@angular/core';
 import {PluginType} from '../../data_source';
 import {CardId} from '../../types';
+import {holdInViewport} from '../../../util/dom';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
 import {CardIdWithMetadata} from '../metrics_view_types';
 
@@ -49,7 +53,7 @@ export interface CardGridSizing {
   styleUrls: ['./card_grid_component.css'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class CardGridComponent {
+export class CardGridComponent implements OnInit, OnChanges, OnDestroy {
   readonly PluginType = PluginType;
   gridTemplateColumn = '';
 
@@ -60,6 +64,7 @@ export class CardGridComponent {
   @Input() pageIndex!: number;
   @Input() numPages!: number;
   @Input() cardIdsWithMetadata!: CardIdWithMetadata[];
+  @Input() pendingCards: number | null = 0;
   @Input() cardMinWidth!: number | null;
   @Input() cardObserver!: CardObserver;
   @Input() showPaginationControls!: boolean;
@@ -67,6 +72,9 @@ export class CardGridComponent {
   @Input() groupName: string | null = null;
 
   @Output() pageIndexChanged = new EventEmitter<number>();
+
+  placeholders: readonly null[] = [];
+  private releasePagingControl: (() => void) | null = null;
 
   constructor(
     @Optional() private readonly cdkScrollable: CdkScrollable | null
@@ -79,6 +87,9 @@ export class CardGridComponent {
   }
 
   ngOnChanges(changes: SimpleChanges) {
+    if (changes['pendingCards']) {
+      this.placeholders = Array<null>(this.pendingCards ?? 0).fill(null);
+    }
     if (changes['cardMinWidth']) {
       const newCardWidth = changes['cardMinWidth'].currentValue;
       if (this.isCardWidthValid(newCardWidth)) {
@@ -103,26 +114,23 @@ export class CardGridComponent {
   }
 
   handlePageChange(pageIndex: number, target: HTMLElement) {
-    // Clear call stack to allow dom update before updating scroll to keep
-    // relative position.
-    const topBeforeChange = target.getBoundingClientRect().top;
-    setTimeout(() => {
-      this.scrollToKeepTargetPosition(target, topBeforeChange);
-    }, 0);
+    // The page being left and the one arriving differ in height, and the new
+    // cards keep resizing as they load. Hold the control that was used so it
+    // can be used again without chasing it. The page input also reports the
+    // page it is already on, when it loses focus to a click elsewhere.
+    if (pageIndex !== this.pageIndex) {
+      this.releasePagingControl?.();
+      const scroller = this.cdkScrollable?.getElementRef().nativeElement;
+      this.releasePagingControl = scroller
+        ? holdInViewport(scroller, target)
+        : null;
+    }
 
     this.pageIndexChanged.emit(pageIndex);
   }
 
-  scrollToKeepTargetPosition(target: HTMLElement, previousTop: number) {
-    const scrollingElement = this.cdkScrollable?.getElementRef().nativeElement;
-    if (scrollingElement) {
-      scrollingElement.scrollTo(
-        0,
-        target.getBoundingClientRect().top -
-          previousTop +
-          scrollingElement.scrollTop
-      );
-    }
+  ngOnDestroy() {
+    this.releasePagingControl?.();
   }
 
   trackByCards(index: number, cardIdWithMetadata: CardIdWithMetadata) {
