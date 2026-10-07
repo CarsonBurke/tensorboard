@@ -61,6 +61,7 @@ const scrollElementHeight = 100;
         [cardIdsWithMetadata]="cardIdsWithMetadata"
         [cardObserver]="cardObserver"
         [groupName]="groupName"
+        [serverTotalCards]="serverTotalCards"
       ></metrics-card-grid>
       <div class="placeholder">placeholder</div>
     </div>
@@ -71,10 +72,15 @@ const scrollElementHeight = 100;
         position: fixed;
         height: ${scrollElementHeight}px;
         overflow-y: scroll;
+        /* Only the grid's own scroll handling is under test. */
+        overflow-anchor: none;
       }
       .placeholder {
         position: relative;
         height: 700px;
+      }
+      metrics-card-grid {
+        display: block;
       }
     `,
   ],
@@ -82,6 +88,15 @@ const scrollElementHeight = 100;
 class TestableScrollingContainer {
   @Input() cardIdsWithMetadata: CardIdWithMetadata[] = [];
   @Input() groupName: string | null = null;
+  @Input() serverTotalCards: number | null = null;
+}
+
+// Resize observations are delivered between a frame's animation callbacks and
+// its paint, so they have run by the following frame's callbacks.
+function nextFrame() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
 }
 
 /**
@@ -130,7 +145,7 @@ describe('card grid', () => {
     store?.resetSelectors();
   });
 
-  it('keeps pagination button position when page size changes', fakeAsync(() => {
+  it('keeps pagination button position when page size changes', async () => {
     store.overrideSelector(settingsSelectors.getPageSize, 2);
     let scrollOffset = 30;
     const fixture = TestBed.createComponent(TestableScrollingContainer);
@@ -184,8 +199,7 @@ describe('card grid', () => {
     expect(
       bottomNextButtons.offsetTop - scrollingElement.scrollTop
     ).not.toEqual(scrollOffset);
-    // Clear call stack to invoke the scroll adjustement logic.
-    tick(0);
+    await nextFrame();
     expect(bottomNextButtons.offsetTop - scrollingElement.scrollTop).toEqual(
       scrollOffset
     );
@@ -194,8 +208,7 @@ describe('card grid', () => {
     scrollingElement.scrollTo(0, topPreviousButtons.offsetTop - scrollOffset);
     topPreviousButtons.click();
     fixture.detectChanges();
-    // Clear call stack to invoke the scroll adjustement logic.
-    tick(0);
+    await nextFrame();
     expect(topPreviousButtons.offsetTop - scrollingElement.scrollTop).toEqual(
       scrollOffset
     );
@@ -204,8 +217,7 @@ describe('card grid', () => {
     scrollingElement.scrollTo(0, topNextButtons.offsetTop - scrollOffset);
     topNextButtons.click();
     fixture.detectChanges();
-    // Clear call stack to invoke the scroll adjustement logic.
-    tick(0);
+    await nextFrame();
     expect(topNextButtons.offsetTop - scrollingElement.scrollTop).toEqual(
       scrollOffset
     );
@@ -222,8 +234,7 @@ describe('card grid', () => {
     expect(
       bottomPreviousButtons.offsetTop - scrollingElement.scrollTop
     ).not.toEqual(scrollOffset);
-    // Clear call stack to invoke the scroll adjustement logic.
-    tick(0);
+    await nextFrame();
     expect(
       bottomPreviousButtons.offsetTop - scrollingElement.scrollTop
     ).toEqual(scrollOffset);
@@ -238,13 +249,142 @@ describe('card grid', () => {
     expect(PaginationInput.offsetTop - scrollingElement.scrollTop).not.toEqual(
       scrollOffset
     );
-    // Clear call stack to invoke the scroll adjustement logic.
-    tick(0);
+    await nextFrame();
     expect(PaginationInput.offsetTop - scrollingElement.scrollTop).toEqual(
       scrollOffset
     );
-    discardPeriodicTasks();
-  }));
+  });
+
+  it('keeps holding a pagination button while its page keeps resizing', async () => {
+    store.overrideSelector(settingsSelectors.getPageSize, 2);
+    const fixture = TestBed.createComponent(TestableScrollingContainer);
+    fixture.componentInstance.cardIdsWithMetadata = [
+      'card1',
+      'card2',
+      'card3',
+    ].map((cardId) => ({
+      cardId,
+      plugin: PluginType.SCALARS,
+      tag: cardId,
+      runId: null,
+    }));
+    fixture.detectChanges();
+    const scrollingElement: HTMLElement = fixture.nativeElement.children[0];
+    const bottomNext: HTMLElement = fixture.debugElement.queryAll(
+      By.css('.next')
+    )[1].nativeElement;
+    const offset = () => bottomNext.offsetTop - scrollingElement.scrollTop;
+    scrollingElement.scrollTo(0, bottomNext.offsetTop - 30);
+
+    bottomNext.click();
+    fixture.detectChanges();
+    await nextFrame();
+    expect(offset()).toBe(30);
+
+    // The newly paged-in card loads and grows after the page was rendered.
+    const card: HTMLElement = fixture.debugElement.query(
+      By.css('card-view')
+    ).nativeElement;
+    card.style.height = '900px';
+    await nextFrame();
+    expect(offset()).toBe(30);
+
+    // Scrolling away is the reader's call; the button is no longer held.
+    scrollingElement.dispatchEvent(new Event('wheel'));
+    card.style.height = '1200px';
+    await nextFrame();
+    expect(offset()).toBe(330);
+  });
+
+  it('does not hold the page input when it reports the current page', async () => {
+    store.overrideSelector(settingsSelectors.getPageSize, 2);
+    const fixture = TestBed.createComponent(TestableScrollingContainer);
+    fixture.componentInstance.cardIdsWithMetadata = [
+      'card1',
+      'card2',
+      'card3',
+    ].map((cardId) => ({
+      cardId,
+      plugin: PluginType.SCALARS,
+      tag: cardId,
+      runId: null,
+    }));
+    fixture.detectChanges();
+    const scrollingElement: HTMLElement = fixture.nativeElement.children[0];
+    const input: HTMLInputElement = fixture.debugElement.query(
+      By.css('input')
+    ).nativeElement;
+    const offset = () => input.offsetTop - scrollingElement.scrollTop;
+    scrollingElement.scrollTo(0, input.offsetTop - 30);
+
+    // Fired when the input loses focus, e.g. to a click that is about to
+    // resize content above it. That click's target must not be scrolled away.
+    input.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    const card: HTMLElement = fixture.debugElement.query(
+      By.css('card-view')
+    ).nativeElement;
+    card.style.height = '900px';
+    await nextFrame();
+
+    expect(offset()).toBeGreaterThan(30);
+  });
+
+  describe('pending server pages', () => {
+    function createGrid(totalCards: number | null, cardIds: string[] = []) {
+      const fixture = TestBed.createComponent(TestableScrollingContainer);
+      fixture.componentInstance.groupName = 'tagA';
+      fixture.componentInstance.serverTotalCards = totalCards;
+      fixture.componentInstance.cardIdsWithMetadata = cardIds.map((cardId) => ({
+        cardId,
+        plugin: PluginType.SCALARS,
+        tag: `tagA/${cardId}`,
+        runId: null,
+      }));
+      fixture.detectChanges();
+      return fixture;
+    }
+
+    function getPlaceholders(
+      fixture: ComponentFixture<TestableScrollingContainer>
+    ) {
+      return fixture.debugElement.queryAll(By.css('.card-placeholder'));
+    }
+
+    it('reserves a slot for every card of a page that is not listed yet', () => {
+      const fixture = createGrid(25);
+      expect(getPlaceholders(fixture).length).toBe(10);
+      expect(fixture.debugElement.queryAll(By.css('card-view')).length).toBe(0);
+    });
+
+    it('reserves only the remaining cards on the last page', () => {
+      store.overrideSelector(getMetricsTagGroupPageIndex, 2);
+      const fixture = createGrid(25);
+      expect(getPlaceholders(fixture).length).toBe(5);
+    });
+
+    it('replaces the slots with the cards once they are listed', () => {
+      const fixture = createGrid(25, ['card1', 'card2']);
+      expect(getPlaceholders(fixture).length).toBe(0);
+      expect(fixture.debugElement.queryAll(By.css('card-view')).length).toBe(2);
+    });
+
+    it('reserves nothing for a group without cards', () => {
+      const fixture = createGrid(0);
+      expect(getPlaceholders(fixture).length).toBe(0);
+    });
+
+    it('reserves nothing for a collapsed group', () => {
+      store.overrideSelector(getMetricsTagGroupExpansionState, false);
+      const fixture = createGrid(25);
+      expect(getPlaceholders(fixture).length).toBe(0);
+    });
+
+    it('reserves nothing when the client holds the whole card list', () => {
+      const fixture = createGrid(null);
+      expect(getPlaceholders(fixture).length).toBe(0);
+    });
+  });
 
   it('dispatches page index changes for grouped grids', fakeAsync(() => {
     store.overrideSelector(settingsSelectors.getPageSize, 1);

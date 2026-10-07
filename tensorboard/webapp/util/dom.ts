@@ -51,3 +51,54 @@ export function isMouseEventInElement(event: MouseEvent, el: Element): boolean {
     event.clientY <= rect.y + rect.height
   );
 }
+
+// Input by which a reader moves on to something else.
+const RELEASING_INPUT_EVENTS = [
+  'wheel',
+  'touchstart',
+  'keydown',
+  'pointerdown',
+];
+
+/**
+ * Keeps `target` where it is on screen while content above it in `scroller`
+ * loads and resizes, until the reader's next input anywhere in the document.
+ * Browser scroll anchoring holds the topmost visible content instead, which is
+ * wrong for a control the reader is about to press again.
+ *
+ * @return A function that stops holding the target.
+ */
+export function holdInViewport(
+  scroller: HTMLElement,
+  target: HTMLElement
+): () => void {
+  const offset = () =>
+    target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  const heldOffset = offset();
+  // Resize observations are delivered after layout and before paint, so the
+  // correction lands in the frame that moved the target.
+  const observer = new ResizeObserver(() => {
+    // Removed or hidden: it has no position left to hold.
+    if (!target.getClientRects().length) {
+      release();
+      return;
+    }
+    const drift = offset() - heldOffset;
+    if (drift) scroller.scrollTop += drift;
+  });
+  const document = scroller.ownerDocument;
+  const release = () => {
+    observer.disconnect();
+    for (const type of RELEASING_INPUT_EVENTS) {
+      document.removeEventListener(type, release, {capture: true});
+    }
+  };
+  // Content anywhere above the target resizes one of the scroller's children.
+  for (const child of Array.from(scroller.children)) observer.observe(child);
+  // Input outside the scroller counts: a key scrolls it from wherever focus
+  // is, and a control elsewhere can replace what it shows.
+  for (const type of RELEASING_INPUT_EVENTS) {
+    document.addEventListener(type, release, {capture: true, passive: true});
+  }
+  return release;
+}

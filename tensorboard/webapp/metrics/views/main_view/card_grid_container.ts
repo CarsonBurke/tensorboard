@@ -66,6 +66,7 @@ function areSetsEqual(a: ReadonlySet<CardId>, b: ReadonlySet<CardId>): boolean {
       [numPages]="numPages$ | async"
       [showPaginationControls]="showPaginationControls$ | async"
       [cardIdsWithMetadata]="pagedItems$ | async"
+      [pendingCards]="pendingCards$ | async"
       [cardMinWidth]="cardMinWidth$ | async"
       [cardObserver]="cardObserver"
       [cardSizing]="cardSizing$ | async"
@@ -104,6 +105,9 @@ export class CardGridContainer implements OnChanges, OnDestroy {
   readonly normalizedPageIndex$;
 
   readonly pagedItems$;
+
+  /** Cards of an expanded server page that have not been listed yet. */
+  readonly pendingCards$;
 
   readonly cardMinWidth$;
 
@@ -172,6 +176,18 @@ export class CardGridContainer implements OnChanges, OnDestroy {
         const startIndex = pageSize * pageIndex;
         const endIndex = pageSize * pageIndex + (expanded ? pageSize : 0);
         return items.slice(startIndex, endIndex);
+      })
+    );
+    this.pendingCards$ = combineLatest([
+      this.items$,
+      this.store.select(settingsSelectors.getPageSize),
+      this.normalizedPageIndex$,
+      this.isGroupExpanded$,
+      this.serverTotalCards$,
+    ]).pipe(
+      map(([items, pageSize, pageIndex, expanded, total]) => {
+        if (!expanded || !total || items.length) return 0;
+        return Math.max(0, Math.min(pageSize, total - pageSize * pageIndex));
       })
     );
     // Scoped to the cards on this page: the whole card state map changes
