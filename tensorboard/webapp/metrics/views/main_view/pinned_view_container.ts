@@ -15,14 +15,15 @@ limitations under the License.
 import {ChangeDetectionStrategy, Component, Input} from '@angular/core';
 import {Store} from '@ngrx/store';
 import {Observable} from 'rxjs';
-import {map, skip, startWith} from 'rxjs/operators';
+import {skip, startWith} from 'rxjs/operators';
 import {State} from '../../../app_state';
 import {getEnableGlobalPins} from '../../../selectors';
 import {DeepReadonly} from '../../../util/types';
 import {metricsClearAllPinnedCards} from '../../actions';
-import {getLastPinnedCardTime, getPinnedCardsWithMetadata} from '../../store';
+import {getLastPinnedCardTime} from '../../store';
 import {CardObserver} from '../card_renderer/card_lazy_loader';
 import {CardIdWithMetadata} from '../metrics_view_types';
+import {getRenderablePinnedCards} from './common_selectors';
 
 @Component({
   standalone: false,
@@ -43,11 +44,8 @@ export class PinnedViewContainer {
 
   constructor(private readonly store: Store<State>) {
     this.cardIdsWithMetadata$ = this.store
-      .select(getPinnedCardsWithMetadata)
-      .pipe(
-        map((cards) => cards as DeepReadonly<CardIdWithMetadata>[]),
-        startWith([] as DeepReadonly<CardIdWithMetadata>[])
-      );
+      .select(getRenderablePinnedCards)
+      .pipe(startWith([] as DeepReadonly<CardIdWithMetadata>[]));
     this.lastPinnedCardTime$ = this.store.select(getLastPinnedCardTime).pipe(
       // Ignore the first value on component load, only reacting to new
       // pins after page load.

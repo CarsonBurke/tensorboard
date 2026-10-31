@@ -1523,7 +1523,7 @@ describe('metrics main view', () => {
     }));
 
     it('removes the main view and hides pinned cards while filtering, then restores them', fakeAsync(() => {
-      store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+      store.overrideSelector(common_selectors.getRenderablePinnedCards, [
         {cardId: 'card1', ...createCardMetadata(PluginType.SCALARS)},
         {cardId: 'card2', ...createCardMetadata(PluginType.IMAGES)},
       ]);
@@ -1838,7 +1838,7 @@ describe('metrics main view', () => {
     }
 
     it('shows an empty message only when there are no pinned cards', () => {
-      store.overrideSelector(selectors.getPinnedCardsWithMetadata, []);
+      store.overrideSelector(common_selectors.getRenderablePinnedCards, []);
       const fixture = TestBed.createComponent(MainViewContainer);
       fixture.detectChanges();
 
@@ -1848,7 +1848,7 @@ describe('metrics main view', () => {
         emptyMessage
       );
 
-      store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+      store.overrideSelector(common_selectors.getRenderablePinnedCards, [
         {cardId: 'card1', ...createCardMetadata()},
       ]);
       store.refreshState();
@@ -1864,7 +1864,7 @@ describe('metrics main view', () => {
         selectors.getCurrentRouteRunSelection,
         new Map([['run1', true]])
       );
-      store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+      store.overrideSelector(common_selectors.getRenderablePinnedCards, [
         {cardId: 'card1', ...createCardMetadata(PluginType.SCALARS)},
         {cardId: 'card2', ...createCardMetadata(PluginType.IMAGES)},
       ]);
@@ -1894,7 +1894,7 @@ describe('metrics main view', () => {
         selectors.getNonEmptyCardIdsWithMetadata,
         originalCardMetadata
       );
-      store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+      store.overrideSelector(common_selectors.getRenderablePinnedCards, [
         {...originalCardMetadata[0], cardId: 'pinnedCopy1'},
       ]);
       store.overrideSelector(selectors.getMetricsTagFilter, '');
@@ -1915,7 +1915,7 @@ describe('metrics main view', () => {
         selectors.getCurrentRouteRunSelection,
         new Map([['run1', true]])
       );
-      store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+      store.overrideSelector(common_selectors.getRenderablePinnedCards, [
         {cardId: 'card1', ...createCardMetadata(PluginType.SCALARS)},
         {cardId: 'card2', ...createCardMetadata(PluginType.IMAGES)},
       ]);
@@ -1974,7 +1974,7 @@ describe('metrics main view', () => {
 
       it('does not show the button if getEnableGlobalPins is false', () => {
         store.overrideSelector(selectors.getEnableGlobalPins, false);
-        store.overrideSelector(selectors.getPinnedCardsWithMetadata, []);
+        store.overrideSelector(common_selectors.getRenderablePinnedCards, []);
         const fixture = TestBed.createComponent(MainViewContainer);
         fixture.detectChanges();
 
@@ -1985,7 +1985,7 @@ describe('metrics main view', () => {
       });
 
       it('does not show the button if there is no pinned card', () => {
-        store.overrideSelector(selectors.getPinnedCardsWithMetadata, []);
+        store.overrideSelector(common_selectors.getRenderablePinnedCards, []);
         const fixture = TestBed.createComponent(MainViewContainer);
         fixture.detectChanges();
 
@@ -1996,7 +1996,7 @@ describe('metrics main view', () => {
       });
 
       it('shows the button if there is a pinned card', () => {
-        store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+        store.overrideSelector(common_selectors.getRenderablePinnedCards, [
           {cardId: 'card1', ...createCardMetadata(PluginType.SCALARS)},
           {cardId: 'card2', ...createCardMetadata(PluginType.IMAGES)},
         ]);
@@ -2010,7 +2010,7 @@ describe('metrics main view', () => {
       });
 
       it('dispatch clear all action when the button is clicked', () => {
-        store.overrideSelector(selectors.getPinnedCardsWithMetadata, [
+        store.overrideSelector(common_selectors.getRenderablePinnedCards, [
           {cardId: 'card1', ...createCardMetadata(PluginType.SCALARS)},
           {cardId: 'card2', ...createCardMetadata(PluginType.IMAGES)},
         ]);

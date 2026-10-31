@@ -26,6 +26,7 @@ import {
   getExperimentIdsFromRoute,
   getExperimentIdToExperimentAliasMap,
   getRunColorMap,
+  getRunSelectionMapFilteredToCurrentRoute,
   getRunSelectorRegexFilter,
   getRouteKind,
   getDashboardRuns,
@@ -50,11 +51,13 @@ import {
   RunTableItem,
   RunTableExperimentItem,
 } from '../../../runs/views/runs_table/types';
+import {hasOwn} from '../../../util/lang';
 import {matchRunToRegex} from '../../../util/matcher';
 import {isSingleRunPlugin, PluginType} from '../../data_source';
 import {
   getNonEmptyCardIdsWithMetadata,
   getMetricsCatalogCards,
+  getPinnedCardsWithMetadata,
   getMetricsFilteredPluginTypes,
   getMetricsTagFilter,
   TagMetadata,
@@ -128,6 +131,15 @@ const getScalarTagsForRunSelection = createSelector(
     return tags;
   }
 );
+
+function isValidRegex(regexString: string): boolean {
+  try {
+    new RegExp(regexString);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const getSortedNonEmptyCardIdsWithMetadata = createSelector(
   getNonEmptyCardIdsWithMetadata,
@@ -237,8 +249,9 @@ export const getCatalogViewScope = createSelector(
   getExperimentIdsFromRoute,
   getMetricsTagFilter,
   getMetricsFilteredPluginTypes,
-  (experiments, query, plugins) =>
-    JSON.stringify([experiments, query, [...plugins].sort()])
+  getRunSelectorRegexFilter,
+  (experiments, query, plugins, runQuery) =>
+    JSON.stringify([experiments, query, [...plugins].sort(), runQuery])
 );
 
 export const utils = {
@@ -272,7 +285,7 @@ export const utils = {
     }
     if (filter.type === DomainType.DISCRETE) {
       // (upcast to work around bad TypeScript libdefs)
-      const values: Readonly<Array<(typeof filter.filterValues)[number]>> =
+      const values: Readonly<Array<typeof filter.filterValues[number]>> =
         filter.filterValues;
       return values.includes(value);
     } else if (filter.type === DomainType.INTERVAL) {
@@ -389,6 +402,73 @@ export const getFilteredRenderableRunsIds = createSelector(
   getFilteredRenderableRuns,
   (filteredRenderableRuns) => {
     return new Set(filteredRenderableRuns.map(({run: {id}}) => id));
+  }
+);
+
+/**
+ * The runs whose tags the catalog lists: the ones charts can draw, so that a
+ * tag without any of them gets no card. When empty cards are shown, the run
+ * search and column filters only hide lines, as they do for charts.
+ *
+ * `null` means the run search is not a valid regex yet. Nothing can be said
+ * about its matches, so consumers should keep the runs they already have.
+ */
+export const getCatalogRunIds = createSelector(
+  getMetricsHideEmptyCards,
+  getRunSelectionMapFilteredToCurrentRoute,
+  getCurrentRouteRunSelection,
+  getRunSelectorRegexFilter,
+  getDashboardHparamFilterMap,
+  getDashboardMetricsFilterMap,
+  getFilteredRenderableRunsIds,
+  (
+    hideEmptyCards,
+    checkedRuns,
+    matchedRuns,
+    regexFilter,
+    hparamFilters,
+    metricFilters,
+    filteredRunIds
+  ): string[] | null => {
+    const selectedIds = (selection: Map<string, boolean> | null) =>
+      [...(selection ?? [])]
+        .filter(([, selected]) => selected)
+        .map(([runId]) => runId)
+        .sort();
+    if (!hideEmptyCards) {
+      return selectedIds(checkedRuns);
+    }
+    if (!isValidRegex(regexFilter)) {
+      return null;
+    }
+    const runIds = selectedIds(matchedRuns);
+    return hparamFilters.size || metricFilters.size
+      ? runIds.filter((runId) => filteredRunIds.has(runId))
+      : runIds;
+  }
+);
+
+/**
+ * Pinned cards to show. A scalar pin without any catalog run would draw nothing,
+ * so it waits here, still pinned, until a run that has its tag comes back. Pins
+ * on one run draw that run's data whatever the runs table shows.
+ */
+export const getRenderablePinnedCards = createSelector(
+  getPinnedCardsWithMetadata,
+  getCatalogRunIds,
+  getMetricsTagMetadata,
+  (pins, catalogRunIds, tagMetadata): DeepReadonly<CardIdWithMetadata>[] => {
+    if (!catalogRunIds) {
+      return pins as DeepReadonly<CardIdWithMetadata>[];
+    }
+    const runIds = new Set(catalogRunIds);
+    const {tagToRuns} = tagMetadata.scalars;
+    return (pins as DeepReadonly<CardIdWithMetadata>[]).filter(
+      ({plugin, tag}) =>
+        plugin !== PluginType.SCALARS ||
+        (hasOwn(tagToRuns, tag) &&
+          tagToRuns[tag].some((runId) => runIds.has(runId)))
+    );
   }
 );
 

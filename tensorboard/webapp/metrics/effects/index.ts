@@ -65,6 +65,11 @@ import {
   getPinnedCardsWithMetadata,
 } from '../store';
 import {CardId, CardMetadata, PluginType} from '../types';
+import {getCatalogRunIds} from '../views/main_view/common_selectors';
+
+function isNotNull<T>(value: T | null): value is T {
+  return value !== null;
+}
 
 export type CardFetchInfo = CardMetadata & {
   id: CardId;
@@ -343,6 +348,7 @@ export class MetricsEffects implements OnInitEffects {
     const catalogRequest$ = combineLatest([
       this.store.select(getActivePlugin),
       this.store.select(selectors.getExperimentIdsFromRoute),
+      this.store.select(getCatalogRunIds).pipe(filter(isNotNull)),
       this.store.select(selectors.getRunSelectionMapFilteredToCurrentRoute),
       this.store.select(selectors.getMetricsTagFilter),
       this.store.select(selectors.getMetricsCatalogViewport),
@@ -357,7 +363,8 @@ export class MetricsEffects implements OnInitEffects {
         ([
           plugin,
           experimentIds,
-          selection,
+          runIds,
+          checkedRuns,
           query,
           viewport,
           pageSize,
@@ -370,14 +377,19 @@ export class MetricsEffects implements OnInitEffects {
           plugin,
           experimentIds,
           request: {
-            runIds: [...selection]
-              .filter(([, selected]) => selected)
-              .map(([id]) => id)
-              .sort(),
+            runIds,
+            // Scalar pins resolve against every checked run, so a run search
+            // only hides them and they stay pinned, saved and clearable.
             pinnedRunIds: [
               ...new Set(
                 [...pins, ...unresolvedPins].flatMap((pin) =>
-                  pin.runId ? [pin.runId] : []
+                  pin.runId
+                    ? [pin.runId]
+                    : pin.plugin === PluginType.SCALARS
+                    ? [...checkedRuns]
+                        .filter(([, checked]) => checked)
+                        .map(([id]) => id)
+                    : []
                 )
               ),
             ].sort(),

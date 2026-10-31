@@ -59,6 +59,7 @@ import {
   provideTestingSavedPinsDataSource,
 } from '../testing';
 import {CardId, TooltipSort} from '../types';
+import {getCatalogRunIds} from '../views/main_view/common_selectors';
 import {CardFetchInfo, MetricsEffects, TEST_ONLY} from './index';
 import {buildMockState} from '../../testing/utils';
 
@@ -112,6 +113,7 @@ describe('metrics effects', () => {
     metricsDataSource = TestBed.inject(MetricsDataSource);
     savedPinsDataSource = TestBed.inject(SavedPinsDataSource);
     store.overrideSelector(selectors.getExperimentIdsFromRoute, null);
+    store.overrideSelector(getCatalogRunIds, []);
     store.overrideSelector(
       selectors.getRunSelectionMapFilteredToCurrentRoute,
       new Map([
@@ -207,17 +209,11 @@ describe('metrics effects', () => {
         );
         store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp']);
         store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
-        store.overrideSelector(
-          selectors.getRunSelectionMapFilteredToCurrentRoute,
-          new Map([['exp/first', true]])
-        );
+        store.overrideSelector(getCatalogRunIds, ['exp/first']);
         store.refreshState();
         scheduler.flush();
         expect(oldResponse.observed).toBeTrue();
-        store.overrideSelector(
-          selectors.getRunSelectionMapFilteredToCurrentRoute,
-          new Map([['exp/second', true]])
-        );
+        store.overrideSelector(getCatalogRunIds, ['exp/second']);
         store.refreshState();
         scheduler.flush();
         expect(oldResponse.observed).toBeFalse();
@@ -230,6 +226,58 @@ describe('metrics effects', () => {
         expect(actualActions).toContain(
           actions.metricsTagMetadataLoaded({tagMetadata: current})
         );
+      });
+
+      it('scopes the catalog to the runs charts can draw', () => {
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp']);
+        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
+        store.overrideSelector(getCatalogRunIds, ['exp/matched']);
+        store.refreshState();
+        scheduler.flush();
+        expect(fetchTagMetadataSpy.calls.mostRecent().args[1].runIds).toEqual([
+          'exp/matched',
+        ]);
+      });
+
+      it('resolves scalar pins against checked runs the run search hides', () => {
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp']);
+        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
+        store.overrideSelector(getCatalogRunIds, ['exp/matched']);
+        store.overrideSelector(
+          selectors.getRunSelectionMapFilteredToCurrentRoute,
+          new Map([
+            ['exp/matched', true],
+            ['exp/hidden', true],
+            ['exp/unchecked', false],
+          ])
+        );
+        store.overrideSelector(selectors.getUnresolvedImportedPinnedCards, [
+          {plugin: PluginType.SCALARS, tag: 'loss'},
+        ]);
+        store.refreshState();
+        scheduler.flush();
+        const request = fetchTagMetadataSpy.calls.mostRecent().args[1];
+        expect(request.runIds).toEqual(['exp/matched']);
+        expect(request.pinnedRunIds).toEqual(['exp/hidden', 'exp/matched']);
+      });
+
+      it('keeps the last catalog scope while the run search is not a valid regex', () => {
+        store.overrideSelector(selectors.getExperimentIdsFromRoute, ['exp']);
+        store.overrideSelector(getActivePlugin, METRICS_PLUGIN_ID);
+        store.overrideSelector(getCatalogRunIds, ['exp/matched']);
+        store.refreshState();
+        scheduler.flush();
+        expect(fetchTagMetadataSpy).toHaveBeenCalledTimes(1);
+        store.overrideSelector(getCatalogRunIds, null);
+        store.refreshState();
+        scheduler.flush();
+        expect(fetchTagMetadataSpy).toHaveBeenCalledTimes(1);
+        actions$.next(coreActions.manualReload());
+        scheduler.flush();
+        expect(fetchTagMetadataSpy).toHaveBeenCalledTimes(2);
+        expect(fetchTagMetadataSpy.calls.mostRecent().args[1].runIds).toEqual([
+          'exp/matched',
+        ]);
       });
 
       it('does not request catalog data while another dashboard is active', () => {

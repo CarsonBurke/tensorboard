@@ -13,7 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 import {RouteKind} from '../../../app_routing';
-import {buildHparamSpec} from '../../../hparams/_redux/testing';
+import {
+  buildHparamSpec,
+  buildSessionGroup,
+} from '../../../hparams/_redux/testing';
 import {
   buildAppRoutingState,
   buildStateFromAppRoutingState,
@@ -254,6 +257,224 @@ describe('common selectors', () => {
     expect(selectors.getCatalogViewScope(viewState(true, 'loss'))).not.toBe(
       scope
     );
+    expect(
+      selectors.getCatalogViewScope(
+        buildMockState({
+          ...viewState(true),
+          ...buildStateFromRunsState(
+            buildRunsState({
+              runIds,
+              runIdToExpId,
+              runMetadata,
+              regexFilter: 'rtu',
+            })
+          ),
+        })
+      )
+    ).not.toBe(scope);
+  });
+
+  describe('getCatalogRunIds', () => {
+    function catalogState(options: {
+      selection?: Array<[string, boolean]>;
+      regexFilter?: string;
+      hideEmptyCards?: boolean;
+      hparamFilters?: Map<string, DiscreteFilter | IntervalFilter>;
+    }) {
+      const {selection, regexFilter, hideEmptyCards, hparamFilters} = options;
+      return buildMockState({
+        ...state,
+        ...appStateFromMetricsState(
+          buildMetricsState({
+            settingOverrides: {hideEmptyCards: hideEmptyCards ?? true},
+          })
+        ),
+        ...buildStateFromRunsState(
+          buildRunsState(
+            {
+              runIds,
+              runIdToExpId,
+              runMetadata,
+              regexFilter: regexFilter ?? '',
+            },
+            {
+              selectionState: new Map(
+                selection ?? [
+                  ['run1', true],
+                  ['run2', true],
+                  ['run3', false],
+                ]
+              ),
+            }
+          )
+        ),
+        hparams: {
+          ...state['hparams'],
+          dashboardFilters: {
+            hparams: hparamFilters ?? new Map(),
+            metrics: new Map(),
+          },
+        },
+      });
+    }
+
+    it('lists checked runs when nothing filters them', () => {
+      expect(selectors.getCatalogRunIds(catalogState({}))).toEqual([
+        'run1',
+        'run2',
+      ]);
+    });
+
+    it('excludes checked runs the run search does not match', () => {
+      expect(
+        selectors.getCatalogRunIds(catalogState({regexFilter: '^run1$'}))
+      ).toEqual(['run1']);
+    });
+
+    it('excludes unchecked runs the run search matches', () => {
+      expect(
+        selectors.getCatalogRunIds(catalogState({regexFilter: '^run3$'}))
+      ).toEqual([]);
+    });
+
+    it('is empty when the run search matches nothing or nothing is checked', () => {
+      expect(
+        selectors.getCatalogRunIds(catalogState({regexFilter: 'no such run'}))
+      ).toEqual([]);
+      expect(
+        selectors.getCatalogRunIds(
+          catalogState({
+            selection: [
+              ['run1', false],
+              ['run2', false],
+            ],
+          })
+        )
+      ).toEqual([]);
+    });
+
+    it('returns null while the run search is not a valid regex', () => {
+      expect(
+        selectors.getCatalogRunIds(catalogState({regexFilter: 'rtu('}))
+      ).toBeNull();
+    });
+
+    it('excludes only the checked runs that column filters reject', () => {
+      const filtered = catalogState({
+        hparamFilters: new Map([
+          [
+            'lr',
+            {
+              type: DomainType.DISCRETE,
+              includeUndefined: false,
+              filterValues: ['a'],
+              possibleValues: ['a', 'b'],
+            } as DiscreteFilter,
+          ],
+        ]),
+      });
+      expect(
+        selectors.getCatalogRunIds({
+          ...filtered,
+          hparams: {
+            ...filtered['hparams'],
+            dashboardSessionGroups: [
+              buildSessionGroup({
+                hparams: {lr: 'a'},
+                sessions: [{name: 'run2'}],
+              }),
+            ],
+          } as any,
+        })
+      ).toEqual(['run2']);
+    });
+
+    it('lists every checked run when empty cards are shown', () => {
+      expect(
+        selectors.getCatalogRunIds(
+          catalogState({hideEmptyCards: false, regexFilter: '^run1$'})
+        )
+      ).toEqual(['run1', 'run2']);
+      expect(
+        selectors.getCatalogRunIds(
+          catalogState({hideEmptyCards: false, regexFilter: 'rtu('})
+        )
+      ).toEqual(['run1', 'run2']);
+    });
+  });
+
+  describe('getRenderablePinnedCards', () => {
+    function pinnedState(regexFilter: string, hideEmptyCards = true) {
+      return buildMockState({
+        ...state,
+        ...appStateFromMetricsState(
+          buildMetricsState({
+            settingOverrides: {hideEmptyCards},
+            cardToPinnedCopy: new Map([
+              ['scalar', 'pinned-scalar'],
+              ['histogram', 'pinned-histogram'],
+            ]),
+            cardMetadataMap: {
+              'pinned-scalar': {
+                plugin: PluginType.SCALARS,
+                tag: 'only/in/run2',
+                runId: null,
+              },
+              'pinned-histogram': {
+                plugin: PluginType.HISTOGRAMS,
+                tag: 'hist',
+                runId: 'run2',
+              },
+            },
+            tagMetadata: {
+              ...buildMetricsState().tagMetadata,
+              scalars: {
+                tagDescriptions: {},
+                tagToRuns: {'only/in/run2': ['run2']},
+              },
+            },
+          })
+        ),
+        ...buildStateFromRunsState(
+          buildRunsState(
+            {runIds, runIdToExpId, runMetadata, regexFilter},
+            {
+              selectionState: new Map([
+                ['run1', true],
+                ['run2', true],
+              ]),
+            }
+          )
+        ),
+      });
+    }
+    const pinnedIds = (regexFilter: string, hideEmptyCards = true) =>
+      selectors
+        .getRenderablePinnedCards(pinnedState(regexFilter, hideEmptyCards))
+        .map(({cardId}) => cardId);
+
+    it('shows a scalar pin while a catalog run has its tag', () => {
+      expect(pinnedIds('')).toEqual(['pinned-scalar', 'pinned-histogram']);
+      expect(pinnedIds('^run2$')).toEqual([
+        'pinned-scalar',
+        'pinned-histogram',
+      ]);
+    });
+
+    it('hides only scalar pins without a catalog run', () => {
+      expect(pinnedIds('^run1$')).toEqual(['pinned-histogram']);
+    });
+
+    it('keeps every pin while the run search is not a valid regex', () => {
+      expect(pinnedIds('run(')).toEqual(['pinned-scalar', 'pinned-histogram']);
+    });
+
+    it('keeps scalar pins when empty cards are shown', () => {
+      expect(pinnedIds('^run1$', false)).toEqual([
+        'pinned-scalar',
+        'pinned-histogram',
+      ]);
+    });
   });
 
   describe('getScalarTagsForRunSelection', () => {

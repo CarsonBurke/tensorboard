@@ -93,6 +93,7 @@ tf_ts_library(
         "//tensorboard/webapp/runs:types",
         "//tensorboard/webapp/runs/store:selectors",
         "//tensorboard/webapp/runs/views/runs_table:types",
+        "//tensorboard/webapp/util:lang",
         "//tensorboard/webapp/util:matcher",
         "//tensorboard/webapp/util:memoize",
         "//tensorboard/webapp/util:types",
