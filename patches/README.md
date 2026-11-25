@@ -41,6 +41,41 @@ and unmount five scalar charts, then confirm no worker exceptions and no
 remaining live chart contexts. Main-thread-only renderer tests do not cover
 this failure.
 
+## `@angular+build+21.2.19.patch`
+
+**Modified files:**
+* `src/tools/esbuild/cache.js`
+* `src/tools/esbuild/bundler-context.js`
+* `src/tools/angular/angular-host.js`
+
+Only the Bazel-free build (`mise run build`, DEVELOPMENT.md) uses
+`@angular/build`, so `WORKSPACE` doesn't apply this patch; the `postinstall`
+`patch-package` run does.
+
+**What it does:**
+
+1. Makes `ng build` exit. Two races leak esbuild contexts for component
+   stylesheets, and the esbuild service they keep alive holds the process
+   open after "Application bundle generation complete". In `cache.js`,
+   concurrent `getOrCreate` calls for one key (three debugger components share
+   one inline `styles` constant) each create a context and only the last is
+   stored and disposed; the patch shares one in-flight creation per key. In
+   `bundler-context.js`, concurrent `bundle()` calls on one context each
+   create an esbuild context and dispose only the last; the patch joins
+   callers onto the in-flight bundle. Forced rebuilds, and calls after an
+   invalidation, queue a new bundle behind it. Both races are still present
+   in 21.2.31.
+2. Lets component `styleUrls` and `templateUrl` resolve through tsconfig
+   `rootDirs`, by passing the compiler's fallback resolution through
+   `resourceNameToFileName`. tools/build_web.py compiles `.scss` to
+   `out/genfiles` instead of next to the sources, as Bazel's output tree does.
+
+Remove (1) when upgrading to an `@angular/build` with those races fixed, and
+(2) when TensorBoard's components reference their `.scss` directly.
+
+To regenerate: edit the files in `node_modules/@angular/build`, then run
+`yarn patch-package @angular/build`. Rename the patch on version bumps.
+
 ## `@bazel+concatjs+5.8.1.patch`
 
 **Modified files:**

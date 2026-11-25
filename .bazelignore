@@ -1,2 +1,7 @@
 .bazel-user-root
 .bazelisk-home
+# The Bazel-free build's outputs and environments. node_modules ships
+# BUILD.bazel files that Bazel would otherwise load as packages.
+node_modules
+out
+.venv

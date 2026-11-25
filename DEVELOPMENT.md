@@ -137,6 +137,50 @@ $ git cherry-pick bc4e7a6e5517daf918433a8f5983fc6bd239358f
 [pr-1334]: https://github.com/tensorflow/tensorboard/pull/1334
 [yarn]: https://yarnpkg.com/
 
+## Building without Bazel
+
+An experimental Bazel-free build produces the same runtime artifacts with
+[mise], uv, `ng build`, esbuild and cargo. A clean build takes about a minute,
+mostly cargo. `mise run build:web` takes about 12 seconds, and `mise run
+watch` picks up an edit in 2 to 7 seconds. It doesn't run tests yet, and has
+only been tried on Linux.
+
+```sh
+$ mise run setup     # yarn install, and a Python 3.10 virtualenv in .venv
+$ mise run build     # protos, web assets, data server
+$ mise run tensorboard -- --logdir /path/to/logs
+$ mise run watch -- --logdir /path/to/logs   # rebuild and restart on change
+```
+
+`mise tasks` lists the individual steps. The build writes its outputs where
+the runtime looks for them, all gitignored: `*_pb2.py` modules next to their
+protos, `tensorboard/webfiles.zip`, the projector's `projector_binary.*`, the
+data server in `tensorboard/data/server/target/release`, and the four
+generated TypeScript sources that esbuild imports. Everything else goes to
+`out/`. TensorBoard reads `webfiles.zip` only at startup, so restart it after
+`mise run build:web`; `mise run watch` restarts it for you. `watch` writes an
+unminified development build in place, so run `mise run build:web` before
+packaging.
+
+The pieces:
+
+- `tools/build_web.py` mirrors the Bazel web targets: the genrules, Sass,
+  the `tf_js_binary` esbuild bundles, `ng build` (`angular.json`,
+  `tsconfig.app.json`), a port of `Vulcanize.java`, and the zip. Its
+  docstring lists the steps.
+- `tools/requirements.txt` holds the Python packages, constrained by
+  `tensorboard/pip_package/requirements_bazel_lock.txt`.
+- `tools/third_party_web/files.json` lists the fonts and icons Bazel downloads,
+  with their checksums.
+- `patches/@angular+build+21.2.19.patch` fixes two `ng build` hangs and lets
+  component styles resolve from `out/genfiles`; see `patches/README.md`.
+
+Apart from minifier output, `webfiles.zip` matches Bazel's. It has the same
+files, minus Bazel's directory entries. The fonts, icons and Monaco files are
+byte-identical, and so is the structure of `index.html`.
+
+[mise]: https://mise.jdx.dev/
+
 ## Pro tips
 
 You may find the following optional tips useful for development.

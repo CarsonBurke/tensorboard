@@ -1,0 +1,24 @@
+// The Angular app's tsconfig for `ng build` (angular.json); Bazel instead
+// compiles with tsconfig.json through ts_library.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    // Polymer and Angular property decorators need assignment semantics, as in
+    // Bazel's ES2020 output.
+    "useDefineForClassFields": false,
+    "inlineSourceMap": false,
+    "types": ["offscreencanvas", "requirejs", "resize-observer-browser"],
+    // tsconfig.json's plugin is Bazel's tsetse checker.
+    "plugins": [],
+    // Component styles compiled from .scss, and generated templates, live in
+    // out/genfiles (tools/build_web.py), as in Bazel's output tree.
+    "rootDirs": [".", "out/genfiles"]
+  },
+  "files": [
+    "tensorboard/webapp/main_prod.ts",
+    "tensorboard/defs/strict_type_check.d.ts",
+    // Bazel's monaco ts_library provides the global `monaco` namespace.
+    "node_modules/monaco-editor-core/monaco.d.ts"
+  ]
+}

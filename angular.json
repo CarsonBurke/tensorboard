@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "cli": {
+    "analytics": false,
+    "packageManager": "yarn",
+    "cache": {
+      "path": "out/angular-cache"
+    }
+  },
+  "projects": {
+    "tensorboard": {
+      "projectType": "application",
+      "root": "",
+      "sourceRoot": "tensorboard/webapp",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "tensorboard/webapp/main_prod.ts",
+            "tsConfig": "tsconfig.app.json",
+            "outputPath": {
+              "base": "out/webapp",
+              "browser": ""
+            },
+            "index": false,
+            "outputHashing": "none",
+            "optimization": true,
+            "sourceMap": false,
+            "extractLicenses": false
+          },
+          "configurations": {
+            "development": {
+              "optimization": false,
+              "sourceMap": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

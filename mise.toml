@@ -1,0 +1,52 @@
+# Bazel-free build: `mise run setup`, then `mise run build`. See DEVELOPMENT.md.
+
+[tools]
+node = "24.18.0" # as in MODULE.bazel
+"npm:yarn" = "1.22.22"
+uv = "0.12.3"
+# Bazel pins Rust 1.65.0; the data server builds with current stable too.
+rust = "1.93.0"
+
+[tasks.setup]
+description = "Install npm packages and the Python virtualenv"
+run = [
+  "yarn install --frozen-lockfile",
+  "uv venv --allow-existing --python 3.10 .venv",
+  # The Bazel lock pins the versions Bazel tests against.
+  "uv pip install --python .venv -r tools/requirements.txt -c tensorboard/pip_package/requirements_bazel_lock.txt",
+]
+
+[tasks."build:protos"]
+description = "Generate the *_pb2.py and *_pb2_grpc.py modules next to their .proto files"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+protos=$(find tensorboard -name '*.proto' | sort)
+.venv/bin/python -m grpc_tools.protoc -I . --python_out=. $protos
+.venv/bin/python -m grpc_tools.protoc -I . --grpc_python_out=. $(grep -l '^service ' $protos)
+'''
+
+[tasks."build:web"]
+description = "Build tensorboard/webfiles.zip and the projector bundle"
+depends = ["build:protos"] # The dtype table is generated from Python.
+run = ".venv/bin/python tools/build_web.py build"
+
+[tasks."build:server"]
+description = "Build the Rust data server (rustboard)"
+dir = "tensorboard/data/server"
+run = "cargo build --release --locked --bin rustboard"
+
+[tasks.build]
+description = "Build everything `mise run tensorboard` needs"
+depends = ["build:web", "build:server"]
+
+[tasks.tensorboard]
+description = "Run TensorBoard from the source tree, e.g. `mise run tensorboard -- --logdir DIR`"
+env = { TENSORBOARD_DATA_SERVER_BINARY = "{{config_root}}/tensorboard/data/server/target/release/rustboard" }
+run = ".venv/bin/python -m tensorboard.main"
+
+[tasks.watch]
+description = "Rebuild web assets on change and restart TensorBoard, e.g. `mise run watch -- --logdir DIR`"
+depends = ["build:protos", "build:server"]
+env = { TENSORBOARD_DATA_SERVER_BINARY = "{{config_root}}/tensorboard/data/server/target/release/rustboard" }
+run = ".venv/bin/python tools/build_web.py watch --"

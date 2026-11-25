@@ -6,3 +6,17 @@
 *.swp
 node_modules
 /.worktrees/
+
+# Bazel-free build (mise.toml, tools/build_web.py). Bazel generates these in
+# its output tree instead.
+/out/
+/.venv/
+*_pb2.py
+*_pb2_grpc.py
+/tensorboard/webfiles.zip
+/tensorboard/plugins/projector/tf_projector_plugin/projector_binary.html
+/tensorboard/plugins/projector/tf_projector_plugin/projector_binary.js
+/tensorboard/components/polymer/plottable-style.ts
+/tensorboard/plugins/debugger_v2/tf_debugger_v2_plugin/tf_dtypes.ts
+/tensorboard/webapp/widgets/line_chart_v2/lib/worker/worker_resource.ts
+/tensorboard/webapp/widgets/line_chart_v2/smoothing_resource.ts

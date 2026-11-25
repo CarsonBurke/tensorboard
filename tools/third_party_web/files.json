@@ -1,0 +1,475 @@
+{
+  "//": "Non-npm web assets for tools/build_web.py, from the filegroup_external repos com_google_fonts_roboto (third_party/fonts.bzl) and com_google_material_design_icon (third_party/js.bzl, only the icons in //tensorboard/webapp:svg_bundle). Keep in sync with those files while the Bazel build exists.",
+  "font-roboto": {
+    "-L14Jk06m6pUHB-5mXQQnYX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/-L14Jk06m6pUHB-5mXQQnYX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "40a162d49fd25da223ea81454616f469270020fc186fe2f109534fb1f72e1bcb"
+    },
+    "0eC6fl06luXEYWpBSJvXCIX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/0eC6fl06luXEYWpBSJvXCIX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "66a095c96771a94d2772c7e19a32c6585d4bed3a989faa9e595bb270a2621608"
+    },
+    "1hZf02POANh32k2VkgEoUBkAz4rYn47Zy2rvigWQf6w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/1hZf02POANh32k2VkgEoUBkAz4rYn47Zy2rvigWQf6w.woff2",
+      "sha256": "785896def5be5b35967d63f5589ce67fc8d3b452153a37323a4d9b886d828c60"
+    },
+    "77FXFjRbGzN4aCrSFhlh3oX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/77FXFjRbGzN4aCrSFhlh3oX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "616eb767627d16bef2b9be2218bb5f1bbbb97cfbd06c4e5241c8b532b56467aa"
+    },
+    "7m8l7TlFO-S3VkhHuR0at14sYYdJg5dU2qzJEVSuta0.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/7m8l7TlFO-S3VkhHuR0at14sYYdJg5dU2qzJEVSuta0.woff2",
+      "sha256": "4160dc56c5afc7320243a73cdf025d1c64ea19e035b98bad9c170e37c98ee5e2"
+    },
+    "7m8l7TlFO-S3VkhHuR0at1BW26QxpSj-_ZKm_xT4hWw.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/7m8l7TlFO-S3VkhHuR0at1BW26QxpSj-_ZKm_xT4hWw.woff2",
+      "sha256": "a1153c52da99d21ed2f036e5849c3b2a5d7d3d5913d63ceac983d388288420b4"
+    },
+    "7m8l7TlFO-S3VkhHuR0at4gp9Q8gbYrhqGlRav_IXfk.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/7m8l7TlFO-S3VkhHuR0at4gp9Q8gbYrhqGlRav_IXfk.woff2",
+      "sha256": "c4fc2fd6457f67718ccff3434f39a84a83be98defa8e23ac1942580ea53a925e"
+    },
+    "7m8l7TlFO-S3VkhHuR0at6E8kM4xWR1_1bYURRojRGc.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/7m8l7TlFO-S3VkhHuR0at6E8kM4xWR1_1bYURRojRGc.woff2",
+      "sha256": "fd5b96eb1adc32b3fd7823f6a9e3c14122a060d5665091c33d9243f2541b016c"
+    },
+    "7m8l7TlFO-S3VkhHuR0at9DiNsR5a-9Oe_Ivpu8XWlY.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/7m8l7TlFO-S3VkhHuR0at9DiNsR5a-9Oe_Ivpu8XWlY.woff2",
+      "sha256": "ced9470e7e60d5edeccf4d3a0ab2f57ef653ec9de3097e6950bc06c64157aa5a"
+    },
+    "7m8l7TlFO-S3VkhHuR0at_ZraR2Tg8w2lzm7kLNL0-w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/7m8l7TlFO-S3VkhHuR0at_ZraR2Tg8w2lzm7kLNL0-w.woff2",
+      "sha256": "d95d953cff5e309f22a680e48981070d2cbebf75daba25b078834bf0c4f143e4"
+    },
+    "7m8l7TlFO-S3VkhHuR0atwt_Rm691LTebKfY2ZkKSmI.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/7m8l7TlFO-S3VkhHuR0atwt_Rm691LTebKfY2ZkKSmI.woff2",
+      "sha256": "8d649207dfd9e6f53614ee7ee8e0865789e38b39244ab1546ee5117ab6f6ed2f"
+    },
+    "97uahxiqZRoncBaCEI3aW4X0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/97uahxiqZRoncBaCEI3aW4X0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "6c8be972381d4da037f47c33ef1e31b88f0130ded1432730d4d792331f983839"
+    },
+    "Fl4y0QdOxyyTHEGMXX8kcYX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/Fl4y0QdOxyyTHEGMXX8kcYX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "cb94537350a4c593515c0b9066a22f0d74284173b88521c50b894a3179402e46"
+    },
+    "Hgo13k-tfSpn0qi1SFdUfZBw1xU1rKptJj_0jans920.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/Hgo13k-tfSpn0qi1SFdUfZBw1xU1rKptJj_0jans920.woff2",
+      "sha256": "f7c386915e39d8a925fe10d15744a9da95ac8f90423e12728e7fc3c5e34f4559"
+    },
+    "I3S1wsgSg9YCurV6PUkTOYX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/I3S1wsgSg9YCurV6PUkTOYX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "f0e3a88ae70245bcac12d2640792e50a165ce618d3b5979b735913e582d204f7"
+    },
+    "K23cxWVTrIFD6DJsEVi07RkAz4rYn47Zy2rvigWQf6w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/K23cxWVTrIFD6DJsEVi07RkAz4rYn47Zy2rvigWQf6w.woff2",
+      "sha256": "5d875731e35140f94bc4cb23944d104688d3c6d372833ddae8d22d3aa802beb4"
+    },
+    "Ks_cVxiCiwUWVsFWFA3Bjn-_kf6ByYO6CLYdB4HQE-Y.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/Ks_cVxiCiwUWVsFWFA3Bjn-_kf6ByYO6CLYdB4HQE-Y.woff2",
+      "sha256": "80fa23b4804621ce7f16b5c56d524dd90ea09d792622eeac9adf0ee6317b9e3a"
+    },
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/google/roboto/ba03b84b90b50afd99f9688059447bc545e5c0e1/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    "N4duVc9C58uwPiY8_59Fz1T7aJLK6nKpn36IMwTcMMc.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/N4duVc9C58uwPiY8_59Fz1T7aJLK6nKpn36IMwTcMMc.woff2",
+      "sha256": "27798d63b7fadca6c6a2d17ea7673855d44baf75e8172fa9749888898ce04125"
+    },
+    "N4duVc9C58uwPiY8_59Fz1x-M1I1w5OMiqnVF8xBLhU.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/N4duVc9C58uwPiY8_59Fz1x-M1I1w5OMiqnVF8xBLhU.woff2",
+      "sha256": "656e4cb0b042d18f6b889948f3c9a1f87b70340bd20a38a0d738b0e32a7f00ee"
+    },
+    "N4duVc9C58uwPiY8_59Fz4gd9OEPUCN3AdYW0e8tat4.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/N4duVc9C58uwPiY8_59Fz4gd9OEPUCN3AdYW0e8tat4.woff2",
+      "sha256": "b38383e889863e1c25c2334087e6b00835cef283f8448c8b2a2d5d51489d202b"
+    },
+    "N4duVc9C58uwPiY8_59Fz8bIQSYZnWLaWC9QNCpTK_U.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/N4duVc9C58uwPiY8_59Fz8bIQSYZnWLaWC9QNCpTK_U.woff2",
+      "sha256": "03b9c55ee9bf53c57c9b9dcb739bc92ada5b97fc81deb5a57e4e8347c4eee8bb"
+    },
+    "N4duVc9C58uwPiY8_59Fz_79_ZuUxCigM2DespTnFaw.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/N4duVc9C58uwPiY8_59Fz_79_ZuUxCigM2DespTnFaw.woff2",
+      "sha256": "8b827f046df0acf54d80954ae05f0b5e87fdf09bc4c1bf02e8edb0d928e259b7"
+    },
+    "N4duVc9C58uwPiY8_59FzwXaAXup5mZlfK6xRLrhsco.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/N4duVc9C58uwPiY8_59FzwXaAXup5mZlfK6xRLrhsco.woff2",
+      "sha256": "0d5221a5f914d57a674049b718a37b8f09a0e79647af8b187273f35ab0d8376c"
+    },
+    "N4duVc9C58uwPiY8_59Fzwn6Wqxo-xwxilDXPU8chVU.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/N4duVc9C58uwPiY8_59Fzwn6Wqxo-xwxilDXPU8chVU.woff2",
+      "sha256": "41553f58ea074adde7eaaefe9b220b49021128f6b68b8be384072c4db430603f"
+    },
+    "NJ4vxlgWwWbEsv18dAhqnn-_kf6ByYO6CLYdB4HQE-Y.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/NJ4vxlgWwWbEsv18dAhqnn-_kf6ByYO6CLYdB4HQE-Y.woff2",
+      "sha256": "a0a893b2ff1c82d49ac0c09ace71cf8178c0830f6a988103c779b6fc12c0da78"
+    },
+    "NYDWBdD4gIq26G5XYbHsFIX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/NYDWBdD4gIq26G5XYbHsFIX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "5a4e99d1db8c9fd38f6b1c92582c2351cf27075f5ccef89404a8d673fa8e7b26"
+    },
+    "OLffGBTaF0XFOW1gnuHF0Qt_Rm691LTebKfY2ZkKSmI.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OLffGBTaF0XFOW1gnuHF0Qt_Rm691LTebKfY2ZkKSmI.woff2",
+      "sha256": "510c1001aa3c1ae574eba6eaa5a404414dd0f5d5cd8c213fe0fac404c1fbbd7c"
+    },
+    "OLffGBTaF0XFOW1gnuHF0V4sYYdJg5dU2qzJEVSuta0.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OLffGBTaF0XFOW1gnuHF0V4sYYdJg5dU2qzJEVSuta0.woff2",
+      "sha256": "e9f24fd84cfbdad488d4f05d97ca2e009af8248044def329f0c78c04e12c32cb"
+    },
+    "OLffGBTaF0XFOW1gnuHF0VBW26QxpSj-_ZKm_xT4hWw.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OLffGBTaF0XFOW1gnuHF0VBW26QxpSj-_ZKm_xT4hWw.woff2",
+      "sha256": "e5343e5d46125f688c2f266369983a1f92dbefa8d16f131b09768cdd4a5cebd4"
+    },
+    "OLffGBTaF0XFOW1gnuHF0Ygp9Q8gbYrhqGlRav_IXfk.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OLffGBTaF0XFOW1gnuHF0Ygp9Q8gbYrhqGlRav_IXfk.woff2",
+      "sha256": "76d779c16f21b55a95fb182bf7552447ee340d15556e53a99dd789383f6d8c32"
+    },
+    "OLffGBTaF0XFOW1gnuHF0aE8kM4xWR1_1bYURRojRGc.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OLffGBTaF0XFOW1gnuHF0aE8kM4xWR1_1bYURRojRGc.woff2",
+      "sha256": "a69b0c33d809b7aac3e9648bfc995bc38cd5e426efeb006dc3b31523f4867f73"
+    },
+    "OLffGBTaF0XFOW1gnuHF0dDiNsR5a-9Oe_Ivpu8XWlY.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OLffGBTaF0XFOW1gnuHF0dDiNsR5a-9Oe_Ivpu8XWlY.woff2",
+      "sha256": "2c94704be76a8ec87995f3427911e50987cfcaa13c5749c770419559fe836509"
+    },
+    "OLffGBTaF0XFOW1gnuHF0fZraR2Tg8w2lzm7kLNL0-w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OLffGBTaF0XFOW1gnuHF0fZraR2Tg8w2lzm7kLNL0-w.woff2",
+      "sha256": "ecfda0e4317641a395971d71435ad1a3dce0499bccc9bcdcaaebffb714588a4e"
+    },
+    "OpXUqTo0UgQQhGj_SFdLWBkAz4rYn47Zy2rvigWQf6w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/OpXUqTo0UgQQhGj_SFdLWBkAz4rYn47Zy2rvigWQf6w.woff2",
+      "sha256": "38602b65e115ae1b267627d5533c2607f446aba939b9ca9143cc4373bd285b83"
+    },
+    "Pru33qjShpZSmG3z6VYwnYX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/Pru33qjShpZSmG3z6VYwnYX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "bbeeb150a0f72cbd898ba36ed908bb95ef2386d41158c943aa3af4e0c8430639"
+    },
+    "PwZc-YbIL414wB9rB1IAPYX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/PwZc-YbIL414wB9rB1IAPYX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "5f162f1ca2441cae368e97ed42b56332d7b68b1ffbbf9f7e4b648420667acee5"
+    },
+    "RxZJdnzeo3R5zSexge8UUZBw1xU1rKptJj_0jans920.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/RxZJdnzeo3R5zSexge8UUZBw1xU1rKptJj_0jans920.woff2",
+      "sha256": "b79781efede37903be212fcdf63955e41c8649e678b6b83adf824459d240a188"
+    },
+    "UX6i4JxQDm3fVTc1CPuwqoX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/UX6i4JxQDm3fVTc1CPuwqoX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "e94a5635cb68464d332cd374fd57b95913fc5b549f1967fbb73829b2084efd98"
+    },
+    "WxrXJa0C3KdtC7lMafG4dRkAz4rYn47Zy2rvigWQf6w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/WxrXJa0C3KdtC7lMafG4dRkAz4rYn47Zy2rvigWQf6w.woff2",
+      "sha256": "d04ce842e235d3e6abfcd37d6598138007f56e391a035167d78edf9088d3035a"
+    },
+    "ZLqKeelYbATG60EpZBSDy4X0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/ZLqKeelYbATG60EpZBSDy4X0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "2aa57d00d0cac3b30aef28a19e9cfea12b45daf9562b4fa623750c8145c0767b"
+    },
+    "_VYFx-s824kXq_Ul2BHqYH-_kf6ByYO6CLYdB4HQE-Y.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/_VYFx-s824kXq_Ul2BHqYH-_kf6ByYO6CLYdB4HQE-Y.woff2",
+      "sha256": "949e287846b0940817e4ea0f65accc4481a46b8733dc12aa0265293a4645c661"
+    },
+    "cDKhRaXnQTOVbaoxwdOr9xkAz4rYn47Zy2rvigWQf6w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/cDKhRaXnQTOVbaoxwdOr9xkAz4rYn47Zy2rvigWQf6w.woff2",
+      "sha256": "aa9a8db3e6de8124291c3f2fd0bbd0aca8c796f365204d78414536067115be07"
+    },
+    "d-6IYplOFocCacKzxwXSOJBw1xU1rKptJj_0jans920.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/d-6IYplOFocCacKzxwXSOJBw1xU1rKptJj_0jans920.woff2",
+      "sha256": "1be216dbc059d96e288b0c1f399a1a80ee8c65e4c1272dbc4574bd6d23cf45d9"
+    },
+    "hMqPNLsu_dywMa4C_DEpY14sYYdJg5dU2qzJEVSuta0.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/hMqPNLsu_dywMa4C_DEpY14sYYdJg5dU2qzJEVSuta0.woff2",
+      "sha256": "2c9fae8205ea404d8400b9731423d5f8261788efcb26b651ad1031c70c895824"
+    },
+    "hMqPNLsu_dywMa4C_DEpY1BW26QxpSj-_ZKm_xT4hWw.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/hMqPNLsu_dywMa4C_DEpY1BW26QxpSj-_ZKm_xT4hWw.woff2",
+      "sha256": "978a5db5af1654146da5ec93980c273df7010a2d045f1360ac3b9d85bd890299"
+    },
+    "hMqPNLsu_dywMa4C_DEpY4gp9Q8gbYrhqGlRav_IXfk.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/hMqPNLsu_dywMa4C_DEpY4gp9Q8gbYrhqGlRav_IXfk.woff2",
+      "sha256": "ecc28128233f90171df8f8915d60cdc59ff70b9194e1d93061816d3e3cd1f320"
+    },
+    "hMqPNLsu_dywMa4C_DEpY6E8kM4xWR1_1bYURRojRGc.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/hMqPNLsu_dywMa4C_DEpY6E8kM4xWR1_1bYURRojRGc.woff2",
+      "sha256": "9a7b6e1f38e9a47867ad5c2f403ff4f4477a03bbec300d4e345bf67d5d0da262"
+    },
+    "hMqPNLsu_dywMa4C_DEpY9DiNsR5a-9Oe_Ivpu8XWlY.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/hMqPNLsu_dywMa4C_DEpY9DiNsR5a-9Oe_Ivpu8XWlY.woff2",
+      "sha256": "b568a2d630d5924e40b73489cc4a8720fb9fb0249b8117d6d45cfc95d249c1da"
+    },
+    "hMqPNLsu_dywMa4C_DEpY_ZraR2Tg8w2lzm7kLNL0-w.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/hMqPNLsu_dywMa4C_DEpY_ZraR2Tg8w2lzm7kLNL0-w.woff2",
+      "sha256": "671d1df350d3ccfd9a5ebbc9e92810a274d6215a648099f0f6e3e256b2bdae02"
+    },
+    "hMqPNLsu_dywMa4C_DEpYwt_Rm691LTebKfY2ZkKSmI.woff2": {
+      "url": "https://fonts.gstatic.com/s/robotomono/v5/hMqPNLsu_dywMa4C_DEpYwt_Rm691LTebKfY2ZkKSmI.woff2",
+      "sha256": "eb84188b287e62e965be53c788b6562554cefcc0a3520f792ba91bb60d40e607"
+    },
+    "isZ-wbCXNKAbnjo6_TwHToX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/isZ-wbCXNKAbnjo6_TwHToX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "6082aa2f5aab855120cd58f560f58975579097c484d23cc7854977a529f91bc4"
+    },
+    "jSN2CGVDbcVyCnfJfjSdfIX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/jSN2CGVDbcVyCnfJfjSdfIX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "28959a3f1fea0c7f7feca26f92465f5263f2e8fdec17030e0e7a9e6a8cb321af"
+    },
+    "mbmhprMH69Zi6eEPBYVFhYX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/mbmhprMH69Zi6eEPBYVFhYX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "e785fcb2332a43e5f489c0e7457001a93800b459bdf5173cffbb880f350077eb"
+    },
+    "mx9Uck6uB63VIKFYnEMXrYX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/mx9Uck6uB63VIKFYnEMXrYX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "b95a36dd1483f97002a0c8aba87106f7fefbd67f22bc25a2bf21352bb4f316ef"
+    },
+    "oHi30kwQWvpCWqAhzHcCSIX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/oHi30kwQWvpCWqAhzHcCSIX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "74f08a5b16db96fd23eeca2c2e6c354d08a95b3360aa2bb6ea0890517bb10469"
+    },
+    "oMMgfZMQthOryQo9n22dcuvvDin1pK8aKteLpeZ5c0A.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/oMMgfZMQthOryQo9n22dcuvvDin1pK8aKteLpeZ5c0A.woff2",
+      "sha256": "4352380f92ce7f9a4a4a23306b992bed10055dbfffe90987cc72083e583fc280"
+    },
+    "oOeFwZNlrTefzLYmlVV1UIX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/oOeFwZNlrTefzLYmlVV1UIX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "ba99e38768dd8358450dc363431400b1642c7cd7e5b47830e30aa8ec80fb4790"
+    },
+    "rGvHdJnr2l75qb0YND9NyIX0hVgzZQUfRDuZrPvH3D8.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/rGvHdJnr2l75qb0YND9NyIX0hVgzZQUfRDuZrPvH3D8.woff2",
+      "sha256": "399cdbc9a94414d94fb15b0386888c6bc8ce4d6140cc3a9a571406a76cf47bb5"
+    },
+    "sTdaA6j0Psb920Vjv-mrzH-_kf6ByYO6CLYdB4HQE-Y.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/sTdaA6j0Psb920Vjv-mrzH-_kf6ByYO6CLYdB4HQE-Y.woff2",
+      "sha256": "90a0ad0b48861588a6e33a5905b17e1219ea87ab6f07ccc41e7c2cddf38967a8"
+    },
+    "t6Nd4cfPRhZP44Q5QAjcC14sYYdJg5dU2qzJEVSuta0.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/t6Nd4cfPRhZP44Q5QAjcC14sYYdJg5dU2qzJEVSuta0.woff2",
+      "sha256": "bb4e478b0fe2ae7fbd6369c94d126060ffa697df189d7f3653f23f521f906cd8"
+    },
+    "t6Nd4cfPRhZP44Q5QAjcC1BW26QxpSj-_ZKm_xT4hWw.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/t6Nd4cfPRhZP44Q5QAjcC1BW26QxpSj-_ZKm_xT4hWw.woff2",
+      "sha256": "07a2e7b4a480176f0f0bc9f7ca757d8467bf41f86e3b1eed374be06ff1b51b56"
+    },
+    "t6Nd4cfPRhZP44Q5QAjcC4gp9Q8gbYrhqGlRav_IXfk.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/t6Nd4cfPRhZP44Q5QAjcC4gp9Q8gbYrhqGlRav_IXfk.woff2",
+      "sha256": "556e09ad66d48078d2ea341eff36e93dafdb56fed15e9d92e052a7cb3910e2e9"
+    },
+    "t6Nd4cfPRhZP44Q5QAjcC6E8kM4xWR1_1bYURRojRGc.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/t6Nd4cfPRhZP44Q5QAjcC6E8kM4xWR1_1bYURRojRGc.woff2",
+      "sha256": "5f6115b8655a4e9e0bb6440956b2d7b7d52e90193c6be53731fcf97d1fc45ec3"
+    },
+    "t6Nd4cfPRhZP44Q5QAjcC9DiNsR5a-9Oe_Ivpu8XWlY.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/t6Nd4cfPRhZP44Q5QAjcC9DiNsR5a-9Oe_Ivpu8XWlY.woff2",
+      "sha256": "b75ce2f4333ea21c1d0aeb0061edcf81b7fffe022a732dae52834a8b62615c5f"
+    },
+    "t6Nd4cfPRhZP44Q5QAjcC_ZraR2Tg8w2lzm7kLNL0-w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/t6Nd4cfPRhZP44Q5QAjcC_ZraR2Tg8w2lzm7kLNL0-w.woff2",
+      "sha256": "9fc911647b05ecdbadfe6693d6ff306a0a34829999b2055ad2e474e3ad0b778d"
+    },
+    "t6Nd4cfPRhZP44Q5QAjcCwt_Rm691LTebKfY2ZkKSmI.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/t6Nd4cfPRhZP44Q5QAjcCwt_Rm691LTebKfY2ZkKSmI.woff2",
+      "sha256": "62509e2b63168ae83848cb3f76d2c47177de8618ac918af119cc7ae90c71213b"
+    },
+    "tnj4SB6DNbdaQnsM8CFqBX-_kf6ByYO6CLYdB4HQE-Y.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/tnj4SB6DNbdaQnsM8CFqBX-_kf6ByYO6CLYdB4HQE-Y.woff2",
+      "sha256": "e5b2e29a16d8ef4c5a123b40786af72da589c4aad634eab40d90eef8bb4418aa"
+    },
+    "uYECMKoHcO9x1wdmbyHIm3-_kf6ByYO6CLYdB4HQE-Y.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/uYECMKoHcO9x1wdmbyHIm3-_kf6ByYO6CLYdB4HQE-Y.woff2",
+      "sha256": "41720926981ffb6dc229f06fc0bbf0f43e45ba032d126726ebee481c2a6559e2"
+    },
+    "vPcynSL0qHq_6dX7lKVByXYhjbSpvc47ee6xR_80Hnw.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/vPcynSL0qHq_6dX7lKVByXYhjbSpvc47ee6xR_80Hnw.woff2",
+      "sha256": "64565561ddb338a11ffce5b84aa53fa6e8fd203c34208e61eb5602cd08bf527f"
+    },
+    "vSzulfKSK0LLjjfeaxcREhkAz4rYn47Zy2rvigWQf6w.woff2": {
+      "url": "https://fonts.gstatic.com/s/roboto/v18/vSzulfKSK0LLjjfeaxcREhkAz4rYn47Zy2rvigWQf6w.woff2",
+      "sha256": "d5b2d7e9efe90feef0c4507d90b2b4e464c6929efd05ad4294d3d5057db57b97"
+    }
+  },
+  "material-icons": {
+    "add_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/content/add/materialicons/24px.svg",
+      "sha256": "475c29758b4a689598f80099714362c0340ad3a4bc111e2d88807bbf4b0f817e"
+    },
+    "arrow_back_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/navigation/arrow_back/materialicons/24px.svg",
+      "sha256": "e1590e051f577d02ec994e7cc6005a2bc96407a3d1ba2d7ce6825fb80402684c"
+    },
+    "arrow_downward_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/navigation/svg/production/ic_arrow_downward_24px.svg",
+      "sha256": "dd8deb85c82313c5aeb4936857fd99cb38a617507fb65afddf289941b99ae9f2"
+    },
+    "arrow_forward_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/navigation/arrow_forward/materialicons/24px.svg",
+      "sha256": "2f48309fb6ccc7b38a6412757801cd7d07e40b492f64e7146e8899d5a0e7c39a"
+    },
+    "arrow_upward_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/navigation/svg/production/ic_arrow_upward_24px.svg",
+      "sha256": "76d31a5591d1044d0461ee6dc482580e9797101dc96a47bbd53cef9930777f85"
+    },
+    "brightness_6_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/d3d4aca5a7cf50bc68bbd401cefa708e364194e8/src/image/brightness_6/materialicons/24px.svg",
+      "sha256": "eaa6d8593ee163458a4adcfe9a95da4f48e553d9af89dc18136cfba706cbc3ec"
+    },
+    "bug_report_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/action/bug_report/materialicons/24px.svg",
+      "sha256": "925221f8db5bc0358834bbd61bcd082624374e3da86bc64d04db21106fe72458"
+    },
+    "cancel_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/navigation/svg/production/ic_cancel_24px.svg",
+      "sha256": "0ea7671d0b99f8245208eda58e3bc3c633f715bc8ceb9fb2cf60ea5eeda9bda9"
+    },
+    "change_history_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/action/svg/production/ic_change_history_24px.svg",
+      "sha256": "93a10e36c7550ecd220d36c33ad822f2d31e520ee9fba0c9cb6c1eb44042e9f0"
+    },
+    "chevron_left_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/navigation/svg/production/ic_chevron_left_24px.svg",
+      "sha256": "ad918f7ec0ff89298e84586b5b98cdf628c8457cd067dc592031fae783f71a1d"
+    },
+    "chevron_right_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/navigation/svg/production/ic_chevron_right_24px.svg",
+      "sha256": "83f0da9735a4e475b0eca23b708ba09b2b7411e7d711b2d6be24bc2371d67ec8"
+    },
+    "clear_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/content/svg/production/ic_clear_24px.svg",
+      "sha256": "6d4ccf520d400755057a1739a66c0feda3c98bbc34e8e7f79afa630b2e43f87e"
+    },
+    "close_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/navigation/close/materialicons/24px.svg",
+      "sha256": "b54342456d5a7f2da53795147f8af36ec76fbf5b57d792fe75f07538e6c6783e"
+    },
+    "content_copy_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/content/svg/production/ic_content_copy_24px.svg",
+      "sha256": "fa4ad2661739c9ecefa121c41f5c95de878d4990ee86413124585a3af7d7dffb"
+    },
+    "dark_mode_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/ab12f16d050ecb1886b606f08825d24b30acafea/src/device/dark_mode/materialicons/24px.svg",
+      "sha256": "bab57d17c49495547dfbc2ad4f24dbc51d9f49bfb27cb48bdf430c0ee5a9e2d7"
+    },
+    "done_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.2/action/svg/production/ic_done_24px.svg",
+      "sha256": "f1f1a9f32a0488db0541fc9a8b9475ea9739335aa022d69799f9f42859042761"
+    },
+    "drag_indicator_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/d3d4aca5a7cf50bc68bbd401cefa708e364194e8/src/action/drag_indicator/materialicons/24px.svg",
+      "sha256": "5737806d54eae03d5cc02f2dbf7753ecb800fb8fba6ce93e5b1d1c3a9ed5b87b"
+    },
+    "edit_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/d3d4aca5a7cf50bc68bbd401cefa708e364194e8/src/image/edit/materialicons/24px.svg",
+      "sha256": "2301568113724db8d9e6c1cdf649d16af34da24e223a1f6a295d867a2b2037c9"
+    },
+    "error_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/alert/svg/production/ic_error_24px.svg",
+      "sha256": "4ab47484995ab72bd8b7175bd36273d3e8787cf3e1e28a4f695fee07e8d0884d"
+    },
+    "expand_less_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/navigation/svg/production/ic_expand_less_24px.svg",
+      "sha256": "e52d4acf9d020f85e9fc674479d3ed60ccdd1aa1e6ef3b75f8cd75f1c2284030"
+    },
+    "expand_more_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/navigation/svg/production/ic_expand_more_24px.svg",
+      "sha256": "f83d9a4e6a9af95c9321a34f2564e9d45483834fa17f5da5a3a403500636360a"
+    },
+    "filter_alt_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/action/filter_alt/materialicons/24px.svg",
+      "sha256": "f934b1a5a54e89d82cbbb334e1c7dc28d69fc779c1bec59889facd5de899e8ac"
+    },
+    "filter_list_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/content/filter_list/materialicons/24px.svg",
+      "sha256": "da5f9ac466b2a296bdbbcee8eef2eaecf992207e83b8304451701e2e13a2bc0f"
+    },
+    "flag_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/content/svg/production/ic_flag_24px.svg",
+      "sha256": "cbb30ec622923b6e0442d67277e30eaa1ba429223b132fde3289d125f2c62c88"
+    },
+    "fullscreen_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/navigation/fullscreen/materialicons/24px.svg",
+      "sha256": "3e6e96299b5cb5ea6faec369d1db09313dc957ec28f56a25cbe1bbd5ac55e820"
+    },
+    "fullscreen_exit_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/navigation/fullscreen_exit/materialicons/24px.svg",
+      "sha256": "20f6c4f110effafe35778bba8ce3789b0c6a9c02b5a0f6bcf18c192a94e80a1d"
+    },
+    "get_app_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/action/svg/production/ic_get_app_24px.svg",
+      "sha256": "b887b20de9d7850bac7629bbc72519f5f76c1ae988c692f1970e70cec7498456"
+    },
+    "group_work_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/action/svg/production/ic_group_work_24px.svg",
+      "sha256": "e86bae3711b455b57ae55b588fab87e8975f04e8ac3c1451632236eb37da8f3b"
+    },
+    "help_outline_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/action/svg/production/ic_help_outline_24px.svg",
+      "sha256": "962aee2433f026ed7843790f6757dc3c25c34f349feb9b4fe816629b1b22442d"
+    },
+    "image_search_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/image/image_search/materialicons/24px.svg",
+      "sha256": "d147e90c69c346cd82fb45f519d9cb45dd8d61ab4f5bba8156c36545d9abc62f"
+    },
+    "info_outline_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/action/svg/production/ic_info_outline_24px.svg",
+      "sha256": "f3d6e717a2d6fa6caec61221fb4b838663abbd1a58933dd7d2824b408932d3fe"
+    },
+    "keep_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/content/push_pin/materialicons/24px.svg",
+      "sha256": "93e72d0395250e7a75c702dc0df010e6756dded05ffcebe72bb9715788518a8f"
+    },
+    "keep_outline_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/content/push_pin/materialiconsoutlined/24px.svg",
+      "sha256": "eca3a04cd5362207d925dfb9a1633e133bf4612abaa2060b840c9ebc868b958a"
+    },
+    "light_mode_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/ab12f16d050ecb1886b606f08825d24b30acafea/src/device/light_mode/materialicons/24px.svg",
+      "sha256": "e5b6e1325dbe463ef88be878359ae54d2d310e6c56ec18ad9eaa56b8b734dd2c"
+    },
+    "line_weight_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/action/line_weight/materialicons/24px.svg",
+      "sha256": "ccae3a4f752212fa288aa0035d49bc2c1d5daca78931f3065fb1e0be98d82493"
+    },
+    "more_vert_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/navigation/more_vert/materialicons/24px.svg",
+      "sha256": "4f59e208f5babcf58c07505356ca1f109a9e1972e839b991dff19f709a28eeba"
+    },
+    "notifications_none_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/d3d4aca5a7cf50bc68bbd401cefa708e364194e8/src/social/notifications_none/materialicons/24px.svg",
+      "sha256": "c1f1e1f555e04b9444d6af02d8db242c4dc3d0bb34467f11a6b7c538dfd2f584"
+    },
+    "open_in_new_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/d3d4aca5a7cf50bc68bbd401cefa708e364194e8/src/action/open_in_new/materialicons/24px.svg",
+      "sha256": "fe2c764701d194a633c6d1c904adc07ae445323c77ae16fa49ad96d1b17127e2"
+    },
+    "palette_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.2/image/svg/production/ic_palette_24px.svg",
+      "sha256": "db745aaa866a71056c8010d1bd9619612167f21a5ca24e691e36180283bc264b"
+    },
+    "refresh_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/navigation/svg/production/ic_refresh_24px.svg",
+      "sha256": "b4d30acd39de79f490eff59d72fb1f06502c117c8815359d539e4f20515494de"
+    },
+    "search_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/action/svg/production/ic_search_24px.svg",
+      "sha256": "6105c83ef3637bbb1f1f8ceceacb51df818e867238ee6c49e0a8d1ca7f858b72"
+    },
+    "settings_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/3.0.1/action/svg/production/ic_settings_24px.svg",
+      "sha256": "d0872fb94037822164c8cea43a2ebeafdd1b664ff0fdc9387f0e1e1a7ee74628"
+    },
+    "settings_backup_restore_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/action/settings_backup_restore/materialicons/24px.svg",
+      "sha256": "a558348444b0f80697a8f343767408288ab10be989550b651404641c717c7c0f"
+    },
+    "settings_overscan_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/action/settings_overscan/materialicons/24px.svg",
+      "sha256": "608da1f1bba357551f222bb44512de328da8394b3c910724415b3156ebb08ca3"
+    },
+    "visibility_off_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/224895a86501195e7a7ff3dde18e39f00b8e3d5a/action/svg/production/ic_visibility_off_24px.svg",
+      "sha256": "b1e7ec6fcc3a0aeefe585abd0860e60dabd39b884be8b52cd886acb3e0635ec3"
+    },
+    "warning_24px.svg": {
+      "url": "https://raw.githubusercontent.com/google/material-design-icons/b3f05bfbf4329a5b63f50a720f867c2bac163f98/src/alert/warning/materialicons/24px.svg",
+      "sha256": "a9706960208156a1de89bbfca8abeffa8771ba9332fcb9605e277bfd8b4eb3b8"
+    }
+  }
+}

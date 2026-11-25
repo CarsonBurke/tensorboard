@@ -1,0 +1,126 @@
+diff --git a/node_modules/@angular/build/src/tools/angular/angular-host.js b/node_modules/@angular/build/src/tools/angular/angular-host.js
+index 29c0fa4..fd03369 100755
+--- a/node_modules/@angular/build/src/tools/angular/angular-host.js
++++ b/node_modules/@angular/build/src/tools/angular/angular-host.js
+@@ -116,10 +116,15 @@ function createAngularCompilerHost(typescript, compilerOptions, hostOptions, pac
+         const result = await hostOptions.transformStylesheet(data, context.containingFile, context.resourceFile ?? undefined, context.order, context.className);
+         return typeof result === 'string' ? { content: result } : null;
+     };
+-    host.resourceNameToFileName = function (resourceName, containingFile) {
+-        const resolvedPath = node_path_1.default.join(node_path_1.default.dirname(containingFile), resourceName);
++    host.resourceNameToFileName = function (resourceName, containingFile, fallbackResolve) {
++        let resolvedPath = node_path_1.default.join(node_path_1.default.dirname(containingFile), resourceName);
+         if (!this.fileExists(resolvedPath)) {
+-            return null;
++            // Fall back to the compiler's own resolution, which also searches the
++            // tsconfig `rootDirs` (for resources generated into another tree).
++            resolvedPath = fallbackResolve?.(resourceName, containingFile);
++            if (!resolvedPath) {
++                return null;
++            }
+         }
+         // Reject TypeScript files used as component resources (e.g., styleUrl pointing to a .ts file).
+         // Processing a TypeScript file as a stylesheet or template causes confusing downstream errors.
+diff --git a/node_modules/@angular/build/src/tools/esbuild/bundler-context.js b/node_modules/@angular/build/src/tools/esbuild/bundler-context.js
+index 8363f55..d1d105d 100755
+--- a/node_modules/@angular/build/src/tools/esbuild/bundler-context.js
++++ b/node_modules/@angular/build/src/tools/esbuild/bundler-context.js
+@@ -39,6 +39,8 @@ class BundlerContext {
+     #esbuildContext;
+     #esbuildOptions;
+     #esbuildResult;
++    #pendingBundle;
++    #pendingBundleStale = false;
+     #optionsFactory;
+     #shouldCacheResult;
+     #loadCache;
+@@ -131,14 +133,32 @@ class BundlerContext {
+      */
+     async bundle(force) {
+         // Return existing result if present
+-        if (!force && this.#esbuildResult) {
++        if (!force && this.#pendingBundle === undefined && this.#esbuildResult) {
+             return this.#esbuildResult;
+         }
+-        const result = await this.#performBundle();
+-        if (this.#shouldCacheResult) {
+-            this.#esbuildResult = result;
++        // Join an in-flight bundle rather than starting a concurrent one: each
++        // concurrent first call would create its own esbuild context, and only
++        // the last one stored is ever disposed. A forced call, or one after an
++        // invalidation, queues a new bundle behind it.
++        if (this.#pendingBundle === undefined || force || this.#pendingBundleStale) {
++            this.#pendingBundleStale = false;
++            const run = () => this.#performBundle();
++            this.#esbuildResult = undefined;
++            const pending = (this.#pendingBundle?.then(run, run) ?? run())
++                .then((result) => {
++                if (this.#pendingBundle === pending && !this.#pendingBundleStale && this.#shouldCacheResult) {
++                    this.#esbuildResult = result;
++                }
++                return result;
++            })
++                .finally(() => {
++                if (this.#pendingBundle === pending) {
++                    this.#pendingBundle = undefined;
++                }
++            });
++            this.#pendingBundle = pending;
+         }
+-        return result;
++        return this.#pendingBundle;
+     }
+     // eslint-disable-next-line max-lines-per-function
+     async #performBundle() {
+@@ -354,6 +374,7 @@ class BundlerContext {
+         }
+         if (invalid) {
+             this.#esbuildResult = undefined;
++            this.#pendingBundleStale = this.#pendingBundle !== undefined;
+         }
+         return invalid;
+     }
+diff --git a/node_modules/@angular/build/src/tools/esbuild/cache.js b/node_modules/@angular/build/src/tools/esbuild/cache.js
+index 2771286..5ee5da5 100755
+--- a/node_modules/@angular/build/src/tools/esbuild/cache.js
++++ b/node_modules/@angular/build/src/tools/esbuild/cache.js
+@@ -16,6 +16,7 @@ exports.MemoryCache = exports.Cache = void 0;
+ class Cache {
+     store;
+     namespace;
++    pending = new Map();
+     constructor(store, namespace) {
+         this.store = store;
+         this.namespace = namespace;
+@@ -39,14 +40,25 @@ class Cache {
+      * @param creator A factory function for the value if no value is present.
+      * @returns A value associated with the provided key.
+      */
+-    async getOrCreate(key, creator) {
++    getOrCreate(key, creator) {
+         const namespacedKey = this.withNamespace(key);
+-        let value = await this.store.get(namespacedKey);
+-        if (value === undefined) {
+-            value = await creator();
+-            await this.store.set(namespacedKey, value);
++        // Share one in-flight lookup per key. Concurrent callers would otherwise
++        // all miss, each create a value, and leak every value but the last one
++        // stored (for component stylesheets, an undisposed esbuild context that
++        // keeps `ng build` from exiting).
++        let pending = this.pending.get(namespacedKey);
++        if (pending === undefined) {
++            pending = (async () => {
++                let value = await this.store.get(namespacedKey);
++                if (value === undefined) {
++                    value = await creator();
++                    await this.store.set(namespacedKey, value);
++                }
++                return value;
++            })().finally(() => this.pending.delete(namespacedKey));
++            this.pending.set(namespacedKey, pending);
+         }
+-        return value;
++        return pending;
+     }
+     /**
+      * Gets the value associated with a provided key if available.

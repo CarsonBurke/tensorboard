@@ -1,0 +1,20 @@
+# Python environment for the Bazel-free build (see DEVELOPMENT.md).
+#
+# Install with the Bazel lock as a constraint file so both builds resolve the
+# exact same versions:
+#   uv pip install -r tools/requirements.txt \
+#     -c tensorboard/pip_package/requirements_bazel_lock.txt
+
+# TensorBoard's runtime dependencies.
+-r ../tensorboard/pip_package/requirements.txt
+
+# Vendored by Bazel as http_archives (third_party/python.bzl); keep in sync.
+bleach==6.2.0
+webencodings==0.5.1
+
+# protoc plus the gRPC Python plugin, for generating *_pb2.py and
+# *_pb2_grpc.py. 1.74.0 bundles protoc 31.1, the protobuf release Bazel uses
+# (MODULE.bazel), so the generated code is identical and stays importable with
+# every protobuf runtime that requirements.txt allows (generated code refuses
+# to load on a runtime older than the protoc that produced it).
+grpcio-tools==1.74.0
