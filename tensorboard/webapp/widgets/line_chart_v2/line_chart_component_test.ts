@@ -24,7 +24,12 @@ import {
   Output,
   ViewChild,
 } from '@angular/core';
-import {ComponentFixture, TestBed} from '@angular/core/testing';
+import {
+  ComponentFixture,
+  fakeAsync,
+  TestBed,
+  tick,
+} from '@angular/core/testing';
 import {By} from '@angular/platform-browser';
 import {ChartImpl} from './lib/chart';
 import {
@@ -37,6 +42,7 @@ import {
 } from './lib/public_types';
 import {buildMetadata, buildSeries} from './lib/testing';
 import {LineChartComponent} from './line_chart_component';
+import {ResizeDetectorModule} from '../resize_detector_module';
 
 @Component({
   changeDetection: ChangeDetectionStrategy.Default,
@@ -1106,4 +1112,54 @@ describe('line_chart_v2/line_chart test', () => {
       });
     });
   });
+});
+
+// Parent cards restore persisted heights after their child chart's view init,
+// before ResizeObserver delivers its first notification.
+describe('line chart initial layout', () => {
+  it('uses a restored height on the first resize delivery', fakeAsync(() => {
+    const callbacks = new Map<Element, () => void>();
+    spyOn(window, 'ResizeObserver').and.callFake(function (
+      callback: ResizeObserverCallback
+    ) {
+      const observer: ResizeObserver = {
+        observe: (element) => {
+          callbacks.set(element, () => callback([], observer));
+        },
+        unobserve: (element) => {
+          callbacks.delete(element);
+        },
+        disconnect: () => {},
+      };
+      return observer;
+    });
+    TestBed.configureTestingModule({
+      declarations: [TestableComponent, LineChartComponent, FakeGridComponent],
+      imports: [CommonModule, OverlayModule, ResizeDetectorModule],
+      schemas: [NO_ERRORS_SCHEMA],
+    });
+    const resize = spyOn(ChartImpl.prototype, 'resize');
+    const fixture = TestBed.createComponent(TestableComponent);
+    fixture.componentInstance.seriesData = [];
+    fixture.componentInstance.seriesMetadataMap = {};
+    fixture.componentInstance.yScaleType = ScaleType.LINEAR;
+    fixture.detectChanges();
+    const chart = fixture.debugElement.query(By.directive(LineChartComponent));
+    const series = chart.nativeElement.querySelector('.series-view');
+    const grid = chart.query(By.directive(FakeGridComponent));
+    expect(grid.componentInstance.domDim.height).toBe(70);
+
+    chart.nativeElement.style.height = '600px';
+    callbacks.get(series)!();
+    tick(0);
+    expect(grid.componentInstance.domDim.height).toBe(570);
+    expect(resize).toHaveBeenCalledWith({width: 150, height: 570});
+
+    chart.nativeElement.style.height = '300px';
+    callbacks.get(series)!();
+    tick(0);
+    expect(grid.componentInstance.domDim.height).toBe(270);
+    expect(resize).toHaveBeenCalledWith({width: 150, height: 270});
+    fixture.destroy();
+  }));
 });

@@ -110,6 +110,7 @@ tf_ts_library(
         ":line_chart_v2",
         "//tensorboard/webapp/angular:expect_angular_cdk_overlay",
         "//tensorboard/webapp/angular:expect_angular_core_testing",
+        "//tensorboard/webapp/widgets:resize_detector",
         "//tensorboard/webapp/widgets/line_chart_v2/lib:chart",
         "//tensorboard/webapp/widgets/line_chart_v2/lib:public_types",
         "//tensorboard/webapp/widgets/line_chart_v2/lib:scale",

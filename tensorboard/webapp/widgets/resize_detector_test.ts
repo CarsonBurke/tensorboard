@@ -25,12 +25,14 @@ import {ResizeDetectorDirective} from './resize_detector_directive';
     <div
       *ngIf="renderDirective"
       detectResize
+      [emitInitialResize]="emitInitialResize"
       [resizeEventDebouncePeriodInMs]="resizeEventDebouncePeriodInMs"
       (onResize)="onResize()"
     ></div>
   `,
 })
 class TestableComponent {
+  @Input() emitInitialResize: boolean = false;
   @Input() renderDirective: boolean = true;
   @Input() resizeEventDebouncePeriodInMs?: number;
   @Input() onResize!: () => void;
@@ -74,6 +76,24 @@ describe('resize detector', () => {
     triggerResize();
     tick(10000);
     expect(onResize).not.toHaveBeenCalled();
+  }));
+
+  it('can emit the initial layout after the debounce period', fakeAsync(() => {
+    const fixture = TestBed.createComponent(TestableComponent);
+    const onResize = jasmine.createSpy();
+    fixture.componentInstance.emitInitialResize = true;
+    fixture.componentInstance.resizeEventDebouncePeriodInMs = 50;
+    fixture.componentInstance.onResize = onResize;
+    fixture.detectChanges();
+
+    triggerResize();
+    expect(onResize).not.toHaveBeenCalled();
+    tick(50);
+    expect(onResize).toHaveBeenCalledTimes(1);
+
+    triggerResize();
+    tick(50);
+    expect(onResize).toHaveBeenCalledTimes(2);
   }));
 
   it('calls onResize on debounce', fakeAsync(() => {

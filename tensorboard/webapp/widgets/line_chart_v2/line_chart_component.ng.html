@@ -24,11 +24,13 @@ limitations under the License.
   cdkOverlayOrigin
 >
   <!-- The y axis column resizes with its labels without resizing the
-  container, so the plot area needs its own observer. -->
+  container, so the plot area needs its own observer. Include its first
+  delivery because a parent may restore the chart height after view init. -->
   <div
     class="series-view"
     #seriesView
     detectResize
+    [emitInitialResize]="true"
     (onResize)="onViewResize()"
     [resizeEventDebouncePeriodInMs]="0"
   >

@@ -27,7 +27,7 @@ import {debounceTime, skip, takeUntil} from 'rxjs/operators';
 /**
  * A directive that calls `onResize` when a host element is resized.
  *
- * It does not emit `onResize` on the initial render.
+ * By default, it does not emit `onResize` on the initial render.
  */
 @Directive({
   standalone: false,
@@ -35,6 +35,7 @@ import {debounceTime, skip, takeUntil} from 'rxjs/operators';
 })
 export class ResizeDetectorDirective implements OnDestroy, OnInit {
   @Input() resizeEventDebouncePeriodInMs: number = 100;
+  @Input() emitInitialResize: boolean = false;
   @Output() onResize = new EventEmitter<void>();
 
   private readonly ngUnsubscribe$ = new Subject<void>();
@@ -53,9 +54,9 @@ export class ResizeDetectorDirective implements OnDestroy, OnInit {
   ngOnInit() {
     this.onResize$
       .pipe(
-        // When ResizeObserver is initially created, it calls the callback.
-        // Ignore that since it is not really a resize.
-        skip(1),
+        // The first delivery can include layout changes made after view init.
+        // Consumers that measure before layout settles need that delivery too.
+        skip(this.emitInitialResize ? 0 : 1),
         debounceTime(this.resizeEventDebouncePeriodInMs),
         takeUntil(this.ngUnsubscribe$)
       )
