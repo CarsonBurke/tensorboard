@@ -17,6 +17,7 @@ use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
+#[cfg(test)]
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -218,20 +219,28 @@ impl DiskStore {
             CREATE TRIGGER IF NOT EXISTS add_run AFTER INSERT ON runs BEGIN UPDATE info SET revision=revision+1; END;
             CREATE TRIGGER IF NOT EXISTS remove_run AFTER DELETE ON runs BEGIN UPDATE info SET revision=revision+1; END;")?;
         c.execute_batch(&sample_tables_ddl("IF NOT EXISTS", "samples", "blobs"))?;
-        let created = c.execute(
-            // A random origin keeps revision tokens unique across index
-            // recreation (see `repair`); tokens are only compared for equality.
-            "INSERT INTO info SELECT ?1,abs(random()>>16) WHERE NOT EXISTS(SELECT 1 FROM info)",
-            params![self.identity],
-        )? == 1;
-        let actual: String = c.query_row("SELECT identity FROM info", [], |r| r.get(0))?;
+        let read_identity =
+            || c.query_row("SELECT identity FROM info", [], |r| r.get::<_, String>(0));
+        // Avoid a write lock on an existing index, especially when another
+        // process is migrating its samples in the background.
+        let actual = match read_identity().optional()? {
+            Some(actual) => actual,
+            None => {
+                let created = c.execute(
+                    // A random origin keeps revision tokens unique across
+                    // recreation. Tokens are only compared for equality.
+                    "INSERT INTO info SELECT ?1,abs(random()>>16) WHERE NOT EXISTS(SELECT 1 FROM info)",
+                    params![self.identity],
+                )? == 1;
+                if created {
+                    // Migrate a new index before the first request.
+                    Self::migrate_on(&c)?;
+                }
+                read_identity()?
+            }
+        };
         if actual != self.identity {
             return Err("data index identity mismatch".into());
-        }
-        if created {
-            // Migrating an empty index is instant; requests then never see a
-            // partial schema before the first reload.
-            Self::migrate_on(&c)?;
         }
         Ok(())
     }
@@ -2734,6 +2743,25 @@ mod tests {
                 .len(),
             5
         );
+        Ok(())
+    }
+
+    #[test]
+    fn existing_index_opens_during_a_write_transaction() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("index.sqlite");
+        let store = DiskStore::at(path.clone(), "concurrent-open")?;
+        let writer = store.connect()?;
+        writer.execute_batch("BEGIN IMMEDIATE")?;
+
+        let (opened, result) = std::sync::mpsc::channel();
+        let opener = std::thread::spawn(move || {
+            opened.send(DiskStore::at(path, "concurrent-open")).unwrap();
+        });
+        let opened_before_rollback = result.recv_timeout(std::time::Duration::from_secs(2));
+        writer.execute_batch("ROLLBACK")?;
+        opener.join().unwrap();
+        opened_before_rollback??;
         Ok(())
     }
 
