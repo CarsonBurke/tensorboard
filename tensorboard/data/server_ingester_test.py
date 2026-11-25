@@ -139,12 +139,39 @@ class SubprocessServerDataIngesterTest(tb_test.TestCase):
         )
         ingester._process = mock.Mock()
         ingester._process.poll.return_value = None
+        ingester._stdin_handle = mock.Mock()
         with open(ingester._reload_done_path, "w") as outfile:
             outfile.write("1\n")
 
         self.assertTrue(ingester.request_reload(timeout=1))
         with open(ingester._reload_request_path) as infile:
             self.assertEqual(infile.read(), "1\n")
+        # The server sleeps until poked over stdin instead of polling.
+        ingester._stdin_handle.write.assert_called_once_with(b"\n")
+        ingester._stdin_handle.flush.assert_called_once_with()
+
+    def test_request_reload_tolerates_closed_stdin(self):
+        data_ingester = server_ingester.SubprocessServerDataIngester(
+            server_binary=server_ingester.ServerBinary(__file__, version=None),
+            logdir=self.get_temp_dir(),
+            reload_interval=5,
+            channel_creds_type=grpc_util.ChannelCredsType.LOCAL,
+        )
+        data_ingester._reload_request_path = os.path.join(
+            self.get_temp_dir(), "port.reload"
+        )
+        data_ingester._reload_done_path = os.path.join(
+            self.get_temp_dir(), "port.reload.done"
+        )
+        data_ingester._process = mock.Mock()
+        data_ingester._process.poll.return_value = 1
+        data_ingester._stdin_handle = mock.Mock()
+        data_ingester._stdin_handle.write.side_effect = BrokenPipeError()
+        with open(data_ingester._reload_done_path, "w") as outfile:
+            outfile.write("0\n")
+
+        with self.assertRaises(ingester.ReloadError):
+            data_ingester.request_reload(timeout=60)
 
     def test_request_reload_stops_when_server_exits(self):
         data_ingester = server_ingester.SubprocessServerDataIngester(

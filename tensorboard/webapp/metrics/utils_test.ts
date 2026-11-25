@@ -164,6 +164,55 @@ describe('metrics utils', () => {
       expect(sortTagNames(['a', '//', '/', ''])).toEqual(['', '/', '//', 'a']);
     });
 
+    it('matches the data server collation fixture', () => {
+      // Shared with TAG_ORDER_FIXTURE in tensorboard/data/server/storage.rs.
+      const expected = [
+        '',
+        '/',
+        '0..2',
+        '0..03',
+        'B',
+        'a',
+        'a/a',
+        'a01',
+        'a1',
+        'a1.5',
+        'a1.e5',
+        'a+/a',
+        'b',
+        'g9',
+        'g1E+1',
+        'layer/w',
+        'layer1',
+        'lr1e-4',
+        'lr1e-3',
+        'model/conv/kernel',
+        'model/conv1/kernel',
+        'res1encoder',
+        'res2',
+        'res1e5',
+        'x\u{10000}',
+        'x\u{e000}',
+      ];
+      expect(sortTagNames([...expected].reverse())).toEqual(expected);
+    });
+
+    it('is a total order where slashes meet digits', () => {
+      const tags = ['a/1', 'a1', 'a/', 'a1/', 'a/a', 'a1e', 'a1e5', 'a'];
+      for (const x of tags) {
+        for (const y of tags) {
+          expect(Math.sign(compareTagNames(x, y))).toBe(
+            -Math.sign(compareTagNames(y, x))
+          );
+          for (const z of tags) {
+            if (compareTagNames(x, y) < 0 && compareTagNames(y, z) < 0) {
+              expect(compareTagNames(x, z)).toBeLessThan(0);
+            }
+          }
+        }
+      }
+    });
+
     it('parses decimal correctly', () => {
       expect(sortTagNames(['0.2', '0.03'])).toEqual(['0.03', '0.2']);
       expect(sortTagNames(['0..2', '0..03'])).toEqual(['0..2', '0..03']);

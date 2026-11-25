@@ -21,7 +21,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
@@ -182,12 +182,50 @@ fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     result.into()
 }
 
+/// Wakes the reloader when the launcher pokes it over stdin.
+///
+/// Each byte on stdin means "check the reload request file now", so an idle
+/// server sleeps instead of polling that file.
+#[derive(Default)]
+struct ReloadPokes {
+    pending: Mutex<bool>,
+    poked: Condvar,
+}
+
+impl ReloadPokes {
+    fn poke(&self) {
+        *self.pending.lock().unwrap() = true;
+        self.poked.notify_one();
+    }
+
+    /// Waits until poked or `timeout` elapses (`None`: indefinitely).
+    fn wait(&self, timeout: Option<Duration>) {
+        let mut pending = self.pending.lock().unwrap();
+        let deadline = timeout.map(|t| Instant::now() + t);
+        while !*pending {
+            match deadline {
+                None => pending = self.poked.wait(pending).unwrap(),
+                Some(deadline) => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return;
+                    }
+                    pending = self.poked.wait_timeout(pending, deadline - now).unwrap().0;
+                }
+            }
+        }
+        *pending = false;
+    }
+}
+
 /// Sleeps until `timeout` elapses or `reload_path` holds a newer generation.
 ///
 /// Returns true if a newer generation was observed (and `last_seen` updated).
-/// `timeout == None` waits indefinitely.
+/// `timeout == None` waits indefinitely. With `pokes`, the request file is read
+/// when poked and once a second; without (no `--die-after-stdin`), every 50ms.
 fn wait_for_reload_request(
     reload_path: Option<&Path>,
+    pokes: Option<&ReloadPokes>,
     last_seen: &mut u64,
     timeout: Option<Duration>,
 ) -> bool {
@@ -200,16 +238,45 @@ fn wait_for_reload_request(
                 return true;
             }
         }
-        if let Some(limit) = timeout {
-            if start.elapsed() >= limit {
-                return false;
+        let remaining = timeout.map(|limit| limit.saturating_sub(start.elapsed()));
+        if remaining == Some(Duration::ZERO) {
+            return false;
+        }
+        match (reload_path, pokes) {
+            // Re-read occasionally anyway, for launchers that write the
+            // request file without poking.
+            (Some(_), Some(pokes)) => pokes.wait(Some(
+                remaining.map_or(POKE_FALLBACK_INTERVAL, |r| r.min(POKE_FALLBACK_INTERVAL)),
+            )),
+            (Some(_), None) => {
+                thread::sleep(remaining.map_or(POLL_INTERVAL, |r| r.min(POLL_INTERVAL)))
             }
-            let remaining = limit.saturating_sub(start.elapsed());
-            thread::sleep(Duration::from_millis(50).min(remaining));
-        } else {
-            thread::sleep(Duration::from_millis(50));
+            (None, _) => match remaining {
+                Some(remaining) => thread::sleep(remaining),
+                None => loop {
+                    thread::park();
+                },
+            },
         }
     }
+}
+
+/// Request-file re-read interval when the launcher can also poke over stdin.
+const POKE_FALLBACK_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Request-file poll interval when the launcher cannot poke over stdin.
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Delay before retrying a failed load cycle: 1s, doubling per consecutive
+/// failure, capped at the reload interval (or a minute for `--reload=once`).
+fn failure_backoff(failures: u32, strategy: ReloadStrategy) -> Duration {
+    let cap = match strategy {
+        ReloadStrategy::Loop { delay } => delay.max(Duration::from_secs(1)),
+        ReloadStrategy::Once => Duration::from_secs(60),
+    };
+    Duration::from_secs(1)
+        .saturating_mul(1 << failures.saturating_sub(1).min(16))
+        .min(cap)
 }
 
 #[tokio::main]
@@ -250,10 +317,14 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             std::process::exit(EXIT_BAD_LOGDIR);
         });
 
-    if opts.die_after_stdin {
+    let pokes = opts
+        .die_after_stdin
+        .then(|| Arc::new(ReloadPokes::default()));
+    if let Some(pokes) = &pokes {
+        let pokes = Arc::clone(pokes);
         thread::Builder::new()
             .name("StdinWatcher".to_string())
-            .spawn(die_after_stdin)
+            .spawn(move || die_after_stdin(&pokes))
             .expect("failed to spawn stdin watcher thread");
     }
 
@@ -305,25 +376,60 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let commit = Arc::clone(&commit);
             move || {
                 let mut last_seen_generation = 0u64;
+                let mut failures = 0u32;
+                let disk = commit.disk.as_ref().expect("production index");
+                let wait = |last_seen: &mut u64, timeout| {
+                    wait_for_reload_request(
+                        reload_request_path.as_deref(),
+                        pokes.as_deref(),
+                        last_seen,
+                        timeout,
+                    )
+                };
                 // Advertise support before the first (possibly long) scan so
                 // Python does not mistake a current binary for an old one.
                 if let Some(done) = &reload_done_path {
                     write_generation(done, last_seen_generation);
                 }
                 loop {
+                    if crate::storage::take_corruption_report() {
+                        warn!("A request found the data index damaged; repairing");
+                        if let Err(e) = disk.repair() {
+                            error!("Failed to repair data index: {}", e);
+                        }
+                    }
                     info!("Starting load cycle");
                     let start = Instant::now();
-                    if let Err(e) = commit
-                        .disk
-                        .as_ref()
-                        .expect("production index")
-                        .reload(&logdir, &psh_ref, checksum)
-                    {
-                        error!("Load cycle failed: {}", e);
-                        // Do not acknowledge an incomplete reload as successful.
-                        thread::sleep(Duration::from_secs(1));
+                    if let Err(e) = disk.reload(&logdir, &psh_ref, checksum) {
+                        failures += 1;
+                        error!("Load cycle failed (attempt {}): {}", failures, e);
+                        if crate::storage::is_corruption(&*e) {
+                            match disk.repair() {
+                                // Retry at once only after the first failure:
+                                // damage that recurs (e.g. an old binary still
+                                // writing this index) must not spin.
+                                Ok(()) if failures == 1 => {
+                                    warn!("Repaired corrupt data index; retrying");
+                                    continue;
+                                }
+                                Ok(()) => {
+                                    warn!("Repaired corrupt data index again");
+                                }
+                                Err(e) => {
+                                    error!("Failed to repair data index: {}", e);
+                                }
+                            }
+                        }
+                        // Do not acknowledge an incomplete reload as successful,
+                        // and do not rescan a persistently failing logdir in a
+                        // hot loop. A manual reload request still retries now.
+                        wait(
+                            &mut last_seen_generation,
+                            Some(failure_backoff(failures, reload_strategy)),
+                        );
                         continue;
                     }
+                    failures = 0;
                     let end = Instant::now();
                     info!("Finished load cycle ({:?})", end - start);
                     if let Some(done) = &reload_done_path {
@@ -331,21 +437,13 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                     match reload_strategy {
                         ReloadStrategy::Loop { delay } => {
-                            wait_for_reload_request(
-                                reload_request_path.as_deref(),
-                                &mut last_seen_generation,
-                                Some(delay),
-                            );
+                            wait(&mut last_seen_generation, Some(delay));
                         }
                         ReloadStrategy::Once => {
                             if reload_request_path.is_none() {
                                 break;
                             }
-                            wait_for_reload_request(
-                                reload_request_path.as_deref(),
-                                &mut last_seen_generation,
-                                None,
-                            );
+                            wait(&mut last_seen_generation, None);
                         }
                     };
                 }
@@ -380,11 +478,20 @@ fn init_logging(default_log_level: LevelFilter) {
     Builder::from_env(Env::default().default_filter_or(default_log_level.to_string())).init();
 }
 
-/// Locks stdin and reads it to EOF, then exits the process.
-fn die_after_stdin() {
+/// Locks stdin and reads it to EOF, then exits the process. Each chunk read
+/// before EOF is a reload poke.
+fn die_after_stdin(pokes: &ReloadPokes) {
     let stdin = std::io::stdin();
-    let stdin_lock = stdin.lock();
-    for _ in stdin_lock.bytes() {}
+    let mut stdin_lock = stdin.lock();
+    let mut buf = [0; 64];
+    loop {
+        match stdin_lock.read(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => pokes.poke(),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
+            Err(_) => break,
+        }
+    }
     info!("Stdin closed; exiting");
     std::process::exit(0);
 }
@@ -419,6 +526,67 @@ fn write_startup_error(path: Option<&Path>, error: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failure_backoff_doubles_up_to_the_reload_interval() {
+        let every_minute = ReloadStrategy::Loop {
+            delay: Duration::from_secs(60),
+        };
+        let secs = |n| failure_backoff(n, every_minute).as_secs();
+        assert_eq!(
+            (1..=8).map(secs).collect::<Vec<_>>(),
+            [1, 2, 4, 8, 16, 32, 60, 60]
+        );
+        assert_eq!(secs(u32::MAX), 60);
+        let fast = ReloadStrategy::Loop {
+            delay: Duration::ZERO,
+        };
+        assert_eq!(failure_backoff(5, fast), Duration::from_secs(1));
+        assert_eq!(
+            failure_backoff(30, ReloadStrategy::Once),
+            Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn reload_request_wakes_on_poke_without_polling() {
+        let dir = tempfile::tempdir().unwrap();
+        let request = dir.path().join("port.reload");
+        let pokes = Arc::new(ReloadPokes::default());
+        let mut last_seen = 0;
+        // Unpoked, a stale request file times out and is not re-read.
+        write_generation(&request, 0);
+        assert!(!wait_for_reload_request(
+            Some(&request),
+            Some(&pokes),
+            &mut last_seen,
+            Some(Duration::from_millis(20)),
+        ));
+        let waiter = {
+            let (request, pokes) = (request.clone(), Arc::clone(&pokes));
+            thread::spawn(move || {
+                let mut last_seen = 0;
+                let woke =
+                    wait_for_reload_request(Some(&request), Some(&pokes), &mut last_seen, None);
+                (woke, last_seen)
+            })
+        };
+        thread::sleep(Duration::from_millis(20));
+        write_generation(&request, 3);
+        pokes.poke();
+        assert_eq!(waiter.join().unwrap(), (true, 3));
+        // A request written before the wait begins is seen immediately.
+        write_generation(&request, 4);
+        let start = Instant::now();
+        assert!(wait_for_reload_request(
+            Some(&request),
+            Some(&pokes),
+            &mut last_seen,
+            Some(Duration::from_secs(60)),
+        ));
+        assert_eq!(last_seen, 4);
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
 
     #[test]
     fn test_parse_reload() {

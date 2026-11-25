@@ -61,63 +61,63 @@ export function getTagGroupName(tag: string): string {
  * Compares tag names asciinumerically broken into components.
  *
  * Unlike the standard asciibetical comparator, this function knows that 'a10b'
- * > 'a2b'. Fixed point and engineering notation are supported. This function
- * also splits the input by slash to perform array comparison. Therefore it
- * knows that 'a/a' < 'a+/a' even though '+' < '/' in the ASCII table.
+ * > 'a2b'. Fixed point and engineering notation are supported. Slashes sort
+ * before numbers, which sort before every other character, so 'a/a' < 'a+/a'
+ * even though '+' < '/' in the ASCII table.
+ *
+ * Each tag is split into a fixed token sequence (slash, number, or UTF-16 code
+ * unit) and the sequences are compared lexicographically, with equal sequences
+ * (equivalent number spellings) broken by plain string order. That makes this
+ * a strict total order, which the data server relies on: it collates a
+ * persisted index with the identical `compare_tag_names` and pages tags in
+ * that order. Keep the two in sync.
  */
-export function compareTagNames(tagA: string, tagB: string) {
+export function compareTagNames(tagA: string, tagB: string): number {
   let aIndex = 0;
   let bIndex = 0;
-
   while (true) {
-    if (aIndex === tagA.length) {
-      return bIndex === tagB.length ? 0 : -1;
+    if (aIndex === tagA.length || bIndex === tagB.length) {
+      if (aIndex !== tagA.length) return 1;
+      if (bIndex !== tagB.length) return -1;
+      return tagA < tagB ? -1 : tagA > tagB ? 1 : 0;
     }
-    if (bIndex === tagB.length) {
-      return 1;
-    }
-
     const a = tagA.charCodeAt(aIndex);
     const b = tagB.charCodeAt(bIndex);
-
-    if (isDigit(a) && isDigit(b)) {
-      const aNumberStart = aIndex;
-      const bNumberStart = bIndex;
-      aIndex = consumeNumber(tagA, aIndex + 1);
-      bIndex = consumeNumber(tagB, bIndex + 1);
-      const an = Number(tagA.slice(aNumberStart, aIndex));
-      const bn = Number(tagB.slice(bNumberStart, bIndex));
-      if (an < bn) {
-        return -1;
+    const aRank = tokenRank(a);
+    const bRank = tokenRank(b);
+    if (aRank !== bRank) {
+      return aRank - bRank;
+    }
+    if (aRank === TokenRank.NUMBER) {
+      const aEnd = consumeNumber(tagA, aIndex);
+      const bEnd = consumeNumber(tagB, bIndex);
+      const an = Number(tagA.slice(aIndex, aEnd));
+      const bn = Number(tagB.slice(bIndex, bEnd));
+      if (an !== bn) {
+        return an < bn ? -1 : 1;
       }
-      if (an > bn) {
-        return 1;
-      }
+      aIndex = aEnd;
+      bIndex = bEnd;
       continue;
     }
-
-    if (isBreak(a)) {
-      if (!isBreak(b)) {
-        return -1;
-      }
-    } else if (isBreak(b)) {
-      return 1;
-    } else if (a < b) {
-      return -1;
-    } else if (a > b) {
-      return 1;
+    if (a !== b) {
+      return a < b ? -1 : 1;
     }
-
     aIndex++;
     bIndex++;
   }
 }
 
-const enum NumberState {
-  NATURAL,
-  REAL,
-  EXPONENT_SIGN,
-  EXPONENT,
+const enum TokenRank {
+  SLASH,
+  NUMBER,
+  OTHER,
+}
+
+function tokenRank(charCode: number): TokenRank {
+  if (charCode === CHAR_CODE_SLASH) return TokenRank.SLASH;
+  if (isDigit(charCode)) return TokenRank.NUMBER;
+  return TokenRank.OTHER;
 }
 
 const CHAR_CODE_DOT = 0x2e;
@@ -130,50 +130,31 @@ const CHAR_CODE_UPPER_E = 0x45;
 const CHAR_CODE_LOWER_E = 0x65;
 
 /**
- * Returns endIndex of a number sequence in string starting from startIndex.
- *
- * The method can handle scientific notation, real and natural numbers, and
- * numbers with exponents. Do note that it does not treat decimals that start
- * with "." as a real number.
+ * Returns the end index of the decimal literal starting at `startIndex`:
+ * `digits [. digits*] [(e|E) [+|-] digits+]`. A dangling exponent marker (as
+ * in 'res1encoder') is not part of the number, so parsing never yields NaN.
  */
 function consumeNumber(s: string, startIndex: number): number {
-  let state = NumberState.NATURAL;
-  let i = startIndex;
-  for (; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (state === NumberState.NATURAL) {
-      if (c === CHAR_CODE_DOT) {
-        state = NumberState.REAL;
-      } else if (c === CHAR_CODE_LOWER_E || c === CHAR_CODE_UPPER_E) {
-        state = NumberState.EXPONENT_SIGN;
-      } else if (!isDigit(c)) {
-        break;
-      }
-    } else if (state === NumberState.REAL) {
-      if (c === CHAR_CODE_LOWER_E || c === CHAR_CODE_UPPER_E) {
-        state = NumberState.EXPONENT_SIGN;
-      } else if (!isDigit(c)) {
-        break;
-      }
-    } else if (state === NumberState.EXPONENT_SIGN) {
-      if (isDigit(c) || c === CHAR_CODE_PLUS || c === CHAR_CODE_MINUS) {
-        state = NumberState.EXPONENT;
-      } else {
-        break;
-      }
-    } else if (state === NumberState.EXPONENT) {
-      if (!isDigit(c)) {
-        break;
-      }
+  const digits = (from: number) => {
+    while (from < s.length && isDigit(s.charCodeAt(from))) from++;
+    return from;
+  };
+  let end = digits(startIndex);
+  if (s.charCodeAt(end) === CHAR_CODE_DOT) {
+    end = digits(end + 1);
+  }
+  const e = s.charCodeAt(end);
+  if (e === CHAR_CODE_LOWER_E || e === CHAR_CODE_UPPER_E) {
+    const sign = s.charCodeAt(end + 1);
+    const exponent =
+      sign === CHAR_CODE_PLUS || sign === CHAR_CODE_MINUS ? end + 2 : end + 1;
+    if (isDigit(s.charCodeAt(exponent))) {
+      end = digits(exponent);
     }
   }
-  return i;
+  return end;
 }
 
 function isDigit(charCode: number): boolean {
   return CHAR_CODE_ZERO <= charCode && charCode <= CHAR_CODE_NINE;
-}
-
-function isBreak(charCode: number): boolean {
-  return charCode === CHAR_CODE_SLASH || isDigit(charCode);
 }

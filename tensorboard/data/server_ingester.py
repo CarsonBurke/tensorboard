@@ -93,6 +93,7 @@ class SubprocessServerDataIngester(ingester.DataIngester):
         self._samples_per_plugin = samples_per_plugin or {}
         self._extra_flags = list(extra_flags or [])
         self._process = None
+        self._stdin_handle = None
         self._tmpdir = None
         self._reload_request_path = None
         self._reload_done_path = None
@@ -219,6 +220,15 @@ class SubprocessServerDataIngester(ingester.DataIngester):
             generation = self._reload_generation
             with open(self._reload_request_path, "w", encoding="ascii") as f:
                 f.write("%d\n" % generation)
+            # Any byte on stdin wakes the server to read the request file, so
+            # it need not poll it. Older binaries ignore stdin contents.
+            if self._stdin_handle is not None:
+                try:
+                    self._stdin_handle.write(b"\n")
+                    self._stdin_handle.flush()
+                except (OSError, ValueError):
+                    # The server exited; the exit check below reports it.
+                    pass
         start = time.time()
         deadline = start + timeout
         saw_done = False
